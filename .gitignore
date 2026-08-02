@@ -1,0 +1,29 @@
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+
+# Editors and local tooling
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+*.local
+
+# Logs, caches, test output, and generated artifacts
+*.log
+coverage/
+dist/
+build/
+.cache/
+.tmp/
+tmp/
+
+# Local runtime data must never be committed
+/local-data/
+/uploads/
+/recordings/
