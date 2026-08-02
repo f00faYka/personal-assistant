@@ -11,6 +11,7 @@ Before starting work:
 ## Working rules
 
 - Prefer an approved, `ready` GitHub Issue over inventing unplanned work.
+- Every issue has a stable `PASS-####` work-item key. Start issue and pull-request titles and commit subjects with that exact key; never reuse or renumber a key.
 - Restate the issue scope before implementation and implement only that scope.
 - Do not silently contradict accepted decisions. If implementation would change one, pause, explain the conflict, and obtain human review.
 - If an issue explicitly requires product or architecture discussion, ask the human owner concrete questions and do not close it without owner review.
