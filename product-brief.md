@@ -5,18 +5,19 @@ It is the only durable product artifact in the repository.
 
 ## Product vision
 
-Build a private life-assistant for the owner and his wife.
+Build a private life-assistant for the members of one small private group.
 
-The product should help both users quickly capture thoughts, reminders, plans, and tasks, primarily through voice notes, while preserving privacy, user control, and an auditable history of AI involvement.
+The product should help members quickly capture thoughts, reminders, plans, and tasks, primarily through voice notes, while preserving privacy, member control, and an auditable history of AI involvement.
 
 The product is private-first and is not intended to be a public SaaS.
 
 ## Current accepted decisions
 
-- The product is for two users only: the owner and his wife.
-- Each user has a separate identity and private personal data.
+- The product serves one private group, typically containing two to six members; it must not encode a two-user limit.
+- The owner and his wife are the initial members, but that launch context is not a domain constraint.
+- Each member has a separate identity, equal product capabilities, and private personal data.
 - Private content must not become shared automatically.
-- Original user content, transcription corrections, and structured AI interpretations must remain separate.
+- Original content created by a member, transcription corrections, and structured AI interpretations must remain separate.
 - AI output must never silently overwrite original content.
 - Deterministic application code must enforce authorization, ownership, isolation, destructive-action safeguards, scheduling, consistency, and other important business rules.
 - Mobile clients upload audio; the backend orchestrates transcription and other AI inference.
@@ -40,7 +41,7 @@ The current intended first release boundary is a small, useful vertical slice fo
 
 The likely shape of that first slice is:
 
-- two separate users with authentication;
+- separately authenticated members;
 - deterministic private/shared boundaries;
 - manual text-note creation;
 - creating a simple task from a note;
