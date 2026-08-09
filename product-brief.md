@@ -19,6 +19,11 @@ The product is private-first and is not intended to be a public SaaS.
 - Private content must not become shared automatically.
 - Original content created by a member, transcription corrections, and structured AI interpretations must remain separate.
 - AI output must never silently overwrite original content.
+- Membership is invite-only: an Invitation is single-use and expiring, all Active Members can see and revoke pending Invitations, and any Active Member can create one.
+- Members have equal product capabilities and there is no permanent administrator. Removing a Member requires unanimous confirmation from every unaffected Active Member; self-removal is always available.
+- A Member identity remains stable across devices and recovery. Recovery cannot expose private content, silently transfer identity, or automatically merge identities.
+- When a Member leaves, private content remains theirs and inaccessible to the group, while explicitly shared content remains shared. Shared Tasks preserve their original owner attribution and remain completable by remaining Members.
+- When the last Member leaves, the Private Group is archived, rejects new Invitations, and retains data until explicit deletion.
 - Deterministic application code must enforce authorization, ownership, isolation, destructive-action safeguards, scheduling, consistency, and other important business rules.
 - Mobile clients upload audio; the backend orchestrates transcription and other AI inference.
 - Product and architecture ambiguities are resolved through focused discovery and owner review before implementation.
