@@ -19,6 +19,9 @@ The product is private-first and is not intended to be a public SaaS.
 - Private content must not become shared automatically.
 - Original content created by a member, transcription corrections, and structured AI interpretations must remain separate.
 - AI output must never silently overwrite original content.
+- Direct instructions are the main action path: a clear instruction may create a scheduled Task and Reminder or complete a named Task. Ordinary notes do not cause AI to infer Tasks or reminders.
+- AI responsibility is limited to transcription, understanding supported Direct instructions, and adding editable tags or captions. Unclear instructions cause no action and remain available for Member review.
+- The relevant Member may view the history of the source, transcription, Direct instruction, parsed result, and resulting action. Shared visibility rules still protect private source content and provenance.
 - Membership is invite-only: an Invitation is single-use and expiring, all Active Members can see and revoke pending Invitations, and any Active Member can create one.
 - Members have equal product capabilities and there is no permanent administrator. Removing a Member requires unanimous confirmation from every unaffected Active Member; self-removal is always available.
 - A Member identity remains stable across devices and recovery. Recovery cannot expose private content, silently transfer identity, or automatically merge identities.
@@ -32,7 +35,7 @@ The product is private-first and is not intended to be a public SaaS.
 ## Open questions that still matter
 
 - What is the minimum useful first release?
-- Which actions may run automatically, and which always require confirmation?
+- Which additional Direct instructions, if any, should be added after the first release?
 - What are the initial domain concepts, fields, and lifecycles?
 - What should the morning digest include, when should it run, and how should it behave for shared items?
 - What hands-free behavior is safe, especially while cycling?

@@ -24,14 +24,19 @@ A separate member-authored revision to a transcription or other input representa
 **AI interpretation**:
 A structured, versioned proposal produced from a Capture, Source content, or Correction. It references the exact input it used, never silently replaces it, and may be rejected without creating a Task. A correction made after a Task exists produces a new proposal; the existing Task changes only after the Member chooses to apply it. Accepted interpretations and their source data remain stored alongside the resulting item.
 
+**Direct instruction**:
+A clear Member command that authorizes one supported action, such as “Add task with schedule: buy milk tomorrow” or “Mark task buy milk as completed”. The assistant parses the instruction but does not infer a broader intent. An unclear instruction causes no action and remains available for Member review. Direct instructions are distinct from AI interpretations.
+
 **Provenance**:
 The explicit record of source, correction, interpretation, and derivation links that explains how a durable item came to exist.
 
 **Note**:
 A durable human-readable item derived from a Capture or its provenance lineage. A Note preserves its source relationships rather than replacing them.
 
+AI may add editable tags and a caption to a Note, but ordinary Note content does not become a Task or Reminder without a Direct instruction or explicit Member action.
+
 **Task**:
-An actionable commitment derived from a Capture, Note, or accepted AI interpretation. A Task may have an owner, due information, and private or explicitly shared visibility. Its core information includes its title, details, status, source connection, Plan connection, and optional Reminder. An open Task may be updated while preserving its previous values in history. Similar Captures create separate Tasks unless a Member explicitly combines them; the assistant may suggest a possible duplicate but must not combine Tasks automatically. A later change to a completed Task creates new follow-up work rather than reopening the completed Task automatically.
+An actionable commitment created from a Capture, Note, accepted AI interpretation, or Direct instruction. A Task may have an owner, due information, and private or explicitly shared visibility. Its core information includes its title, details, status, source connection, Plan connection, and optional Reminder. An open Task may be updated while preserving its previous values in history. Similar Captures create separate Tasks unless a Member explicitly combines them; the assistant may suggest a possible duplicate but must not combine Tasks automatically. A later change to a completed Task creates new follow-up work rather than reopening the completed Task automatically.
 _Avoid_: Todo
 
 For the current product scope, Tasks are the first durable item type that may be explicitly shared. A Task's creator is immutable provenance; its owner is the Member responsible for it and may be explicitly reassigned. A newly created Task is owned by its creator by default. The owner may share the Task with the Private Group or withdraw that sharing. Other Active Members may view a Shared Task and edit its practical details, progress, status, and due information, but only the current owner may change its owner or sharing state. A Shared Task's due date and task-level Reminder are group-visible, while each Member's notification preferences and acknowledgment state remain private. Sharing a Task does not expose its private Capture, Source content, Correction, AI interpretation, or other provenance unless those items are shared separately.
