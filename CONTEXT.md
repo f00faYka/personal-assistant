@@ -12,9 +12,36 @@ _Avoid_: Family, household, tenant
 An independently authenticated person who belongs to the private group, has the same product capabilities as every other member, and has their own private data.
 _Avoid_: User, account, family member
 
+**Capture**:
+The immutable member-originated input event. A Capture may contain entered text or audio and preserves any associated transcription as a separate source artifact.
+
+**Source content**:
+The preserved payload of a Capture, including entered text or audio and its associated transcription. Source content is retained as product data until explicit deletion and is never overwritten by a correction or AI interpretation.
+
+**Correction**:
+A separate member-authored revision to a transcription or other input representation. A Correction leaves the source content intact and becomes part of the provenance lineage.
+
+**AI interpretation**:
+A structured, versioned proposal produced from a Capture, Source content, or Correction. It references the exact input it used, never silently replaces it, and may be rejected without creating a Task. A correction made after a Task exists produces a new proposal; the existing Task changes only after the Member chooses to apply it. Accepted interpretations and their source data remain stored alongside the resulting item.
+
+**Provenance**:
+The explicit record of source, correction, interpretation, and derivation links that explains how a durable item came to exist.
+
+**Note**:
+A durable human-readable item derived from a Capture or its provenance lineage. A Note preserves its source relationships rather than replacing them.
+
 **Task**:
-An actionable commitment derived from a Member's captured content. A Task may have an owner, due information, and private or explicitly shared visibility.
+An actionable commitment derived from a Capture, Note, or accepted AI interpretation. A Task may have an owner, due information, and private or explicitly shared visibility. Its core information includes its title, details, status, source connection, Plan connection, and optional Reminder. An open Task may be updated while preserving its previous values in history. Similar Captures create separate Tasks unless a Member explicitly combines them; the assistant may suggest a possible duplicate but must not combine Tasks automatically. A later change to a completed Task creates new follow-up work rather than reopening the completed Task automatically.
 _Avoid_: Todo
+
+**Reminder**:
+A scheduled notification or trigger attached to a Task or Note. A Reminder is scheduling metadata, not a separate source-content item; an actionable reminder request produces a Task with a Reminder attached. A Reminder can be fired while its Task remains open.
+
+**Plan**:
+An explicit grouping of Tasks and Notes around a goal or time horizon. A Plan organizes related work without becoming the source of that work, and remains active until a Member explicitly completes or archives it. A Note may become a Plan in the app while remaining stored as the Plan's description and source; a so-called subtask is an ordinary Task inside the Plan.
+
+**Related item**:
+An explicit, typed relationship between durable items. A Member creates a relationship with a clear action such as “Add this Note to the renovation Plan”; relatedness must not be inferred or added automatically only because content appears similar.
 
 **Needs review**:
 A state for captured content or an AI interpretation that the assistant could not classify or schedule confidently enough. It must remain visible to the Member for correction or acknowledgment.
