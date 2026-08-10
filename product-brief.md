@@ -24,6 +24,7 @@ The product is private-first and is not intended to be a public SaaS.
 - A Member identity remains stable across devices and recovery. Recovery cannot expose private content, silently transfer identity, or automatically merge identities.
 - When a Member leaves, private content remains theirs and inaccessible to the group, while explicitly shared content remains shared. Shared Tasks preserve their original owner attribution and remain completable by remaining Members.
 - When the last Member leaves, the Private Group is archived, rejects new Invitations, and retains data until explicit deletion.
+- Tasks are the first shareable durable item type. A newly created Task is owned by its creator by default, while creator provenance remains immutable and ownership can be explicitly reassigned. The current owner controls sharing and can withdraw it. Other Active Members can view and edit practical details, progress, status, and due information, add progress, acknowledge, and complete a Shared Task, without gaining access to private source or provenance data. Shared due dates and task-level Reminders are group-visible; notification preferences and acknowledgment state remain private.
 - Deterministic application code must enforce authorization, ownership, isolation, destructive-action safeguards, scheduling, consistency, and other important business rules.
 - Mobile clients upload audio; the backend orchestrates transcription and other AI inference.
 - Product and architecture ambiguities are resolved through focused discovery and owner review before implementation.
@@ -31,7 +32,6 @@ The product is private-first and is not intended to be a public SaaS.
 ## Open questions that still matter
 
 - What is the minimum useful first release?
-- What exact rules define private vs shared ownership and visibility changes?
 - Which actions may run automatically, and which always require confirmation?
 - What are the initial domain concepts, fields, and lifecycles?
 - What should the morning digest include, when should it run, and how should it behave for shared items?
