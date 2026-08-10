@@ -52,7 +52,7 @@ The likely shape of that first slice is:
 - separately authenticated members;
 - deterministic private/shared boundaries;
 - manual text-note creation;
-- creating a simple task from a note;
+- explicit Member creation of a simple task from a Note;
 - task viewing and completion;
 - authorization and isolation tests.
 
