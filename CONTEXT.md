@@ -19,6 +19,9 @@ _Avoid_: Todo
 **Needs review**:
 A state for captured content or an AI interpretation that the assistant could not classify or schedule confidently enough. It must remain visible to the Member for correction or acknowledgment.
 
+**Transcription confirmation**:
+The point at which a voice recording's transcription is accepted for downstream use. A normal transcription is confirmed automatically after a bounded review window if the Member does not respond; a severely unusable transcription remains in Needs review with its audio retained.
+
 **Digest**:
 A Member-facing summary of due Tasks, scheduled reminders, and items needing review. New items may appear when they are soon due or in an expandable additional section; an item leaves the digest after the Member actions on or acknowledges it.
 
