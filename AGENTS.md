@@ -19,9 +19,16 @@ Before starting work:
 
 ## Wayfinder
 
+- The canonical map is [Plan the private-group personal assistant roadmap](https://github.com/f00faYka/personal-assistant/issues/37). Open that map directly when Wayfinder is invoked; do not search the repository's full issue list unless this pointer is unavailable or the map has been explicitly replaced.
+- At Wayfinder startup, load the map body and child-issue relationship summaries first. Fetch an individual ticket body only after choosing the ticket; do not load every child issue by default.
 - After each completed Wayfinder session, commit all tracked repository changes produced by that session before handing off.
 - Use the resolved Wayfinder issue number as a zero-padded four-digit PASS prefix in the commit subject: `PASS-<issue number>: <summary>` (for example, issue 39 uses `PASS-0039`).
 - If a Wayfinder session changes no tracked files, do not create an empty commit.
+- At session end, provide a copy-paste continuation prompt containing the map's linked title and the next frontier ticket's linked title when one exists. Use this shape:
+
+  `$wayfinder Continue [Plan the private-group personal assistant roadmap](https://github.com/f00faYka/personal-assistant/issues/37). Take [<next frontier ticket title>](<ticket URL>), or choose the first frontier ticket if none is named.`
+
+- If the canonical map is closed or replaced, update this pointer in the same commit that establishes the replacement map.
 
 ## Git safety
 

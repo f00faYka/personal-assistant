@@ -37,5 +37,17 @@ A person whose membership in the Private Group has ended. Their private content 
 **Identity recovery**:
 The deliberate process by which a Member regains access to their existing identity after losing a device or authentication access. The identity remains stable across devices and recovery. Recovery must not grant support or developers access to private content, silently transfer the identity to another person, or automatically merge it with another identity.
 
+**Device session**:
+The revocable authenticated access granted to one device for an existing Member identity. A Member may have multiple device sessions; revoking one does not transfer or merge the Member identity.
+
+**Offline draft**:
+Original Member content captured while the client cannot confirm synchronization with the backend. It remains durable and visibly pending or failed until synchronized or explicitly resolved; it is not treated as completed server work.
+
+**Synchronized cache**:
+A bounded local copy of previously synchronized data available to the authenticated Member while offline. It may include the Member's private items and explicitly shared Tasks, but must not expose another Member's private data.
+
+**Pending synchronization**:
+The explicit client state for an Offline draft or permitted local change that has not yet received server confirmation. Synchronization may retry automatically, but failure must remain visible and must not silently discard the original.
+
 **Archived Private Group**:
 A Private Group with no Active Members. It accepts no new Invitations and retains its data until an explicit deletion action; leaving and deleting data are separate actions.
