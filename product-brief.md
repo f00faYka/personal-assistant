@@ -29,7 +29,7 @@ The product is private-first and is not intended to be a public SaaS.
 - When the last Member leaves, the Private Group is archived, rejects new Invitations, and retains data until explicit deletion.
 - Tasks are the first shareable durable item type. A newly created Task is owned by its creator by default, while creator provenance remains immutable and ownership can be explicitly reassigned. The current owner controls sharing and can withdraw it. Other Active Members can view and edit practical details, progress, status, and due information, add progress, acknowledge, and complete a Shared Task, without gaining access to private source or provenance data. Shared due dates and task-level Reminders are group-visible; notification preferences and acknowledgment state remain private.
 - Deterministic application code must enforce authorization, ownership, isolation, destructive-action safeguards, scheduling, consistency, and other important business rules.
-- Mobile clients upload audio; the backend orchestrates transcription and other AI inference.
+- Mobile clients upload audio; the backend orchestrates transcription, Direct-instruction parsing, and limited Note metadata such as tags and captions.
 - Product and architecture ambiguities are resolved through focused discovery and owner review before implementation.
 
 ## Open questions that still matter
