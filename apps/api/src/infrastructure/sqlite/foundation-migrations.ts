@@ -66,4 +66,29 @@ export const foundationMigrations: readonly Migration[] = [
       ) STRICT
     `,
   },
+  {
+    version: 6,
+    name: "create task and note outcomes",
+    sql: `
+      CREATE TABLE outcomes (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('task', 'note')),
+        member_id TEXT NOT NULL,
+        interpretation_id TEXT NOT NULL UNIQUE,
+        capture_id TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        title TEXT,
+        due_at TEXT,
+        status TEXT CHECK (status IS NULL OR status IN ('open')),
+        content TEXT,
+        review_state TEXT CHECK (review_state IS NULL OR review_state IN ('none', 'needs_review')),
+        created_at TEXT NOT NULL,
+        CHECK (
+          (kind = 'task' AND title IS NOT NULL AND status IS NOT NULL AND content IS NULL AND review_state IS NULL)
+          OR
+          (kind = 'note' AND title IS NULL AND status IS NULL AND content IS NOT NULL AND review_state IS NOT NULL)
+        )
+      ) STRICT
+    `,
+  },
 ];

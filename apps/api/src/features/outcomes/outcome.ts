@@ -1,0 +1,95 @@
+import { randomUUID } from "node:crypto";
+
+import type { Interpretation, InterpretationAction } from "../interpretations/interpretation.js";
+
+export type NoteReviewState = "none" | "needs_review";
+
+export interface TaskOutcome {
+  readonly kind: "task";
+  readonly id: string;
+  readonly memberId: string;
+  readonly interpretationId: string;
+  readonly captureId: string;
+  readonly sourceId: string;
+  readonly title: string;
+  readonly dueAt?: string;
+  readonly status: "open";
+  readonly createdAt: string;
+}
+
+export interface NoteOutcome {
+  readonly kind: "note";
+  readonly id: string;
+  readonly memberId: string;
+  readonly interpretationId: string;
+  readonly captureId: string;
+  readonly sourceId: string;
+  readonly content: string;
+  readonly reviewState: NoteReviewState;
+  readonly createdAt: string;
+}
+
+export type Outcome = TaskOutcome | NoteOutcome;
+
+export interface OutcomeInput {
+  readonly memberId: string;
+  readonly transcriptionText: string;
+  readonly interpretation: Pick<
+    Interpretation,
+    "id" | "captureId" | "sourceId" | "classification" | "action"
+  >;
+}
+
+export interface OutcomeRepository {
+  findByInterpretationId(interpretationId: string): Outcome | undefined;
+  create(outcome: Outcome): Outcome;
+}
+
+export class OutcomeService {
+  constructor(private readonly repository: OutcomeRepository) {}
+
+  materialize(input: OutcomeInput): Outcome | undefined {
+    const existing = this.repository.findByInterpretationId(input.interpretation.id);
+    if (existing) return existing;
+
+    const outcome = createOutcome(input);
+    return outcome === undefined ? undefined : this.repository.create(outcome);
+  }
+}
+
+function createOutcome(input: OutcomeInput): Outcome | undefined {
+  const { interpretation } = input;
+  const common = {
+    id: randomUUID(),
+    memberId: input.memberId,
+    interpretationId: interpretation.id,
+    captureId: interpretation.captureId,
+    sourceId: interpretation.sourceId,
+    createdAt: new Date().toISOString(),
+  };
+
+  if (interpretation.classification === "clear_supported") {
+    return createTask(common, interpretation.action);
+  }
+
+  return {
+    ...common,
+    kind: "note",
+    content: input.transcriptionText,
+    reviewState: interpretation.classification === "ordinary" ? "none" : "needs_review",
+  };
+}
+
+function createTask(
+  common: Omit<TaskOutcome, "kind" | "title" | "dueAt" | "status">,
+  action: InterpretationAction | undefined,
+): TaskOutcome | undefined {
+  if (action?.kind !== "create_task") return undefined;
+  return {
+    ...common,
+    kind: "task",
+    title: action.title,
+    ...(action.dueAt === undefined ? {} : { dueAt: action.dueAt }),
+    status: "open",
+  };
+}
