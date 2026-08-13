@@ -15,6 +15,7 @@ Thumbs.db
 *.local
 
 # Logs, caches, test output, and generated artifacts
+node_modules/
 *.log
 coverage/
 dist/
