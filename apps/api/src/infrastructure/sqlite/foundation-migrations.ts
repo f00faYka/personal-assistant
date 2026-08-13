@@ -27,4 +27,24 @@ export const foundationMigrations: readonly Migration[] = [
         CHECK (storage_state IN ('pending', 'stored'))
     `,
   },
+  {
+    version: 4,
+    name: "create transcriptions",
+    sql: `
+      CREATE TABLE transcriptions (
+        id TEXT PRIMARY KEY,
+        capture_id TEXT NOT NULL UNIQUE,
+        source_id TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'succeeded', 'failed')),
+        text TEXT,
+        provider TEXT,
+        model TEXT,
+        error TEXT,
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT
+    `,
+  },
 ];

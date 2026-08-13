@@ -102,6 +102,11 @@ export class CaptureService {
     }
     return capture;
   }
+
+  async readAudio(id: string): Promise<Uint8Array> {
+    const capture = this.get(id);
+    return this.blobStorage.read(blobIdentifier(capture));
+  }
 }
 
 export class InvalidCaptureSubmissionError extends Error {
