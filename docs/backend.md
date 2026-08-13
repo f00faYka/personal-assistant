@@ -32,18 +32,18 @@ The process optionally loads `.env` and then validates these values:
 
 Copy `.env.example` to `.env` to override the defaults. `.env`, SQLite files, `local-data/`, generated output, and other runtime-data directories are excluded from version control.
 
-Startup creates the configured runtime directories and applies every unapplied migration in numeric version order. Applied versions are recorded in `schema_migrations`; a failed migration is rolled back and reported as a `MigrationError`.
+Startup creates the configured runtime directories and applies every unapplied migration in numeric version order. Applied versions are recorded in `schema_migrations`; a failed migration is rolled back and reported as a `MigrationError`. Migration 5 adds the interpretation record used by the next processing stage.
 
 ## Selected libraries and boundaries
 
 - Fastify 5 owns the local HTTP process and testable request lifecycle.
 - Zod 4 validates environment configuration before startup.
 - `better-sqlite3` 12 provides the SQLite connection and transaction primitive.
-- Vitest 4 exercises the health, migration, and blob-storage seams.
+- Vitest 4 exercises the health, migration, blob-storage, capture, transcription, and interpretation seams.
 - TypeScript 5.9 compiles in strict mode; `tsx` runs the local development entry point.
 - Node filesystem APIs implement blob persistence behind the typed `BlobStorage` port.
 
-The backend is a modular monolith. Feature modules own their use cases, rules, persistence mappings, and HTTP handlers. They may depend on typed ports and explicit contracts, but must not import SQLite, filesystem paths, another feature's tables, or provider-specific implementation details. Infrastructure adapters live under `apps/api/src/infrastructure`; shared ports live under `apps/api/src/shared`. This foundation intentionally contains no Capture, Transcription, Interpretation, Task, Note, Review, authentication, or provider behavior.
+The backend is a modular monolith. Feature modules own their use cases, rules, persistence mappings, and HTTP handlers. They may depend on typed ports and explicit contracts, but must not import SQLite, filesystem paths, another feature's tables, or provider-specific implementation details. Infrastructure adapters live under `apps/api/src/infrastructure`; shared ports live under `apps/api/src/shared`. Task/Note outcomes, Review, authentication, and shared visibility remain outside the current implementation.
 
 ## Capture contract
 
@@ -51,4 +51,6 @@ The backend is a modular monolith. Feature modules own their use cases, rules, p
 
 The `(memberId, idempotencyKey)` pair is unique. Retrying the same submission returns the original Capture and source; reusing the key with different audio is rejected with `409 Conflict`. Capture records and original audio are never updated by this contract.
 
-Transcription is a separate durable feature record keyed one-to-one to a Capture. It moves through `pending`, `processing`, `succeeded`, and `failed` states, retains retry count and provider/model metadata, and stores transcription text without replacing source content. Failed work remains visible and may be retried. The transcription provider and Capture audio reader are typed ports; provider-specific behavior is not part of the feature module. Correction, interpretation, durable Task/Note outcomes, and shared visibility are owned by later tickets.
+Transcription is a separate durable feature record keyed one-to-one to a Capture. It moves through `pending`, `processing`, `succeeded`, and `failed` states, retains retry count and provider/model metadata, and stores transcription text without replacing source content. Failed work remains visible and may be retried. The transcription provider and Capture audio reader are typed ports; provider-specific behavior is not part of the feature module.
+
+Interpretation is a separate durable record keyed one-to-one to a succeeded transcription. It preserves the source and transcription identifiers, catalog version, model, raw model output, and deterministic classification. The `direct-instructions.v1` catalog accepts only `create_task` and `complete_task` actions; `none` proposals are classified as `ordinary` or `ambiguous`. Malformed output, unsupported actions, and catalog-version mismatches are classified as `unsupported` with a rejection reason and never execute an action. Correction, durable Task/Note outcomes, and shared visibility are owned by later tickets.

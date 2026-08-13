@@ -47,4 +47,23 @@ export const foundationMigrations: readonly Migration[] = [
       ) STRICT
     `,
   },
+  {
+    version: 5,
+    name: "create interpretations",
+    sql: `
+      CREATE TABLE interpretations (
+        id TEXT PRIMARY KEY,
+        capture_id TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        transcription_id TEXT NOT NULL UNIQUE,
+        catalog_version TEXT NOT NULL,
+        model TEXT NOT NULL,
+        raw_output_json TEXT NOT NULL,
+        classification TEXT NOT NULL CHECK (classification IN ('clear_supported', 'ordinary', 'ambiguous', 'unsupported')),
+        action_json TEXT,
+        rejection_reason TEXT,
+        created_at TEXT NOT NULL
+      ) STRICT
+    `,
+  },
 ];
