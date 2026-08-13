@@ -1,13 +1,24 @@
 import { loadConfiguration, loadLocalEnvironment } from "./configuration.js";
+import { CaptureService } from "./features/captures/capture.js";
 import { buildApi } from "./http/build-api.js";
+import { FileSystemBlobStorage } from "./infrastructure/blob-storage/filesystem-blob-storage.js";
 import { prepareRuntime } from "./runtime.js";
+import { SqliteCaptureRepository } from "./infrastructure/sqlite/sqlite-capture-repository.js";
 
 async function start(): Promise<void> {
   loadLocalEnvironment();
   const configuration = loadConfiguration(process.env);
   await prepareRuntime(configuration);
 
-  const application = buildApi({ logger: true });
+  const repository = new SqliteCaptureRepository(configuration.databasePath);
+  const application = buildApi({
+    logger: true,
+    captureService: new CaptureService(
+      repository,
+      new FileSystemBlobStorage(configuration.blobRoot),
+    ),
+  });
+  application.addHook("onClose", () => repository.close());
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
       void application.close();

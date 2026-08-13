@@ -44,3 +44,9 @@ Startup creates the configured runtime directories and applies every unapplied m
 - Node filesystem APIs implement blob persistence behind the typed `BlobStorage` port.
 
 The backend is a modular monolith. Feature modules own their use cases, rules, persistence mappings, and HTTP handlers. They may depend on typed ports and explicit contracts, but must not import SQLite, filesystem paths, another feature's tables, or provider-specific implementation details. Infrastructure adapters live under `apps/api/src/infrastructure`; shared ports live under `apps/api/src/shared`. This foundation intentionally contains no Capture, Transcription, Interpretation, Task, Note, Review, authentication, or provider behavior.
+
+## Capture contract
+
+`POST /captures` accepts a JSON body with `memberId`, `idempotencyKey`, `audioBase64`, `contentType`, and ISO `capturedAt`. The audio content type must be an `audio/*` media type and the decoded payload must be non-empty. A successful response contains one stable `capture.id` and `capture.sourceId`, plus source metadata including byte length and SHA-256 digest. The original audio is stored below `API_BLOB_ROOT/captures/<capture-id>/original-audio`; `GET /captures/<capture-id>` returns metadata without audio bytes.
+
+The `(memberId, idempotencyKey)` pair is unique. Retrying the same submission returns the original Capture and source; reusing the key with different audio is rejected with `409 Conflict`. Capture records and original audio are never updated by this contract. Authentication, transcription, correction, interpretation, durable Task/Note outcomes, and shared visibility are owned by later tickets.

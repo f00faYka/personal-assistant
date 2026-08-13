@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import {
   FileSystemBlobStorage,
+  BlobAlreadyExistsError,
   InvalidBlobIdentifierError,
 } from "./filesystem-blob-storage.js";
 
@@ -81,6 +82,17 @@ describe("FileSystemBlobStorage", () => {
       InvalidBlobIdentifierError,
     );
     await expect(readFile(outsideFile)).resolves.toEqual(Buffer.from([9]));
+  });
+
+  test("rejects mutation of an existing blob", async () => {
+    const rootDirectory = await createRootDirectory();
+    const storage = new FileSystemBlobStorage(rootDirectory);
+    await storage.write("capture/original.bin", Uint8Array.from([1]));
+
+    await expect(storage.write("capture/original.bin", Uint8Array.from([2]))).rejects.toThrowError(
+      BlobAlreadyExistsError,
+    );
+    await expect(storage.read("capture/original.bin")).resolves.toEqual(Uint8Array.from([1]));
   });
 
   async function createRootDirectory(): Promise<string> {

@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open } from "node:fs/promises";
+import { lstat, link, mkdir, open, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { relative, resolve, sep } from "node:path";
 
 import type { BlobStorage } from "../../shared/blob-storage.js";
@@ -16,15 +17,22 @@ export class FileSystemBlobStorage implements BlobStorage {
     await this.prepareParentDirectories(filePath, identifier);
     await this.rejectSymbolicLink(filePath, identifier, true);
 
-    const file = await this.openWithoutFollowingSymbolicLinks(
-      filePath,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC,
-      identifier,
-    );
+    const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
+    const file = await open(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
     try {
       await file.writeFile(content);
     } finally {
       await file.close();
+    }
+    try {
+      await link(temporaryPath, filePath);
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "EEXIST") {
+        throw new BlobAlreadyExistsError(identifier);
+      }
+      throw error;
+    } finally {
+      await rm(temporaryPath, { force: true });
     }
   }
 
@@ -125,6 +133,9 @@ export class FileSystemBlobStorage implements BlobStorage {
       if (isErrnoException(error) && error.code === "ELOOP") {
         throw new InvalidBlobIdentifierError(identifier);
       }
+      if (isErrnoException(error) && error.code === "EEXIST") {
+        throw new BlobAlreadyExistsError(identifier);
+      }
       throw error;
     }
   }
@@ -134,6 +145,13 @@ export class InvalidBlobIdentifierError extends Error {
   constructor(identifier: string) {
     super(`Unsafe blob identifier: ${identifier}`);
     this.name = "InvalidBlobIdentifierError";
+  }
+}
+
+export class BlobAlreadyExistsError extends Error {
+  constructor(identifier: string) {
+    super(`Blob already exists: ${identifier}`);
+    this.name = "BlobAlreadyExistsError";
   }
 }
 
