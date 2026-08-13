@@ -1,0 +1,27 @@
+{
+  "name": "personal-assistant",
+  "private": true,
+  "packageManager": "npm@11.17.0",
+  "workspaces": [
+    "apps/api"
+  ],
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "esbuild@0.28.2": true,
+    "fsevents": false
+  },
+  "scripts": {
+    "build": "npm run build --workspace @personal-assistant/api",
+    "start": "npm run start --workspace @personal-assistant/api",
+    "dev": "npm run dev --workspace @personal-assistant/api",
+    "typecheck": "npm run typecheck --workspace @personal-assistant/api",
+    "test": "npm run test --workspace @personal-assistant/api",
+    "test:health": "npm run test:health --workspace @personal-assistant/api",
+    "test:migrations": "npm run test:migrations --workspace @personal-assistant/api",
+    "test:blobs": "npm run test:blobs --workspace @personal-assistant/api",
+    "test:watch": "npm run test:watch --workspace @personal-assistant/api"
+  }
+}

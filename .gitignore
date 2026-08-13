@@ -28,3 +28,6 @@ tmp/
 /local-data/
 /uploads/
 /recordings/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
