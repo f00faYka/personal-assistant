@@ -17,6 +17,11 @@ Before starting work:
 - Update the brief if implementation changes the agreed product direction.
 - Avoid committing secrets or private runtime data.
 
+## Implementation
+
+- When `$implement` is invoked without a ticket, read [`implementation-backlog.md`](implementation-backlog.md) and select its current frontier ticket.
+- For implementation tickets, follow the branch, commit, review, and pull-request workflow in [`implementation-backlog.md`](implementation-backlog.md). Use one ticket per branch and target `main`.
+
 ## Wayfinder
 
 - The canonical map is [Plan the private-group personal assistant roadmap](https://github.com/f00faYka/personal-assistant/issues/37). Open that map directly when Wayfinder is invoked; do not search the repository's full issue list unless this pointer is unavailable or the map has been explicitly replaced.
