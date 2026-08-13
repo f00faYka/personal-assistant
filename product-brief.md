@@ -32,28 +32,42 @@ The product is private-first and is not intended to be a public SaaS.
 - Mobile clients upload audio; the backend orchestrates transcription, Direct-instruction parsing, and limited Note metadata such as tags and captions.
 - Product and architecture ambiguities are resolved through focused discovery and owner review before implementation.
 
-## Open questions that still matter
+## Post-MVP questions and evidence gates
 
-- What is the minimum useful first release?
 - Which additional Direct instructions, if any, should be added after the first release?
-- What are the initial domain concepts, fields, and lifecycles?
-- What should the morning digest include, when should it run, and how should it behave for shared items?
-- What hands-free behavior is safe, especially while cycling?
-- Which devices, accounts, and offline behaviors are in scope first?
-- What backend, database, storage, job, push, deployment, and operational choices best fit the project?
-- Which local AI runtime, transcription stack, and provider boundaries should be used?
+- What evidence should authorize Personal reliability capabilities such as notification Reminders and Digests?
+- What evidence should authorize Private Group collaboration and its identity, invitation, sharing, and Shared Task behavior?
+- What hands-free activation, interruption, failure recovery, read-aloud, and cycling-safety behavior is acceptable?
+- Which later feature-extension seams and migrations are needed after later capabilities are prioritized?
+- Which model and transcription evaluations and quality thresholds are justified by observed tasks, latency needs, and privacy constraints?
+- Which hosted infrastructure or third-party integrations, if any, are justified by real member workflows?
 
-## Intended first release boundary
+## Accepted first release (MVP) boundary
 
-The current intended first release boundary is a small, useful vertical slice focused on core capture and task handling, not voice automation or full AI orchestration.
+The first release is the smallest genuinely useful product release and tests the core audio-to-Task assumption. It is an MVP boundary, not the end of the product roadmap.
 
-The likely shape of that first slice is:
+The first release is a staged, single-Member, iOS-focused React Native slice.
 
-- separately authenticated members;
-- deterministic private/shared boundaries;
-- manual text-note creation;
-- explicit Member creation of a simple task from a Note;
-- task viewing and completion;
-- authorization and isolation tests.
+### Stage 1: online audio-to-result
 
-This is still a candidate boundary, not an accepted implementation commitment.
+- start an explicit in-app voice Capture from the existing list;
+- preserve the original audio, transcription, correction, interpretation, classification, and resulting durable item as separate traceable records;
+- transcribe and interpret automatically using the supported versioned Direct-instruction catalog;
+- create exactly one Task for a clear supported Direct instruction, without a second confirmation;
+- create exactly one Note for ordinary, non-Task, ambiguous, or unsupported content; ambiguous and unsupported results are marked `Needs review` and create no Task;
+- show the accepted result-first preview, with a default 15-second unattended save window; opening detailed review stops the timer and `Save` commits immediately;
+- allow the Member to edit the resulting Task or Note and complete a Task without overwriting source content;
+- preserve the Capture and expose a durable failure or review state when processing fails;
+- allow non-notifying due information on Tasks, but do not deliver scheduled notification Reminders.
+
+Manual Note creation is an explicit action from the review view, not a separate standalone typed-capture entry point in Stage 1.
+
+### Stage 2: offline continuity and explicit conversion
+
+- preserve audio or text as a durable `Offline draft` when the backend cannot confirm synchronization;
+- show the draft as visibly pending, disabled, or unconfirmed until server confirmation;
+- synchronize drafts idempotently when connectivity returns, preserving originals across retry or failure;
+- keep offline Task editing, offline completion, and conflict resolution out of this stage;
+- let a Member explicitly convert a saved Note into a Task by mutating the existing item in place, retaining its identity and provenance and creating no duplicate.
+
+Authentication, multi-Member support, sharing, notification Reminders, Plans, Digests, hands-free activation, and broader AI automation remain deferred to later roadmap phases. The first release does not establish the final authorization or sharing implementation, but later work must preserve those domain boundaries.
