@@ -64,3 +64,13 @@ Notes use the same integer version for optimistic concurrency. `PATCH /notes/<no
 `GET /captures/<capture-id>/review` returns a read-only review contract with `state`, `capture`, `source`, `transcription`, `correction`, `interpretation`, `outcome`, and `failure` fields. The records remain separate and are connected by their stable identifiers; `correction` is `null` when no correction exists, and the runtime leaves its optional lookup seam unconfigured until correction persistence is implemented. The source includes a stable blob identifier without exposing filesystem paths. Missing records are returned as `null`, while a failed transcription is returned as a present record with `state: "failed"` and a populated `failure` object.
 
 The lifecycle state is deterministic: an un-stored Capture or missing/in-progress downstream record is `pending`; a failed transcription is `failed`; an ambiguous or unsupported Note outcome is `needs_review`; and a chain with a durable outcome is `completed`. The source record contains an immutable audio-content descriptor only and never contains corrected or interpreted text.
+
+## Member item list
+
+`GET /items?memberId=<member>&limit=<1..100>&cursor=<opaque>` returns a stable, newest-first page of the Member's Stage 1 list. Each entry is one of:
+
+- `kind: "task"`, with `state` `open` or `completed`;
+- `kind: "note"`, with `state` `none` or `needs_review`; or
+- `kind: "capture"`, with `state` `pending` or `failed` while processing has not produced a durable item.
+
+Every entry includes a `detailUrl` for its provenance/review contract. The optional `nextCursor` is an opaque keyset cursor based on capture creation time and ID. It keeps pagination order stable when an entry changes processing state. The list is single-Member for the MVP; authentication and cross-Member filtering remain outside this contract.
