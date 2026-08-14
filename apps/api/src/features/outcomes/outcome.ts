@@ -28,6 +28,7 @@ export interface NoteOutcome {
   readonly sourceId: string;
   readonly content: string;
   readonly reviewState: NoteReviewState;
+  readonly version: number;
   readonly createdAt: string;
 }
 
@@ -52,12 +53,31 @@ export interface OutcomeRepository {
     expectedVersion: number,
     changes: TaskChanges,
   ): TaskOutcome | undefined;
+  updateNote(
+    noteId: string,
+    memberId: string,
+    expectedVersion: number,
+    changes: NoteChanges,
+  ): NoteOutcome | undefined;
 }
 
 export interface TaskChanges {
   readonly title?: string;
   readonly dueAt?: string | null;
   readonly status?: TaskStatus;
+}
+
+export interface NoteChanges {
+  readonly content?: string;
+  readonly reviewState?: NoteReviewState;
+}
+
+export interface ReviewNoteInput {
+  readonly memberId: string;
+  readonly interpretationId: string;
+  readonly captureId: string;
+  readonly sourceId: string;
+  readonly content: string;
 }
 
 export class TaskNotFoundError extends Error {
@@ -78,6 +98,27 @@ export class ConcurrentTaskUpdateError extends Error {
   constructor(taskId: string) {
     super(`Task was changed by another request: ${taskId}`);
     this.name = "ConcurrentTaskUpdateError";
+  }
+}
+
+export class NoteNotFoundError extends Error {
+  constructor(noteId: string) {
+    super(`Note not found: ${noteId}`);
+    this.name = "NoteNotFoundError";
+  }
+}
+
+export class InvalidNoteMutationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidNoteMutationError";
+  }
+}
+
+export class ConcurrentNoteUpdateError extends Error {
+  constructor(noteId: string) {
+    super(`Note was changed by another request: ${noteId}`);
+    this.name = "ConcurrentNoteUpdateError";
   }
 }
 
@@ -132,6 +173,61 @@ export class TaskService {
   }
 }
 
+export class NoteService {
+  constructor(private readonly repository: Pick<OutcomeRepository, "findById" | "updateNote" | "findByInterpretationId" | "create">) {}
+
+  saveFromReview(input: ReviewNoteInput): NoteOutcome {
+    validateNoteChanges({ content: input.content });
+    const existing = this.repository.findByInterpretationId(input.interpretationId);
+    if (existing) {
+      if (existing.kind !== "note") throw new InvalidNoteMutationError("a Task already exists for this review");
+      if (existing.memberId !== input.memberId || existing.captureId !== input.captureId || existing.sourceId !== input.sourceId) {
+        throw new InvalidNoteMutationError("review provenance does not match the existing Note");
+      }
+      if (existing.reviewState === "none") return existing;
+      const updated = this.repository.updateNote(existing.id, input.memberId, existing.version, {
+        content: input.content,
+        reviewState: "none",
+      });
+      if (!updated) throw new ConcurrentNoteUpdateError(existing.id);
+      return updated;
+    }
+    return this.repository.create({
+      kind: "note",
+      id: randomUUID(),
+      memberId: input.memberId,
+      interpretationId: input.interpretationId,
+      captureId: input.captureId,
+      sourceId: input.sourceId,
+      content: input.content,
+      reviewState: "none",
+      version: 0,
+      createdAt: new Date().toISOString(),
+    }) as NoteOutcome;
+  }
+
+  edit(
+    noteId: string,
+    memberId: string,
+    expectedVersion: number,
+    changes: NoteChanges,
+  ): NoteOutcome {
+    const note = this.getNote(noteId, memberId);
+    validateNoteChanges(changes);
+    const updated = this.repository.updateNote(noteId, memberId, expectedVersion, changes);
+    if (!updated) throw new ConcurrentNoteUpdateError(note.id);
+    return updated;
+  }
+
+  private getNote(noteId: string, memberId: string): NoteOutcome {
+    const outcome = this.repository.findById(noteId);
+    if (!outcome || outcome.kind !== "note" || outcome.memberId !== memberId) {
+      throw new NoteNotFoundError(noteId);
+    }
+    return outcome;
+  }
+}
+
 function validateTaskChanges(changes: TaskChanges): void {
   if (Object.keys(changes).length === 0) {
     throw new InvalidTaskMutationError("at least one Task field must change");
@@ -144,6 +240,18 @@ function validateTaskChanges(changes: TaskChanges): void {
   }
   if ("status" in changes && changes.status !== "completed") {
     throw new InvalidTaskMutationError("Tasks can only transition from open to completed");
+  }
+}
+
+function validateNoteChanges(changes: NoteChanges): void {
+  if (Object.keys(changes).length === 0) {
+    throw new InvalidNoteMutationError("at least one Note field must change");
+  }
+  if ("content" in changes && (!changes.content || changes.content.trim().length === 0)) {
+    throw new InvalidNoteMutationError("content must not be empty");
+  }
+  if ("reviewState" in changes && changes.reviewState !== "none" && changes.reviewState !== "needs_review") {
+    throw new InvalidNoteMutationError("invalid Note review state");
   }
 }
 
@@ -174,6 +282,7 @@ function createOutcome(input: OutcomeInput): Outcome | undefined {
     kind: "note",
     content: input.transcriptionText,
     reviewState: interpretation.classification === "ordinary" ? "none" : "needs_review",
+    version: 0,
   };
 }
 
