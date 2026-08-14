@@ -16,7 +16,7 @@ export interface CaptureSubmitter {
     readonly idempotencyKey: string;
     readonly audio: RecordedAudio;
     readonly capturedAt: string;
-  }): Promise<void>;
+  }): Promise<{ readonly captureId: string }>;
 }
 
 export function createCaptureSubmitter(
@@ -40,8 +40,17 @@ export function createCaptureSubmitter(
       if (!response.ok) {
         throw new Error(`Unable to submit Capture (${response.status})`);
       }
+      const body: unknown = await response.json();
+      if (!isCaptureSubmissionResponse(body)) throw new Error("Invalid Capture submission response");
+      return { captureId: body.capture.id };
     },
   };
+}
+
+function isCaptureSubmissionResponse(value: unknown): value is { readonly capture: { readonly id: string } } {
+  return typeof value === "object" && value !== null && "capture" in value
+    && typeof value.capture === "object" && value.capture !== null && "id" in value.capture
+    && typeof value.capture.id === "string";
 }
 
 export function createIdempotencyKey(): string {

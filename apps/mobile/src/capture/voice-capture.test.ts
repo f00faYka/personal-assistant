@@ -4,15 +4,15 @@ import { createCaptureSubmitter, createIdempotencyKey } from "./voice-capture";
 
 describe("Capture submission client", () => {
   test("submits the recorded audio using the backend contract", async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 201 }));
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ capture: { id: "capture-1" } }), { status: 201 }));
     const submitter = createCaptureSubmitter("http://api.test", async () => "AQI=", fetcher);
 
-    await submitter.submit({
+    await expect(submitter.submit({
       memberId: "member-1",
       idempotencyKey: "capture-key",
       audio: { uri: "file:///capture.m4a", contentType: "audio/m4a" },
       capturedAt: "2026-08-14T10:00:00.000Z",
-    });
+    })).resolves.toEqual({ captureId: "capture-1" });
 
     expect(fetcher).toHaveBeenCalledWith("http://api.test/captures", expect.objectContaining({
       method: "POST",

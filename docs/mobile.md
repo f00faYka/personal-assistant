@@ -33,7 +33,9 @@ The list's `Record a Capture` action starts the explicit in-app microphone flow.
 
 Submitting sends one `POST /captures` request with the Member ID, the `.m4a` audio as base64, its content type, capture timestamp, and a stable idempotency key. A failed upload keeps the local recording and offers `Retry submission`; it does not display server confirmation or invent a Task/Note. Hands-free, background, Siri, and offline-draft capture remain deferred.
 
-The Expo config plugin supplies the iOS microphone permission message. Recording is unavailable in the iOS simulator, so the human review gate must use a physical iPhone.
+After the server accepts a Capture, the client polls `GET /items` for that Capture's stable ID. The screen shows `Processing your Capture…` while the result is pending, then shows exactly one Task or Note in a result-first preview. The 15-second unattended-save window starts only when that result exists; `Save` or expiry is idempotent, and duplicate or stale list responses cannot restart the timer. A failed processing state remains visible and keeps the original Capture available for review.
+
+If the server does not produce a result within 30 seconds, polling stops and the screen reports that processing has not been confirmed; the original Capture remains stored on the server. A detailed review destination is part of the later review ticket. This timeout prevents an unconfigured or unavailable processing provider from appearing as an endless successful load. The Expo config plugin supplies the iOS microphone permission message. Recording is unavailable in the iOS simulator, so the human review gate must use a physical iPhone.
 
 ## Starting the API and Expo together
 

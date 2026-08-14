@@ -3,6 +3,7 @@ import { ActivityIndicator, FlatList, Pressable, RefreshControl, SafeAreaView, S
 
 import { createIdempotencyKey, type CaptureSubmitter, type RecordedAudio, type VoiceRecorder } from "../capture/voice-capture";
 import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, type ListState, type MemberListItem } from "./member-items";
+import { beginPreview, expirePreview, resolvePreview, savePreview, timeOutPreview, type PreviewItem, type PreviewState } from "../preview/result-preview";
 
 interface MemberListScreenProps {
   readonly apiBaseUrl: string;
@@ -24,6 +25,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [capture, setCapture] = useState<CaptureState>({ status: "idle" });
+  const [preview, setPreview] = useState<PreviewState | null>(null);
   const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0);
   const submissionInFlight = useRef(false);
   const captureKey = useRef<string | null>(null);
@@ -98,18 +100,53 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     submissionInFlight.current = true;
     setCapture({ status: "submitting" });
     try {
-      await captureSubmitter.submit({ memberId, idempotencyKey: captureKey.current, audio, capturedAt: new Date().toISOString() });
+      const result = await captureSubmitter.submit({ memberId, idempotencyKey: captureKey.current, audio, capturedAt: new Date().toISOString() });
       captureKey.current = null;
       setCapture({ status: "idle" });
-      await load(true);
+      setPreview(beginPreview(result.captureId));
     } catch (error) {
       setCapture({ status: "failed", audio, message: error instanceof Error ? error.message : "Unable to submit Capture" });
     } finally {
       submissionInFlight.current = false;
     }
-  }, [captureSubmitter, load, memberId]);
+  }, [captureSubmitter, memberId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!preview || preview.status !== "processing") return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const page = await client.list(memberId);
+        if (cancelled) return;
+        setState(listStateFromPage(page));
+        setPreview((current) => current ? resolvePreview(current, page.items, Date.now()) : current);
+      } catch {
+        // Keep the processing state honest; the next poll can recover a transient read failure.
+      }
+      if (!cancelled) globalThis.setTimeout(() => void poll(), 1000);
+    };
+    void poll();
+    return () => { cancelled = true; };
+  }, [client, memberId, preview]);
+
+  useEffect(() => {
+    if (!preview || preview.status !== "preview") return;
+    const timer = globalThis.setTimeout(() => setPreview((current) => current ? expirePreview(current, Date.now()) : current), Math.max(0, preview.expiresAt - Date.now()));
+    return () => globalThis.clearTimeout(timer);
+  }, [preview]);
+
+  useEffect(() => {
+    if (!preview || preview.status !== "processing") return;
+    const timer = globalThis.setTimeout(() => setPreview((current) => current ? timeOutPreview(current, Date.now()) : current), Math.max(0, preview.startedAt + 30_000 - Date.now()));
+    return () => globalThis.clearTimeout(timer);
+  }, [preview]);
+
+  const saveResultPreview = useCallback(() => {
+    setPreview((current) => current ? savePreview(current) : current);
+    void load(true);
+  }, [load]);
 
   useEffect(() => {
     if (capture.status !== "recording") {
@@ -131,6 +168,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
         {voiceRecorder && capture.status === "idle" ? <Pressable accessibilityRole="button" accessibilityLabel="Record a voice Capture" onPress={() => void startCapture()} style={styles.captureButton}><Text style={styles.captureButtonText}>Record a Capture</Text></Pressable> : null}
       </View>
       {voiceRecorder && capture.status !== "idle" ? <CapturePanel state={capture} recordingElapsedSeconds={recordingElapsedSeconds} onStop={() => void stopCapture()} onCancel={() => void cancelCapture()} onSubmit={(audio) => void submitCapture(audio)} /> : null}
+      {preview ? <ResultPreview state={preview} onSave={saveResultPreview} /> : null}
       {state.status === "loading" && state.items.length === 0 ? <LoadingState /> : null}
       {state.status === "error" && state.items.length === 0 ? <ErrorState message={state.message} onRetry={() => void load()} /> : null}
       {state.status === "ready" && state.items.length === 0 ? <EmptyState onRefresh={() => void load(true)} /> : null}
@@ -149,6 +187,18 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       ) : null}
     </SafeAreaView>
   );
+}
+
+function ResultPreview({ state, onSave }: { readonly state: PreviewState; readonly onSave: () => void }) {
+  if (state.status === "processing") return <View accessibilityRole="alert" style={styles.previewPanel}><ActivityIndicator /><Text style={styles.captureTitle}>Processing your Capture…</Text><Text style={styles.captureText}>Your result will appear here when the server confirms it.</Text></View>;
+  if (state.status === "failed") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Capture processing failed</Text><Text style={styles.captureText}>Your original Capture remains stored on the server.</Text></View>;
+  if (state.status === "timed_out") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Processing is taking longer than expected</Text><Text style={styles.captureText}>The server has not confirmed a result. Your original Capture remains stored on the server.</Text></View>;
+  if (state.status === "saved") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Saved</Text><Text style={styles.captureText}>{previewTitle(state.item)}</Text></View>;
+  return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.previewEyebrow}>RESULT</Text><Text style={styles.captureTitle}>{previewTitle(state.item)}</Text>{state.item.kind === "note" ? <Text style={styles.captureText}>{state.item.content}</Text> : state.item.dueAt ? <Text style={styles.captureText}>Due {formatDate(state.item.dueAt)}</Text> : null}<Pressable accessibilityRole="button" accessibilityLabel="Save result" onPress={onSave} style={styles.retry}><Text style={styles.retryText}>Save</Text></Pressable></View>;
+}
+
+function previewTitle(item: PreviewItem): string {
+  return item.kind === "task" ? item.title : item.content;
 }
 
 function CapturePanel({ state, recordingElapsedSeconds, onStop, onCancel, onSubmit }: { readonly state: CaptureState; readonly recordingElapsedSeconds: number; readonly onStop: () => void; readonly onCancel: () => void; readonly onSubmit: (audio: RecordedAudio) => void }) {
@@ -193,5 +243,5 @@ function formatDuration(totalSeconds: number): string { const minutes = Math.flo
 const cardTitleStyle = { color: "#24221F", fontSize: 18, fontWeight: "600" as const, lineHeight: 24 };
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, header: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 34, fontWeight: "700", marginTop: 6 }, captureButton: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 12, paddingHorizontal: 16, paddingVertical: 11, alignSelf: "flex-start" }, captureButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, actionButton: { alignItems: "center", flex: 1, height: 48, justifyContent: "center", paddingHorizontal: 12 }, actionPrimaryButton: { alignSelf: "stretch", marginTop: 0 }, actionButtonContent: { alignItems: "center", flexDirection: "row", gap: 6 }, actionIcon: { fontSize: 16, fontWeight: "700", lineHeight: 18 }, capturePanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, recordingPanel: { backgroundColor: "#FCE8E5", borderColor: "#E5A49B", borderWidth: 1 }, captureTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, recordingTitle: { color: "#B43C32", fontSize: 17, fontWeight: "700" }, recordingText: { color: "#8C3D25", fontSize: 15, lineHeight: 21, marginTop: 6 }, recordingHeader: { alignItems: "center", flexDirection: "row", gap: 8 }, recordingDot: { backgroundColor: "#C44739", borderRadius: 5, height: 10, width: 10 }, recordingTimer: { color: "#B43C32", fontSize: 16, fontVariant: ["tabular-nums"], marginLeft: "auto" }, waveform: { alignItems: "center", flexDirection: "row", gap: 3, height: 44, justifyContent: "center", marginTop: 14 }, recordingWaveform: { backgroundColor: "#F8D5D0", borderRadius: 10 }, waveformBar: { backgroundColor: "#D9A88A", borderRadius: 2, minHeight: 6, width: 4 }, recordingWaveformBar: { backgroundColor: "#E08B80" }, recordingWaveformBarActive: { backgroundColor: "#B43C32" }, captureText: { color: "#716B64", fontSize: 15, lineHeight: 21, marginTop: 6 }, captureActions: { alignItems: "stretch", flexDirection: "row", gap: 10, marginTop: 14 }, secondaryButton: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10 }, secondaryButtonText: { color: "#5D5146", fontSize: 15, fontWeight: "600" }, recordingButton: { backgroundColor: "#B43C32" }, recordingButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, recordingSecondaryButton: { borderColor: "#B43C32" }, recordingSecondaryButtonText: { color: "#B43C32", fontSize: 15, fontWeight: "600" }, recordingIcon: { color: "#B43C32", fontSize: 16, fontWeight: "700", lineHeight: 18 }, list: { padding: 16, paddingTop: 4, gap: 12 }, card: { backgroundColor: "#FFFFFF", borderColor: "#E5E0D8", borderRadius: 16, borderWidth: 1, padding: 18 }, cardPressed: { opacity: 0.7 }, cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }, label: { color: "#7A5C36", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, date: { color: "#908A82", fontSize: 12 }, detail: { color: "#716B64", fontSize: 14, marginTop: 8 }, reviewHint: { color: "#A15B2A", fontSize: 14, marginTop: 8 }, errorBanner: { backgroundColor: "#FCE8DF", marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 10 }, errorText: { color: "#8C3D25", fontSize: 14 }, state: { alignItems: "center", flex: 1, justifyContent: "center", padding: 32 }, stateTitle: { color: "#24221F", fontSize: 20, fontWeight: "700", textAlign: "center" }, stateText: { color: "#716B64", fontSize: 16, lineHeight: 23, marginTop: 8, maxWidth: 300, textAlign: "center" }, retry: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 20, paddingHorizontal: 20, paddingVertical: 12 }, retryText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, footer: { padding: 16 },
+  safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, header: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 34, fontWeight: "700", marginTop: 6 }, captureButton: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 12, paddingHorizontal: 16, paddingVertical: 11, alignSelf: "flex-start" }, captureButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, actionButton: { alignItems: "center", flex: 1, height: 48, justifyContent: "center", paddingHorizontal: 12 }, actionPrimaryButton: { alignSelf: "stretch", marginTop: 0 }, actionButtonContent: { alignItems: "center", flexDirection: "row", gap: 6 }, actionIcon: { fontSize: 16, fontWeight: "700", lineHeight: 18 }, capturePanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewPanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewEyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, recordingPanel: { backgroundColor: "#FCE8E5", borderColor: "#E5A49B", borderWidth: 1 }, captureTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, recordingTitle: { color: "#B43C32", fontSize: 17, fontWeight: "700" }, recordingText: { color: "#8C3D25", fontSize: 15, lineHeight: 21, marginTop: 6 }, recordingHeader: { alignItems: "center", flexDirection: "row", gap: 8 }, recordingDot: { backgroundColor: "#C44739", borderRadius: 5, height: 10, width: 10 }, recordingTimer: { color: "#B43C32", fontSize: 16, fontVariant: ["tabular-nums"], marginLeft: "auto" }, waveform: { alignItems: "center", flexDirection: "row", gap: 3, height: 44, justifyContent: "center", marginTop: 14 }, recordingWaveform: { backgroundColor: "#F8D5D0", borderRadius: 14 }, waveformBar: { backgroundColor: "#D9A88A", borderRadius: 2, minHeight: 6, width: 4 }, recordingWaveformBar: { backgroundColor: "#E08B80" }, recordingWaveformBarActive: { backgroundColor: "#B43C32" }, captureText: { color: "#716B64", fontSize: 15, lineHeight: 21, marginTop: 6 }, captureActions: { alignItems: "stretch", flexDirection: "row", gap: 10, marginTop: 14 }, secondaryButton: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10 }, secondaryButtonText: { color: "#5D5146", fontSize: 15, fontWeight: "600" }, recordingButton: { backgroundColor: "#B43C32" }, recordingButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, recordingSecondaryButton: { borderColor: "#B43C32" }, recordingSecondaryButtonText: { color: "#B43C32", fontSize: 15, fontWeight: "600" }, recordingIcon: { color: "#B43C32", fontSize: 16, fontWeight: "700", lineHeight: 18 }, list: { padding: 16, paddingTop: 4, gap: 12 }, card: { backgroundColor: "#FFFFFF", borderColor: "#E5E0D8", borderRadius: 16, borderWidth: 1, padding: 18 }, cardPressed: { opacity: 0.7 }, cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }, label: { color: "#7A5C36", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, date: { color: "#908A82", fontSize: 12 }, detail: { color: "#716B64", fontSize: 14, marginTop: 8 }, reviewHint: { color: "#A15B2A", fontSize: 14, marginTop: 8 }, errorBanner: { backgroundColor: "#FCE8DF", marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 10 }, errorText: { color: "#8C3D25", fontSize: 14 }, state: { alignItems: "center", flex: 1, justifyContent: "center", padding: 32 }, stateTitle: { color: "#24221F", fontSize: 20, fontWeight: "700", textAlign: "center" }, stateText: { color: "#716B64", fontSize: 16, lineHeight: 23, marginTop: 8, maxWidth: 300, textAlign: "center" }, retry: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 20, paddingHorizontal: 20, paddingVertical: 12 }, retryText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, footer: { padding: 16 },
 });
