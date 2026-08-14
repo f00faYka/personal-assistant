@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 
-import type { NoteOutcome, Outcome, OutcomeRepository, TaskOutcome } from "../../features/outcomes/outcome.js";
+import type { NoteOutcome, Outcome, OutcomeRepository, TaskChanges, TaskOutcome } from "../../features/outcomes/outcome.js";
 
 interface OutcomeRow {
   id: string;
@@ -11,7 +11,8 @@ interface OutcomeRow {
   source_id: string;
   title: string | null;
   due_at: string | null;
-  status: "open" | null;
+  status: "open" | "completed" | null;
+  version: number;
   content: string | null;
   review_state: NoteOutcome["reviewState"] | null;
   created_at: string;
@@ -31,13 +32,18 @@ export class SqliteOutcomeRepository implements OutcomeRepository {
     return row ? toOutcome(row) : undefined;
   }
 
+  findById(id: string): Outcome | undefined {
+    const row = this.database.prepare<[string], OutcomeRow>("SELECT * FROM outcomes WHERE id = ?").get(id);
+    return row ? toOutcome(row) : undefined;
+  }
+
   create(outcome: Outcome): Outcome {
     this.database
       .prepare(
         `INSERT OR IGNORE INTO outcomes
           (id, kind, member_id, interpretation_id, capture_id, source_id, title, due_at,
-           status, content, review_state, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           status, content, review_state, created_at, version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         outcome.id,
@@ -52,8 +58,39 @@ export class SqliteOutcomeRepository implements OutcomeRepository {
         outcome.kind === "note" ? outcome.content : null,
         outcome.kind === "note" ? outcome.reviewState : null,
         outcome.createdAt,
+        outcome.kind === "task" ? outcome.version : 0,
       );
     return this.findByInterpretationId(outcome.interpretationId) ?? outcome;
+  }
+
+  updateTask(
+    taskId: string,
+    memberId: string,
+    expectedVersion: number,
+    changes: TaskChanges,
+  ): TaskOutcome | undefined {
+    const fields: string[] = [];
+    const values: Array<string | number | null> = [];
+    if ("title" in changes) {
+      fields.push("title = ?");
+      values.push(changes.title ?? null);
+    }
+    if ("dueAt" in changes) {
+      fields.push("due_at = ?");
+      values.push(changes.dueAt ?? null);
+    }
+    if ("status" in changes) {
+      fields.push("status = ?");
+      values.push(changes.status ?? null);
+    }
+    if (fields.length === 0) return undefined;
+    fields.push("version = version + 1");
+    const result = this.database
+      .prepare(`UPDATE outcomes SET ${fields.join(", ")} WHERE id = ? AND member_id = ? AND version = ? AND kind = 'task' AND status = 'open'`)
+      .run(...values, taskId, memberId, expectedVersion);
+    if (result.changes === 0) return undefined;
+    const outcome = this.findById(taskId);
+    return outcome?.kind === "task" ? outcome : undefined;
   }
 
   close(): void {
@@ -63,7 +100,7 @@ export class SqliteOutcomeRepository implements OutcomeRepository {
 
 function toOutcome(row: OutcomeRow): Outcome {
   if (row.kind === "task") {
-    if (row.title === null || row.status !== "open") throw new Error(`Invalid Task outcome: ${row.id}`);
+    if (row.title === null || row.status === null) throw new Error(`Invalid Task outcome: ${row.id}`);
     const task: TaskOutcome = {
       kind: "task",
       id: row.id,
@@ -74,6 +111,7 @@ function toOutcome(row: OutcomeRow): Outcome {
       title: row.title,
       ...(row.due_at === null ? {} : { dueAt: row.due_at }),
       status: row.status,
+      version: row.version,
       createdAt: row.created_at,
     };
     return task;

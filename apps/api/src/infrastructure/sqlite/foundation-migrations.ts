@@ -91,4 +91,38 @@ export const foundationMigrations: readonly Migration[] = [
       ) STRICT
     `,
   },
+  {
+    version: 7,
+    name: "support Task mutation state",
+    sql: `
+      CREATE TABLE outcomes_v7 (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('task', 'note')),
+        member_id TEXT NOT NULL,
+        interpretation_id TEXT NOT NULL UNIQUE,
+        capture_id TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        title TEXT,
+        due_at TEXT,
+        status TEXT CHECK (status IS NULL OR status IN ('open', 'completed')),
+        content TEXT,
+        review_state TEXT CHECK (review_state IS NULL OR review_state IN ('none', 'needs_review')),
+        created_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 0 CHECK (version >= 0),
+        CHECK (
+          (kind = 'task' AND title IS NOT NULL AND status IS NOT NULL AND content IS NULL AND review_state IS NULL)
+          OR
+          (kind = 'note' AND title IS NULL AND status IS NULL AND content IS NOT NULL AND review_state IS NOT NULL)
+        )
+      ) STRICT;
+      INSERT INTO outcomes_v7
+        (id, kind, member_id, interpretation_id, capture_id, source_id, title, due_at,
+         status, content, review_state, created_at)
+        SELECT id, kind, member_id, interpretation_id, capture_id, source_id, title, due_at,
+          status, content, review_state, created_at
+        FROM outcomes;
+      DROP TABLE outcomes;
+      ALTER TABLE outcomes_v7 RENAME TO outcomes;
+    `,
+  },
 ];

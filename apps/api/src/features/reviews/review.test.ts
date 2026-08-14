@@ -168,6 +168,7 @@ function outcomeRecord(): Outcome {
     sourceId: "source-1",
     title: "Buy milk",
     status: "open",
+    version: 0,
     createdAt: "2026-08-14T10:00:00.000Z",
   };
 }
