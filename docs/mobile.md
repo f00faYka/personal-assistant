@@ -9,6 +9,7 @@ npm ci
 npm run mobile:typecheck
 npm run mobile:test
 npm run mobile:start
+npm run dev:all
 ```
 
 `mobile:start` opens the Expo development server for an iPhone simulator or a connected device. The initial screen reads `GET /items?memberId=<member-id>` from the API at `http://127.0.0.1:3000` and refreshes with pull-to-refresh. Configure `EXPO_PUBLIC_API_BASE_URL` and `EXPO_PUBLIC_MEMBER_ID` before starting when using a physical iPhone or a different local Member, for example `EXPO_PUBLIC_API_BASE_URL=http://192.168.1.20:3000 EXPO_PUBLIC_MEMBER_ID=member-1 npm run mobile:start`.
@@ -25,3 +26,45 @@ The list consumes the backend `MemberListItem` discriminators without changing t
 | `capture` / `failed` | Capture failed |
 
 Loading, empty, and request-failure states remain explicit. A failed request retains already displayed items when available and never creates a local Task or Note. Each row uses the backend's stable `kind` and `id` for its React key and passes its `detailUrl` to the optional `onOpenDetail` callback. This callback is the #63 navigation entry-point seam; #66 owns the actual detail/review destination screen and navigation implementation.
+
+## Voice Captures
+
+The list's `Record a Capture` action starts the explicit in-app microphone flow. The client requests microphone permission, records locally with `expo-audio`, and shows recording, ready, submitting, and failed states. `Cancel` or `Discard` removes the unsubmitted recording from the flow; it never creates a server item.
+
+Submitting sends one `POST /captures` request with the Member ID, the `.m4a` audio as base64, its content type, capture timestamp, and a stable idempotency key. A failed upload keeps the local recording and offers `Retry submission`; it does not display server confirmation or invent a Task/Note. Hands-free, background, Siri, and offline-draft capture remain deferred.
+
+The Expo config plugin supplies the iOS microphone permission message. Recording is unavailable in the iOS simulator, so the human review gate must use a physical iPhone.
+
+## Starting the API and Expo together
+
+Use `npm run dev:all` for an iPhone simulator or a Mac-local workflow. It starts the API and Expo together and points the mobile app at `http://127.0.0.1:3000`.
+
+For a physical iPhone on the same Wi-Fi network, use:
+
+```sh
+npm run dev:all -- --lan
+```
+
+The helper selects the Mac's non-loopback IPv4 address, binds the API to `0.0.0.0`, and passes the matching URL to Expo. If the Mac has multiple network adapters or automatic detection chooses the wrong one, set the address explicitly:
+
+```sh
+EXPO_PUBLIC_API_BASE_URL=http://192.168.1.20:3000 npm run dev:all -- --lan
+```
+
+The phone must be able to reach that address, both devices must be on the same network, and macOS firewall rules must allow the API port. `npm run dev:all` does not guess a LAN address unless `--lan` is supplied.
+
+For the current Mac network (`192.168.34.9/24`), the explicit separate-terminal setup is:
+
+Terminal 1 — backend:
+
+```sh
+API_HOST=0.0.0.0 API_PORT=3000 npm run dev
+```
+
+Terminal 2 — Expo:
+
+```sh
+EXPO_PUBLIC_API_BASE_URL=http://192.168.34.9:3000 EXPO_PUBLIC_MEMBER_ID=member-1 npm run mobile:start -- --lan
+```
+
+The iPhone should use the same Wi-Fi network. Verify backend reachability from the phone with `http://192.168.34.9:3000/health`; if it is unreachable, allow incoming connections for Node in the macOS firewall.

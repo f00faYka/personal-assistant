@@ -23,6 +23,7 @@ vi.mock("react-native", async () => {
 import { Pressable, RefreshControl } from "react-native";
 
 import { MemberListScreen } from "./MemberListScreen";
+import type { CaptureSubmitter, VoiceRecorder } from "../capture/voice-capture";
 
 const task = { kind: "task" as const, id: "task-1", captureId: "capture-1", title: "Buy milk", state: "open" as const, createdAt: "2026-08-14T08:00:00Z", detailUrl: "/captures/capture-1/review" };
 const note = { kind: "note" as const, id: "note-1", captureId: "capture-2", content: "Call the dentist", state: "none" as const, createdAt: "2026-08-14T08:00:00Z", detailUrl: "/captures/capture-2/review" };
@@ -92,11 +93,53 @@ describe("MemberListScreen", () => {
     expect(textContent(renderer)).toContain("offline");
     renderer.unmount();
   });
+
+  test("keeps recording unavailable when microphone permission is denied", async () => {
+    const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(false), start: vi.fn(), stop: vi.fn(), cancel: vi.fn() };
+    const renderer = await renderScreen({ voiceRecorder: recorder });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Microphone access denied");
+    expect(recorder.start).not.toHaveBeenCalled();
+    renderer.unmount();
+  });
+
+  test("can start and cancel an unsubmitted recording", async () => {
+    const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn(), cancel: vi.fn().mockResolvedValue(undefined) };
+    const renderer = await renderScreen({ voiceRecorder: recorder });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("Recording Capture");
+    expect(textContent(renderer)).toContain("00:00");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Recording waveform" })).toBeDefined();
+    await act(async () => { findButton(renderer, "Cancel").props.onPress(); });
+
+    expect(recorder.cancel).toHaveBeenCalledOnce();
+    expect(textContent(renderer)).not.toContain("Recording Capture");
+    renderer.unmount();
+  });
+
+  test("submits once and retries a failed upload without losing the recording", async () => {
+    const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn().mockResolvedValue({ uri: "file:///capture.m4a", contentType: "audio/m4a" }), cancel: vi.fn() };
+    const submit = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(undefined);
+    const captureSubmitter: CaptureSubmitter = { submit };
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({ items: [], nextCursor: null }));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen({ voiceRecorder: recorder, captureSubmitter });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
+    await act(async () => { findButton(renderer, "Finish recording").props.onPress(); });
+    await act(async () => { findButton(renderer, "Submit Capture").props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Capture submission failed");
+    await act(async () => { findButton(renderer, "Retry submission").props.onPress(); });
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(submit.mock.calls[0]?.[0].idempotencyKey).toBe(submit.mock.calls[1]?.[0].idempotencyKey);
+    renderer.unmount();
+  });
 });
 
-async function renderScreen(): Promise<ReactTestRenderer> {
+async function renderScreen(props: Partial<React.ComponentProps<typeof MemberListScreen>> = {}): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
-  await act(async () => { renderer = create(<MemberListScreen apiBaseUrl="http://api.test" memberId="member-1" />); });
+  await act(async () => { renderer = create(<MemberListScreen apiBaseUrl="http://api.test" memberId="member-1" {...props} />); });
   return renderer;
 }
 
@@ -106,4 +149,21 @@ function jsonResponse(body: unknown): Response {
 
 function textContent(renderer: ReactTestRenderer): string {
   return renderer.root.findAll((node) => String(node.type) === "Text").flatMap((node) => node.children).filter((child): child is string => typeof child === "string").join(" ");
+}
+
+function findButton(renderer: ReactTestRenderer, label: string) {
+  const button = renderer.root.findAllByType(Pressable).find((node) => {
+    return node.props.accessibilityLabel === label || reactNodeText(node.props.children).includes(label);
+  });
+  if (!button) throw new Error(`Button not found: ${label}`);
+  return button;
+}
+
+function reactNodeText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(reactNodeText).join("");
+  if (typeof value === "object" && value !== null && "props" in value) {
+    return reactNodeText((value as { props?: { children?: unknown } }).props?.children);
+  }
+  return "";
 }
