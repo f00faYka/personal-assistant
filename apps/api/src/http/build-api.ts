@@ -1,8 +1,9 @@
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 
 import type { CaptureService } from "../features/captures/capture.js";
-import type { NoteService } from "../features/outcomes/outcome.js";
+import type { NoteService, TaskService } from "../features/outcomes/outcome.js";
 import { registerOutcomeRoutes } from "../features/outcomes/outcome-routes.js";
+import { registerTaskRoutes } from "../features/outcomes/task-routes.js";
 import { registerCaptureRoutes } from "../features/captures/capture-routes.js";
 import type { ReviewService } from "../features/reviews/review.js";
 import { registerReviewRoutes } from "../features/reviews/review-routes.js";
@@ -13,6 +14,7 @@ export interface BuildApiOptions extends FastifyServerOptions {
   readonly captureService?: CaptureService;
   readonly reviewService?: ReviewService;
   readonly noteService?: NoteService;
+  readonly taskService?: TaskService;
   readonly memberItemsService?: MemberItemsService;
 }
 
@@ -28,6 +30,7 @@ export function buildApi(options: BuildApiOptions = {}): FastifyInstance {
     registerReviewRoutes(application, options.reviewService);
   }
   if (options.noteService) registerOutcomeRoutes(application, options.noteService, options.reviewService);
+  if (options.taskService) registerTaskRoutes(application, options.taskService);
   if (options.memberItemsService) registerItemRoutes(application, options.memberItemsService);
 
   return application;
