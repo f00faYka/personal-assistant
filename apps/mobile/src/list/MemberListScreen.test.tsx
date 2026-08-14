@@ -120,7 +120,7 @@ describe("MemberListScreen", () => {
 
   test("submits once and retries a failed upload without losing the recording", async () => {
     const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn().mockResolvedValue({ uri: "file:///capture.m4a", contentType: "audio/m4a" }), cancel: vi.fn() };
-    const submit = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(undefined);
+    const submit = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ captureId: "capture-1" });
     const captureSubmitter: CaptureSubmitter = { submit };
     const fetcher = vi.fn().mockResolvedValue(jsonResponse({ items: [], nextCursor: null }));
     vi.stubGlobal("fetch", fetcher);
