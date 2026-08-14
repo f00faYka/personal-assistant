@@ -109,6 +109,8 @@ describe("MemberListScreen", () => {
     const renderer = await renderScreen({ voiceRecorder: recorder });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
     expect(textContent(renderer)).toContain("Recording Capture");
+    expect(textContent(renderer)).toContain("00:00");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Recording waveform" })).toBeDefined();
     await act(async () => { findButton(renderer, "Cancel").props.onPress(); });
 
     expect(recorder.cancel).toHaveBeenCalledOnce();
