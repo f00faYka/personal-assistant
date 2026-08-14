@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 
-import type { NoteOutcome, Outcome, OutcomeRepository, TaskChanges, TaskOutcome } from "../../features/outcomes/outcome.js";
+import type { NoteChanges, NoteOutcome, Outcome, OutcomeRepository, TaskChanges, TaskOutcome } from "../../features/outcomes/outcome.js";
 
 interface OutcomeRow {
   id: string;
@@ -93,6 +93,32 @@ export class SqliteOutcomeRepository implements OutcomeRepository {
     return outcome?.kind === "task" ? outcome : undefined;
   }
 
+  updateNote(
+    noteId: string,
+    memberId: string,
+    expectedVersion: number,
+    changes: NoteChanges,
+  ): NoteOutcome | undefined {
+    const fields: string[] = [];
+    const values: Array<string | number> = [];
+    if ("content" in changes) {
+      fields.push("content = ?");
+      values.push(changes.content!);
+    }
+    if ("reviewState" in changes) {
+      fields.push("review_state = ?");
+      values.push(changes.reviewState!);
+    }
+    if (fields.length === 0) return undefined;
+    fields.push("version = version + 1");
+    const result = this.database
+      .prepare(`UPDATE outcomes SET ${fields.join(", ")} WHERE id = ? AND member_id = ? AND version = ? AND kind = 'note'`)
+      .run(...values, noteId, memberId, expectedVersion);
+    if (result.changes === 0) return undefined;
+    const outcome = this.findById(noteId);
+    return outcome?.kind === "note" ? outcome : undefined;
+  }
+
   close(): void {
     this.database.close();
   }
@@ -126,6 +152,7 @@ function toOutcome(row: OutcomeRow): Outcome {
     sourceId: row.source_id,
     content: row.content,
     reviewState: row.review_state,
+    version: row.version,
     createdAt: row.created_at,
   };
 }

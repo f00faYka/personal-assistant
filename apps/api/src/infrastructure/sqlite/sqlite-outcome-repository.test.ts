@@ -44,6 +44,7 @@ describe("SqliteOutcomeRepository", () => {
       sourceId: "source-2",
       content: "The garden looks lovely",
       reviewState: "none",
+      version: 0,
       createdAt: "2026-08-14T10:01:00.000Z",
     };
 
@@ -92,6 +93,62 @@ describe("SqliteOutcomeRepository", () => {
       sourceId: "source-1",
       interpretationId: "interpretation-1",
     });
+    repository.close();
+  });
+
+  test("applies optimistic Note mutations without changing provenance", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "personal-assistant-note-mutation-"));
+    directories.push(directory);
+    const databasePath = join(directory, "api.sqlite");
+    migrateDatabase({ databasePath, migrations: foundationMigrations });
+    const repository = new SqliteOutcomeRepository(databasePath);
+    const note: Outcome = {
+      kind: "note",
+      id: "note-1",
+      memberId: "member-1",
+      interpretationId: "interpretation-1",
+      captureId: "capture-1",
+      sourceId: "source-1",
+      content: "The garden looks lovely",
+      reviewState: "needs_review",
+      version: 0,
+      createdAt: "2026-08-14T10:00:00.000Z",
+    };
+    repository.create(note);
+
+    const edited = repository.updateNote("note-1", "member-1", 0, { content: "The garden is thriving" });
+    const stale = repository.updateNote("note-1", "member-1", 0, { content: "The garden needs water" });
+
+    expect(edited).toMatchObject({ kind: "note", content: "The garden is thriving", reviewState: "needs_review", version: 1 });
+    expect(edited).toMatchObject({ captureId: "capture-1", sourceId: "source-1", interpretationId: "interpretation-1" });
+    expect(stale).toBeUndefined();
+    repository.close();
+  });
+
+  test("explicit Note save resolves review state while preserving provenance", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "personal-assistant-note-review-"));
+    directories.push(directory);
+    const databasePath = join(directory, "api.sqlite");
+    migrateDatabase({ databasePath, migrations: foundationMigrations });
+    const repository = new SqliteOutcomeRepository(databasePath);
+    const note: Outcome = {
+      kind: "note",
+      id: "note-1",
+      memberId: "member-1",
+      interpretationId: "interpretation-1",
+      captureId: "capture-1",
+      sourceId: "source-1",
+      content: "Maybe water the garden",
+      reviewState: "needs_review",
+      version: 0,
+      createdAt: "2026-08-14T10:00:00.000Z",
+    };
+    repository.create(note);
+
+    const saved = repository.updateNote("note-1", "member-1", 0, { content: "Water the garden", reviewState: "none" });
+
+    expect(saved).toMatchObject({ content: "Water the garden", reviewState: "none", version: 1 });
+    expect(saved).toMatchObject({ captureId: "capture-1", sourceId: "source-1", interpretationId: "interpretation-1" });
     repository.close();
   });
 });

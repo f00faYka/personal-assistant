@@ -58,6 +58,7 @@ describe("ReviewService", () => {
         sourceId: "source-1",
         content: "maybe do something",
         reviewState: "needs_review",
+        version: 0,
         createdAt: "2026-08-14T10:00:00.000Z",
       },
     }).get("capture-1");

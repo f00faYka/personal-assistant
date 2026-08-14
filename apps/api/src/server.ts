@@ -5,6 +5,7 @@ import { FileSystemBlobStorage } from "./infrastructure/blob-storage/filesystem-
 import { prepareRuntime } from "./runtime.js";
 import { SqliteCaptureRepository } from "./infrastructure/sqlite/sqlite-capture-repository.js";
 import { SqliteInterpretationRepository } from "./infrastructure/sqlite/sqlite-interpretation-repository.js";
+import { NoteService } from "./features/outcomes/outcome.js";
 import { SqliteOutcomeRepository } from "./infrastructure/sqlite/sqlite-outcome-repository.js";
 import { SqliteTranscriptionRepository } from "./infrastructure/sqlite/sqlite-transcription-repository.js";
 import { ReviewService } from "./features/reviews/review.js";
@@ -31,6 +32,7 @@ async function start(): Promise<void> {
       interpretationRepository,
       outcomeRepository,
     }),
+    noteService: new NoteService(outcomeRepository),
   });
   application.addHook("onClose", () => {
     repository.close();

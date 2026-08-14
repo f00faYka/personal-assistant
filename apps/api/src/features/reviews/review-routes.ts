@@ -14,4 +14,5 @@ export function registerReviewRoutes(application: FastifyInstance, service: Revi
       throw error;
     }
   });
+
 }

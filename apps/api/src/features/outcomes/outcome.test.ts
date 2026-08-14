@@ -2,13 +2,18 @@ import { describe, expect, test } from "vitest";
 
 import {
   ConcurrentTaskUpdateError,
+  ConcurrentNoteUpdateError,
+  InvalidNoteMutationError,
   InvalidTaskMutationError,
   OutcomeService,
   TaskService,
+  NoteService,
   type Outcome,
   type OutcomeRepository,
   type TaskChanges,
   type TaskOutcome,
+  type NoteChanges,
+  type NoteOutcome,
 } from "./outcome.js";
 
 describe("OutcomeService", () => {
@@ -150,6 +155,89 @@ describe("OutcomeService", () => {
     expect(service.complete(taskId, "member-1", 0)).toEqual(completed);
     expect(() => service.edit(taskId, "member-1", 1, { title: "Buy eggs" })).toThrowError(InvalidTaskMutationError);
   });
+
+  test("edits a Note without changing its provenance or review state", () => {
+    const repository = new MemoryRepository();
+    const note = new OutcomeService(repository).materialize({
+      memberId: "member-1",
+      transcriptionText: "maybe do something",
+      interpretation: interpretation({ classification: "ambiguous" }),
+    });
+
+    const edited = new NoteService(repository).edit(note!.id, "member-1", 0, {
+      content: "Call the gardener about the garage",
+    });
+
+    expect(edited).toMatchObject({
+      kind: "note",
+      content: "Call the gardener about the garage",
+      reviewState: "needs_review",
+      version: 1,
+      captureId: note!.captureId,
+      sourceId: note!.sourceId,
+      interpretationId: note!.interpretationId,
+    });
+  });
+
+  test("explicitly saves one review Note and is idempotent", () => {
+    const repository = new MemoryRepository();
+    const service = new NoteService(repository);
+    const input = {
+      memberId: "member-1",
+      interpretationId: "interpretation-1",
+      captureId: "capture-1",
+      sourceId: "source-1",
+      content: "Remember to call the gardener",
+    };
+
+    const first = service.saveFromReview(input);
+    const retry = service.saveFromReview(input);
+
+    expect(retry).toEqual(first);
+    expect(first).toMatchObject({ kind: "note", reviewState: "none", version: 0 });
+    expect(repository.values).toHaveLength(1);
+  });
+
+  test("accepts an existing Needs review Note only through matching provenance", () => {
+    const repository = new MemoryRepository();
+    const existing = new OutcomeService(repository).materialize({
+      memberId: "member-1",
+      transcriptionText: "maybe water the garden",
+      interpretation: interpretation({ classification: "ambiguous" }),
+    });
+    const service = new NoteService(repository);
+
+    const saved = service.saveFromReview({
+      memberId: "member-1",
+      interpretationId: existing!.interpretationId,
+      captureId: existing!.captureId,
+      sourceId: existing!.sourceId,
+      content: "Water the garden",
+    });
+
+    expect(saved).toMatchObject({ content: "Water the garden", reviewState: "none", version: 1 });
+    expect(() => service.saveFromReview({
+      memberId: "other-member",
+      interpretationId: existing!.interpretationId,
+      captureId: existing!.captureId,
+      sourceId: existing!.sourceId,
+      content: "Take over the garden",
+    })).toThrowError(InvalidNoteMutationError);
+  });
+
+  test("rejects invalid Note edits and stale concurrent updates", () => {
+    const repository = new MemoryRepository();
+    const note = new OutcomeService(repository).materialize({
+      memberId: "member-1",
+      transcriptionText: "the garden looks lovely",
+      interpretation: interpretation(),
+    });
+    const service = new NoteService(repository);
+
+    expect(() => service.edit(note!.id, "member-1", 0, { content: " " })).toThrowError(InvalidNoteMutationError);
+    service.edit(note!.id, "member-1", 0, { content: "The garden is thriving" });
+    expect(() => service.edit(note!.id, "member-1", 0, { content: "The garden needs water" })).toThrowError(ConcurrentNoteUpdateError);
+  });
 });
 
 function interpretation(overrides: {
@@ -196,6 +284,21 @@ class MemoryRepository implements OutcomeRepository {
       ...(changes.title === undefined ? {} : { title: changes.title }),
       ...(changes.status === undefined ? {} : { status: changes.status }),
       version: task.version + 1,
+    };
+    this.values[index] = updated;
+    return updated;
+  }
+
+  updateNote(noteId: string, memberId: string, expectedVersion: number, changes: NoteChanges): NoteOutcome | undefined {
+    const index = this.values.findIndex((value) => value.id === noteId && value.kind === "note" && value.memberId === memberId && value.version === expectedVersion);
+    if (index < 0) return undefined;
+    const note = this.values[index];
+    if (!note || note.kind !== "note") return undefined;
+      const updated: NoteOutcome = {
+      ...note,
+      ...(changes.content === undefined ? {} : { content: changes.content }),
+      ...(changes.reviewState === undefined ? {} : { reviewState: changes.reviewState }),
+      version: note.version + 1,
     };
     this.values[index] = updated;
     return updated;
