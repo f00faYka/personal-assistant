@@ -1,6 +1,6 @@
 # Mobile list slice
 
-The Stage 1 client is an Expo SDK 54 / React Native workspace under `apps/mobile`. It supports the recorded Node 24 and npm 11 toolchain.
+The Stage 1 client is an Expo SDK 54 / React Native workspace under `apps/mobile`. It supports the recorded Node 24 and npm 11 toolchain. The mobile package points directly at `App.tsx`; this is required in the npm workspace because Expo dependencies are hoisted to the repository root.
 
 From the repository root:
 

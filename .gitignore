@@ -16,6 +16,7 @@ Thumbs.db
 
 # Logs, caches, test output, and generated artifacts
 node_modules/
+.expo/
 *.log
 coverage/
 dist/
