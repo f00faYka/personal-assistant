@@ -4,6 +4,10 @@ import { buildApi } from "./http/build-api.js";
 import { FileSystemBlobStorage } from "./infrastructure/blob-storage/filesystem-blob-storage.js";
 import { prepareRuntime } from "./runtime.js";
 import { SqliteCaptureRepository } from "./infrastructure/sqlite/sqlite-capture-repository.js";
+import { SqliteInterpretationRepository } from "./infrastructure/sqlite/sqlite-interpretation-repository.js";
+import { SqliteOutcomeRepository } from "./infrastructure/sqlite/sqlite-outcome-repository.js";
+import { SqliteTranscriptionRepository } from "./infrastructure/sqlite/sqlite-transcription-repository.js";
+import { ReviewService } from "./features/reviews/review.js";
 
 async function start(): Promise<void> {
   loadLocalEnvironment();
@@ -11,14 +15,29 @@ async function start(): Promise<void> {
   await prepareRuntime(configuration);
 
   const repository = new SqliteCaptureRepository(configuration.databasePath);
+  const transcriptionRepository = new SqliteTranscriptionRepository(configuration.databasePath);
+  const interpretationRepository = new SqliteInterpretationRepository(configuration.databasePath);
+  const outcomeRepository = new SqliteOutcomeRepository(configuration.databasePath);
+  const captureService = new CaptureService(
+    repository,
+    new FileSystemBlobStorage(configuration.blobRoot),
+  );
   const application = buildApi({
     logger: true,
-    captureService: new CaptureService(
-      repository,
-      new FileSystemBlobStorage(configuration.blobRoot),
-    ),
+    captureService,
+    reviewService: new ReviewService({
+      captureService,
+      transcriptionRepository,
+      interpretationRepository,
+      outcomeRepository,
+    }),
   });
-  application.addHook("onClose", () => repository.close());
+  application.addHook("onClose", () => {
+    repository.close();
+    transcriptionRepository.close();
+    interpretationRepository.close();
+    outcomeRepository.close();
+  });
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
       void application.close();

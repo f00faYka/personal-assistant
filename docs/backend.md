@@ -43,7 +43,7 @@ Startup creates the configured runtime directories and applies every unapplied m
 - TypeScript 5.9 compiles in strict mode; `tsx` runs the local development entry point.
 - Node filesystem APIs implement blob persistence behind the typed `BlobStorage` port.
 
-The backend is a modular monolith. Feature modules own their use cases, rules, persistence mappings, and HTTP handlers. They may depend on typed ports and explicit contracts, but must not import SQLite, filesystem paths, another feature's tables, or provider-specific implementation details. Infrastructure adapters live under `apps/api/src/infrastructure`; shared ports live under `apps/api/src/shared`. Review, authentication, and shared visibility remain outside the current implementation.
+The backend is a modular monolith. Feature modules own their use cases, rules, persistence mappings, and HTTP handlers. They may depend on typed ports and explicit contracts, but must not import SQLite, filesystem paths, another feature's tables, or provider-specific implementation details. Infrastructure adapters live under `apps/api/src/infrastructure`; shared ports live under `apps/api/src/shared`. Authentication and shared visibility remain outside the current implementation; the read-only review contract is implemented below.
 
 ## Capture contract
 
@@ -56,3 +56,9 @@ Transcription is a separate durable feature record keyed one-to-one to a Capture
 Interpretation is a separate durable record keyed one-to-one to a succeeded transcription. It preserves the source and transcription identifiers, catalog version, model, raw model output, and deterministic classification. The `direct-instructions.v1` catalog accepts only `create_task` and `complete_task` actions; `none` proposals are classified as `ordinary` or `ambiguous`. Malformed output, unsupported actions, and catalog-version mismatches are classified as `unsupported` with a rejection reason and never execute an action.
 
 Automatic outcomes are separate durable records keyed one-to-one to an Interpretation. A clear `create_task` interpretation creates one open Task with its member and source lineage; ordinary, ambiguous, and unsupported interpretations create one Note containing the transcription text. Ambiguous and unsupported Notes are marked `Needs review`. Retrying materialization returns the existing outcome, and `complete_task` creates no new item; task completion is handled by the later task-management stage. Corrections and shared visibility remain outside this slice.
+
+## Review contract
+
+`GET /captures/<capture-id>/review` returns a read-only review contract with `state`, `capture`, `source`, `transcription`, `correction`, `interpretation`, `outcome`, and `failure` fields. The records remain separate and are connected by their stable identifiers; `correction` is `null` when no correction exists, and the runtime leaves its optional lookup seam unconfigured until correction persistence is implemented. The source includes a stable blob identifier without exposing filesystem paths. Missing records are returned as `null`, while a failed transcription is returned as a present record with `state: "failed"` and a populated `failure` object.
+
+The lifecycle state is deterministic: an un-stored Capture or missing/in-progress downstream record is `pending`; a failed transcription is `failed`; an ambiguous or unsupported Note outcome is `needs_review`; and a chain with a durable outcome is `completed`. The source record contains an immutable audio-content descriptor only and never contains corrected or interpreted text.
