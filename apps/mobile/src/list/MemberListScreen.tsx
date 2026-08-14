@@ -15,7 +15,7 @@ interface MemberListScreenProps {
 type CaptureState =
   | { readonly status: "idle" }
   | { readonly status: "requesting" | "recording" | "stopping" | "submitting" }
-  | { readonly status: "permission_denied"; readonly message: string }
+  | { readonly status: "permission_denied" | "error"; readonly message: string }
   | { readonly status: "ready" | "failed"; readonly audio: RecordedAudio; readonly message?: string };
 
 export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceRecorder, captureSubmitter }: MemberListScreenProps) {
@@ -62,8 +62,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       await voiceRecorder.start();
       setCapture({ status: "recording" });
     } catch (error) {
-      setCapture({ status: "idle" });
-      setState((current) => listStateFromError(current.items, error));
+      setCapture({ status: "error", message: error instanceof Error ? error.message : "Unable to start recording" });
     }
   }, [capture.status, voiceRecorder]);
 
@@ -76,14 +75,13 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       captureKey.current = createIdempotencyKey();
       setCapture({ status: "ready", audio });
     } catch (error) {
-      setCapture({ status: "idle" });
-      setState((current) => listStateFromError(current.items, error));
+      setCapture({ status: "error", message: error instanceof Error ? error.message : "Unable to finish recording" });
     }
   }, [capture.status, voiceRecorder]);
 
   const cancelCapture = useCallback(async () => {
-    if (capture.status === "permission_denied" || capture.status === "ready" || capture.status === "failed") {
-      if (capture.status !== "permission_denied") await voiceRecorder?.cancel();
+    if (capture.status === "permission_denied" || capture.status === "error" || capture.status === "ready" || capture.status === "failed") {
+      if (capture.status !== "permission_denied" && capture.status !== "error") await voiceRecorder?.cancel();
       setCapture({ status: "idle" });
       captureKey.current = null;
       return;
@@ -144,7 +142,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
 }
 
 function CapturePanel({ state, onStop, onCancel, onSubmit }: { readonly state: CaptureState; readonly onStop: () => void; readonly onCancel: () => void; readonly onSubmit: (audio: RecordedAudio) => void }) {
-  if (state.status === "permission_denied") return <View accessibilityRole="alert" style={styles.capturePanel}><Text style={styles.captureTitle}>Microphone access denied</Text><Text style={styles.captureText}>{state.message}</Text><Pressable accessibilityRole="button" onPress={onCancel} style={styles.captureButton}><Text style={styles.captureButtonText}>Dismiss</Text></Pressable></View>;
+  if (state.status === "permission_denied" || state.status === "error") return <View accessibilityRole="alert" style={styles.capturePanel}><Text style={styles.captureTitle}>{state.status === "permission_denied" ? "Microphone access denied" : "Could not start recording"}</Text><Text style={styles.captureText}>{state.message}</Text><Pressable accessibilityRole="button" onPress={onCancel} style={styles.captureButton}><Text style={styles.captureButtonText}>Dismiss</Text></Pressable></View>;
   if (state.status === "requesting") return <View style={styles.capturePanel}><ActivityIndicator /><Text style={styles.captureText}>Requesting microphone access…</Text></View>;
   if (state.status === "recording") return <View style={styles.capturePanel}><Text style={styles.captureTitle}>Recording Capture</Text><Text style={styles.captureText}>Speak clearly, then submit when finished.</Text><View style={styles.captureActions}><Pressable accessibilityRole="button" onPress={onCancel} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Cancel</Text></Pressable><Pressable accessibilityRole="button" onPress={onStop} style={styles.captureButton}><Text style={styles.captureButtonText}>Finish recording</Text></Pressable></View></View>;
   if (state.status === "stopping" || state.status === "submitting") return <View style={styles.capturePanel}><ActivityIndicator /><Text style={styles.captureText}>{state.status === "stopping" ? "Preparing your Capture…" : "Submitting your Capture…"}</Text></View>;

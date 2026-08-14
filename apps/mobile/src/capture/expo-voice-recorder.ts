@@ -1,14 +1,23 @@
-import { AudioRecorder, requestRecordingPermissionsAsync, RecordingPresets } from "expo-audio";
+import { requestRecordingPermissionsAsync, RecordingPresets, setAudioModeAsync } from "expo-audio";
 import { File } from "expo-file-system";
 
 import type { RecordedAudio, VoiceRecorder } from "./voice-capture";
 
-export function createExpoVoiceRecorder(recorder: AudioRecorder): VoiceRecorder {
+interface ExpoRecorder {
+  readonly isRecording: boolean;
+  readonly uri: string | null;
+  prepareToRecordAsync(options: typeof RecordingPresets.HIGH_QUALITY): Promise<void>;
+  record(): void;
+  stop(): Promise<void>;
+}
+
+export function createExpoVoiceRecorder(recorder: ExpoRecorder): VoiceRecorder {
   return {
     async requestPermission() {
       return (await requestRecordingPermissionsAsync()).granted;
     },
     async start() {
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
       recorder.record();
     },
