@@ -2,7 +2,7 @@
   "name": "@personal-assistant/mobile",
   "version": "0.0.0",
   "private": true,
-  "main": "./App.tsx",
+  "main": "./index.ts",
   "scripts": {
     "start": "expo start",
     "typecheck": "tsc --noEmit",
