@@ -52,7 +52,7 @@ describe("MemberListScreen", () => {
     expect(textContent(renderer)).toEqual(expect.stringContaining("Needs review"));
     expect(textContent(renderer)).toEqual(expect.stringContaining("Processing your Capture"));
     expect(textContent(renderer)).toEqual(expect.stringContaining("This Capture could not be processed"));
-    const firstRow = renderer.root.findAllByType(Pressable)[0];
+    const firstRow = renderer.root.findAllByType(Pressable).find((node) => node.props.accessibilityLabel === "Task: Buy milk");
     firstRow?.props.onPress();
     expect(onOpenDetail).toHaveBeenCalledWith("/captures/capture-1/review");
     renderer.unmount();
