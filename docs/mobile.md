@@ -52,3 +52,19 @@ EXPO_PUBLIC_API_BASE_URL=http://192.168.1.20:3000 npm run dev:all -- --lan
 ```
 
 The phone must be able to reach that address, both devices must be on the same network, and macOS firewall rules must allow the API port. `npm run dev:all` does not guess a LAN address unless `--lan` is supplied.
+
+For the current Mac network (`192.168.34.9/24`), the explicit separate-terminal setup is:
+
+Terminal 1 — backend:
+
+```sh
+API_HOST=0.0.0.0 API_PORT=3000 npm run dev
+```
+
+Terminal 2 — Expo:
+
+```sh
+EXPO_PUBLIC_API_BASE_URL=http://192.168.34.9:3000 EXPO_PUBLIC_MEMBER_ID=member-1 npm run mobile:start -- --lan
+```
+
+The iPhone should use the same Wi-Fi network. Verify backend reachability from the phone with `http://192.168.34.9:3000/health`; if it is unreachable, allow incoming connections for Node in the macOS firewall.
