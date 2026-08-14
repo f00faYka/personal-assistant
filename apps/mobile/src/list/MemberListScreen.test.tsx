@@ -153,9 +153,17 @@ function textContent(renderer: ReactTestRenderer): string {
 
 function findButton(renderer: ReactTestRenderer, label: string) {
   const button = renderer.root.findAllByType(Pressable).find((node) => {
-    const child = node.props.children as { props?: { children?: unknown } } | undefined;
-    return child?.props?.children === label;
+    return node.props.accessibilityLabel === label || reactNodeText(node.props.children).includes(label);
   });
   if (!button) throw new Error(`Button not found: ${label}`);
   return button;
+}
+
+function reactNodeText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(reactNodeText).join("");
+  if (typeof value === "object" && value !== null && "props" in value) {
+    return reactNodeText((value as { props?: { children?: unknown } }).props?.children);
+  }
+  return "";
 }
