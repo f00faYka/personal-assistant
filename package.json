@@ -3,7 +3,8 @@
   "private": true,
   "packageManager": "npm@11.17.0",
   "workspaces": [
-    "apps/api"
+    "apps/api",
+    "apps/mobile"
   ],
   "engines": {
     "node": ">=24 <25"
@@ -22,6 +23,9 @@
     "test:health": "npm run test:health --workspace @personal-assistant/api",
     "test:migrations": "npm run test:migrations --workspace @personal-assistant/api",
     "test:blobs": "npm run test:blobs --workspace @personal-assistant/api",
-    "test:watch": "npm run test:watch --workspace @personal-assistant/api"
+    "test:watch": "npm run test:watch --workspace @personal-assistant/api",
+    "mobile:typecheck": "npm run typecheck --workspace @personal-assistant/mobile",
+    "mobile:test": "npm run test --workspace @personal-assistant/mobile",
+    "mobile:start": "npm run start --workspace @personal-assistant/mobile"
   }
 }
