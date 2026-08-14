@@ -25,3 +25,11 @@ The list consumes the backend `MemberListItem` discriminators without changing t
 | `capture` / `failed` | Capture failed |
 
 Loading, empty, and request-failure states remain explicit. A failed request retains already displayed items when available and never creates a local Task or Note. Each row uses the backend's stable `kind` and `id` for its React key and passes its `detailUrl` to the optional `onOpenDetail` callback. This callback is the #63 navigation entry-point seam; #66 owns the actual detail/review destination screen and navigation implementation.
+
+## Voice Captures
+
+The list's `Record a Capture` action starts the explicit in-app microphone flow. The client requests microphone permission, records locally with `expo-audio`, and shows recording, ready, submitting, and failed states. `Cancel` or `Discard` removes the unsubmitted recording from the flow; it never creates a server item.
+
+Submitting sends one `POST /captures` request with the Member ID, the `.m4a` audio as base64, its content type, capture timestamp, and a stable idempotency key. A failed upload keeps the local recording and offers `Retry submission`; it does not display server confirmation or invent a Task/Note. Hands-free, background, Siri, and offline-draft capture remain deferred.
+
+The Expo config plugin supplies the iOS microphone permission message. Recording is unavailable in the iOS simulator, so the human review gate must use a physical iPhone.

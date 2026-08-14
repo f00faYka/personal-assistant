@@ -1,19 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, SafeAreaView, StyleSheet, Text, View } from "react-native";
 
+import { createIdempotencyKey, type CaptureSubmitter, type RecordedAudio, type VoiceRecorder } from "../capture/voice-capture";
 import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, type ListState, type MemberListItem } from "./member-items";
 
 interface MemberListScreenProps {
   readonly apiBaseUrl: string;
   readonly memberId: string;
   readonly onOpenDetail?: (detailUrl: string) => void;
+  readonly voiceRecorder?: VoiceRecorder;
+  readonly captureSubmitter?: CaptureSubmitter;
 }
 
-export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail }: MemberListScreenProps) {
+type CaptureState =
+  | { readonly status: "idle" }
+  | { readonly status: "requesting" | "recording" | "stopping" | "submitting" }
+  | { readonly status: "permission_denied"; readonly message: string }
+  | { readonly status: "ready" | "failed"; readonly audio: RecordedAudio; readonly message?: string };
+
+export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceRecorder, captureSubmitter }: MemberListScreenProps) {
   const client = useMemo(() => createMemberItemsClient(apiBaseUrl), [apiBaseUrl]);
   const [state, setState] = useState<ListState>(initialListState);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [capture, setCapture] = useState<CaptureState>({ status: "idle" });
+  const submissionInFlight = useRef(false);
+  const captureKey = useRef<string | null>(null);
   const loadingCursor = useRef<string | null>(null);
 
   const load = useCallback(async (isRefresh = false, cursor?: string) => {
@@ -39,6 +51,65 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail }: MemberL
     }
   }, [client, memberId]);
 
+  const startCapture = useCallback(async () => {
+    if (!voiceRecorder || capture.status !== "idle") return;
+    setCapture({ status: "requesting" });
+    try {
+      if (!await voiceRecorder.requestPermission()) {
+        setCapture({ status: "permission_denied", message: "Microphone access is required to record a Capture." });
+        return;
+      }
+      await voiceRecorder.start();
+      setCapture({ status: "recording" });
+    } catch (error) {
+      setCapture({ status: "idle" });
+      setState((current) => listStateFromError(current.items, error));
+    }
+  }, [capture.status, voiceRecorder]);
+
+  const stopCapture = useCallback(async () => {
+    if (!voiceRecorder || capture.status !== "recording") return;
+    setCapture({ status: "stopping" });
+    try {
+      const audio = await voiceRecorder.stop();
+      if (!audio) throw new Error("No recording was created");
+      captureKey.current = createIdempotencyKey();
+      setCapture({ status: "ready", audio });
+    } catch (error) {
+      setCapture({ status: "idle" });
+      setState((current) => listStateFromError(current.items, error));
+    }
+  }, [capture.status, voiceRecorder]);
+
+  const cancelCapture = useCallback(async () => {
+    if (capture.status === "permission_denied" || capture.status === "ready" || capture.status === "failed") {
+      if (capture.status !== "permission_denied") await voiceRecorder?.cancel();
+      setCapture({ status: "idle" });
+      captureKey.current = null;
+      return;
+    }
+    if (!voiceRecorder || (capture.status !== "recording" && capture.status !== "stopping")) return;
+    await voiceRecorder.cancel();
+    captureKey.current = null;
+    setCapture({ status: "idle" });
+  }, [capture.status, voiceRecorder]);
+
+  const submitCapture = useCallback(async (audio: RecordedAudio) => {
+    if (!captureSubmitter || submissionInFlight.current || !captureKey.current) return;
+    submissionInFlight.current = true;
+    setCapture({ status: "submitting" });
+    try {
+      await captureSubmitter.submit({ memberId, idempotencyKey: captureKey.current, audio, capturedAt: new Date().toISOString() });
+      captureKey.current = null;
+      setCapture({ status: "idle" });
+      await load(true);
+    } catch (error) {
+      setCapture({ status: "failed", audio, message: error instanceof Error ? error.message : "Unable to submit Capture" });
+    } finally {
+      submissionInFlight.current = false;
+    }
+  }, [captureSubmitter, load, memberId]);
+
   useEffect(() => { void load(); }, [load]);
 
   return (
@@ -49,7 +120,9 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail }: MemberL
         <Pressable accessibilityRole="button" accessibilityLabel="Refresh items" onPress={() => void load(true)} style={styles.headerRefresh}>
           <Text style={styles.headerRefreshText}>Refresh</Text>
         </Pressable>
+        {voiceRecorder && capture.status === "idle" ? <Pressable accessibilityRole="button" accessibilityLabel="Record a voice Capture" onPress={() => void startCapture()} style={styles.captureButton}><Text style={styles.captureButtonText}>Record a Capture</Text></Pressable> : null}
       </View>
+      {voiceRecorder && capture.status !== "idle" ? <CapturePanel state={capture} onStop={() => void stopCapture()} onCancel={() => void cancelCapture()} onSubmit={(audio) => void submitCapture(audio)} /> : null}
       {state.status === "loading" && state.items.length === 0 ? <LoadingState /> : null}
       {state.status === "error" && state.items.length === 0 ? <ErrorState message={state.message} onRetry={() => void load()} /> : null}
       {state.status === "ready" && state.items.length === 0 ? <EmptyState onRefresh={() => void load(true)} /> : null}
@@ -68,6 +141,15 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail }: MemberL
       ) : null}
     </SafeAreaView>
   );
+}
+
+function CapturePanel({ state, onStop, onCancel, onSubmit }: { readonly state: CaptureState; readonly onStop: () => void; readonly onCancel: () => void; readonly onSubmit: (audio: RecordedAudio) => void }) {
+  if (state.status === "permission_denied") return <View accessibilityRole="alert" style={styles.capturePanel}><Text style={styles.captureTitle}>Microphone access denied</Text><Text style={styles.captureText}>{state.message}</Text><Pressable accessibilityRole="button" onPress={onCancel} style={styles.captureButton}><Text style={styles.captureButtonText}>Dismiss</Text></Pressable></View>;
+  if (state.status === "requesting") return <View style={styles.capturePanel}><ActivityIndicator /><Text style={styles.captureText}>Requesting microphone access…</Text></View>;
+  if (state.status === "recording") return <View style={styles.capturePanel}><Text style={styles.captureTitle}>Recording Capture</Text><Text style={styles.captureText}>Speak clearly, then submit when finished.</Text><View style={styles.captureActions}><Pressable accessibilityRole="button" onPress={onCancel} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Cancel</Text></Pressable><Pressable accessibilityRole="button" onPress={onStop} style={styles.captureButton}><Text style={styles.captureButtonText}>Finish recording</Text></Pressable></View></View>;
+  if (state.status === "stopping" || state.status === "submitting") return <View style={styles.capturePanel}><ActivityIndicator /><Text style={styles.captureText}>{state.status === "stopping" ? "Preparing your Capture…" : "Submitting your Capture…"}</Text></View>;
+  if (state.status !== "ready" && state.status !== "failed") return null;
+  return <View accessibilityRole="alert" style={styles.capturePanel}><Text style={styles.captureTitle}>{state.status === "failed" ? "Capture submission failed" : "Capture ready"}</Text>{state.status === "failed" ? <Text style={styles.captureText}>{state.message}</Text> : <Text style={styles.captureText}>Submit this recording to your private timeline?</Text>}<View style={styles.captureActions}><Pressable accessibilityRole="button" onPress={onCancel} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Discard</Text></Pressable><Pressable accessibilityRole="button" onPress={() => onSubmit(state.audio)} style={styles.captureButton}><Text style={styles.captureButtonText}>{state.status === "failed" ? "Retry submission" : "Submit Capture"}</Text></Pressable></View></View>;
 }
 
 function ListCard({ item, onPress }: { readonly item: MemberListItem; readonly onPress: ((detailUrl: string) => void) | undefined }) {
@@ -90,5 +172,5 @@ function ErrorState({ message, onRetry }: { readonly message: string; readonly o
 function formatDate(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, header: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 34, fontWeight: "700", marginTop: 6 }, headerRefresh: { alignSelf: "flex-start", marginTop: 10, paddingVertical: 4 }, headerRefreshText: { color: "#7A5C36", fontSize: 15, fontWeight: "600" }, list: { padding: 16, paddingTop: 4, gap: 12 }, card: { backgroundColor: "#FFFFFF", borderColor: "#E5E0D8", borderRadius: 16, borderWidth: 1, padding: 18 }, cardPressed: { opacity: 0.7 }, cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }, label: { color: "#7A5C36", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, date: { color: "#908A82", fontSize: 12 }, cardTitle: { color: "#24221F", fontSize: 18, fontWeight: "600", lineHeight: 24 }, detail: { color: "#716B64", fontSize: 14, marginTop: 8 }, reviewHint: { color: "#A15B2A", fontSize: 14, marginTop: 8 }, errorBanner: { backgroundColor: "#FCE8DF", marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 10 }, errorText: { color: "#8C3D25", fontSize: 14 }, state: { alignItems: "center", flex: 1, justifyContent: "center", padding: 32 }, stateTitle: { color: "#24221F", fontSize: 20, fontWeight: "700", textAlign: "center" }, stateText: { color: "#716B64", fontSize: 16, lineHeight: 23, marginTop: 8, maxWidth: 300, textAlign: "center" }, retry: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 20, paddingHorizontal: 20, paddingVertical: 12 }, retryText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, footer: { padding: 16 },
+  safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, header: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 34, fontWeight: "700", marginTop: 6 }, headerRefresh: { alignSelf: "flex-start", marginTop: 10, paddingVertical: 4 }, headerRefreshText: { color: "#7A5C36", fontSize: 15, fontWeight: "600" }, captureButton: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 12, paddingHorizontal: 16, paddingVertical: 11, alignSelf: "flex-start" }, captureButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, capturePanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, captureTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, captureText: { color: "#716B64", fontSize: 15, lineHeight: 21, marginTop: 6 }, captureActions: { flexDirection: "row", gap: 10, marginTop: 14 }, secondaryButton: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10 }, secondaryButtonText: { color: "#5D5146", fontSize: 15, fontWeight: "600" }, list: { padding: 16, paddingTop: 4, gap: 12 }, card: { backgroundColor: "#FFFFFF", borderColor: "#E5E0D8", borderRadius: 16, borderWidth: 1, padding: 18 }, cardPressed: { opacity: 0.7 }, cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }, label: { color: "#7A5C36", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, date: { color: "#908A82", fontSize: 12 }, cardTitle: { color: "#24221F", fontSize: 18, fontWeight: "600", lineHeight: 24 }, detail: { color: "#716B64", fontSize: 14, marginTop: 8 }, reviewHint: { color: "#A15B2A", fontSize: 14, marginTop: 8 }, errorBanner: { backgroundColor: "#FCE8DF", marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 10 }, errorText: { color: "#8C3D25", fontSize: 14 }, state: { alignItems: "center", flex: 1, justifyContent: "center", padding: 32 }, stateTitle: { color: "#24221F", fontSize: 20, fontWeight: "700", textAlign: "center" }, stateText: { color: "#716B64", fontSize: 16, lineHeight: 23, marginTop: 8, maxWidth: 300, textAlign: "center" }, retry: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 20, paddingHorizontal: 20, paddingVertical: 12 }, retryText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, footer: { padding: 16 },
 });
