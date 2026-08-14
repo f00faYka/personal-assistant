@@ -24,4 +24,4 @@ The list consumes the backend `MemberListItem` discriminators without changing t
 | `capture` / `pending` | Processing |
 | `capture` / `failed` | Capture failed |
 
-Loading, empty, and request-failure states remain explicit. A failed request retains already displayed items when available and never creates a local Task or Note. Each row uses the backend's stable `kind` and `id` for its React key and passes its `detailUrl` to the optional `onOpenDetail` callback. Review navigation and Capture submission belong to later tickets.
+Loading, empty, and request-failure states remain explicit. A failed request retains already displayed items when available and never creates a local Task or Note. Each row uses the backend's stable `kind` and `id` for its React key and passes its `detailUrl` to the optional `onOpenDetail` callback. This callback is the #63 navigation entry-point seam; #66 owns the actual detail/review destination screen and navigation implementation.
