@@ -59,10 +59,14 @@ describe("MemberListScreen", () => {
   });
 
   test("shows the empty state", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ items: [], nextCursor: null })));
+    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse({ items: [], nextCursor: null })).mockResolvedValueOnce(jsonResponse({ items: [task], nextCursor: null }));
+    vi.stubGlobal("fetch", fetcher);
     const renderer = await renderScreen();
 
     expect(textContent(renderer)).toContain("Nothing here yet");
+    await act(async () => { await renderer.root.findAllByType(Pressable).at(-1)?.props.onPress(); });
+    expect(textContent(renderer)).toContain("Buy milk");
+    expect(fetcher).toHaveBeenCalledTimes(2);
     renderer.unmount();
   });
 

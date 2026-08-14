@@ -49,7 +49,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail }: MemberL
       </View>
       {state.status === "loading" && state.items.length === 0 ? <LoadingState /> : null}
       {state.status === "error" && state.items.length === 0 ? <ErrorState message={state.message} onRetry={() => void load()} /> : null}
-      {state.status === "ready" && state.items.length === 0 ? <EmptyState /> : null}
+      {state.status === "ready" && state.items.length === 0 ? <EmptyState onRefresh={() => void load(true)} /> : null}
       {state.status === "error" && state.items.length > 0 ? <ErrorBanner message={state.message} /> : null}
       {state.items.length > 0 ? (
         <FlatList
@@ -81,7 +81,7 @@ function ListCard({ item, onPress }: { readonly item: MemberListItem; readonly o
 }
 
 function LoadingState() { return <View style={styles.state}><ActivityIndicator accessibilityLabel="Loading items" /><Text style={styles.stateText}>Loading your items…</Text></View>; }
-function EmptyState() { return <View style={styles.state}><Text style={styles.stateTitle}>Nothing here yet</Text><Text style={styles.stateText}>Your Tasks and Notes will appear here after your first Capture.</Text></View>; }
+function EmptyState({ onRefresh }: { readonly onRefresh: () => void }) { return <View style={styles.state}><Text style={styles.stateTitle}>Nothing here yet</Text><Text style={styles.stateText}>Your Tasks and Notes will appear here after your first Capture.</Text><Pressable accessibilityRole="button" onPress={onRefresh} style={styles.retry}><Text style={styles.retryText}>Refresh</Text></Pressable></View>; }
 function ErrorBanner({ message }: { readonly message: string }) { return <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>Refresh failed: {message}</Text></View>; }
 function ErrorState({ message, onRetry }: { readonly message: string; readonly onRetry: () => void }) { return <View style={styles.state}><Text style={styles.stateTitle}>Couldn’t load your items</Text><Text style={styles.stateText}>{message}</Text><Pressable accessibilityRole="button" onPress={onRetry} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>; }
 function formatDate(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
