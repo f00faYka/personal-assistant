@@ -37,6 +37,8 @@ After the server accepts a Capture, the client polls `GET /items` for that Captu
 
 If the server does not produce a result within 30 seconds, polling stops and the screen reports that processing has not been confirmed; the original Capture remains stored on the server. A detailed review opens from an item row. It keeps source/provenance text separate from editable Task or Note fields; fields become inputs only after focus, and Save sends the reviewed mutation once before returning to the list. This timeout prevents an unconfigured or unavailable processing provider from appearing as an endless successful load. The Expo config plugin supplies the iOS microphone permission message. Recording is unavailable in the iOS simulator, so the human review gate must use a physical iPhone.
 
+To inspect the review UI before a local processing provider is configured, start Expo with `EXPO_PUBLIC_REVIEW_FIXTURE=task npm run mobile:start` or `EXPO_PUBLIC_REVIEW_FIXTURE=note npm run mobile:start`. This is an in-memory development fixture only; it does not create API data or change Capture processing.
+
 ## Starting the API and Expo together
 
 Use `npm run dev:all` for an iPhone simulator or a Mac-local workflow. It starts the API and Expo together and points the mobile app at `http://127.0.0.1:3000`.

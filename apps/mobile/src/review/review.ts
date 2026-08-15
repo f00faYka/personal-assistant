@@ -36,6 +36,27 @@ export function createReviewClient(apiBaseUrl: string): ReviewClient {
   };
 }
 
+export function createReviewFixtureClient(kind: "task" | "note"): ReviewClient {
+  let outcome: ReviewOutcome = kind === "task"
+    ? { kind: "task", id: "demo-task-1", title: "Buy milk", status: "open", version: 0 }
+    : { kind: "note", id: "demo-note-1", content: "Call the dentist", reviewState: "needs_review", version: 0 };
+  return {
+    async get() {
+      return { state: outcome.kind === "note" ? "needs_review" : "completed", capture: { id: "demo-capture-1", memberId: "member-1" }, source: { id: "demo-source-1" }, transcription: { status: "succeeded", text: "Demo source transcription" }, correction: null, interpretation: { id: "demo-interpretation-1", classification: outcome.kind === "task" ? "clear_supported" : "ambiguous" }, outcome, failure: null };
+    },
+    async updateTask(_taskId, _memberId, _expectedVersion, changes) {
+      if (outcome.kind !== "task") throw new Error("Demo fixture is a Note");
+      outcome = { ...outcome, ...(changes.title === undefined ? {} : { title: changes.title }), ...(changes.dueAt === undefined || changes.dueAt === null ? {} : { dueAt: changes.dueAt }), version: outcome.version + 1 };
+      return outcome;
+    },
+    async updateNote(_noteId, _memberId, _expectedVersion, content) {
+      if (outcome.kind !== "note") throw new Error("Demo fixture is a Task");
+      outcome = { ...outcome, content, reviewState: "none", version: outcome.version + 1 };
+      return outcome;
+    },
+  };
+}
+
 async function readResponse<T>(response: Response): Promise<T> {
   const body = await response.json() as T | { error?: string };
   if (!response.ok) throw new Error(typeof body === "object" && body !== null && "error" in body && typeof body.error === "string" ? body.error : `Request failed (${response.status})`);

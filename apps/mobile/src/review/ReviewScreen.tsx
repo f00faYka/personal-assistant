@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-import { createReviewClient, type ReviewContract, type ReviewOutcome } from "./review";
+import { createReviewClient, type ReviewClient, type ReviewContract, type ReviewOutcome } from "./review";
 
 interface ReviewScreenProps {
   readonly apiBaseUrl: string;
   readonly memberId: string;
   readonly detailUrl: string;
   readonly onBack: () => void;
+  readonly client?: ReviewClient;
 }
 
 type ReviewStatus = { readonly status: "loading" } | { readonly status: "error"; readonly message: string } | { readonly status: "ready"; readonly review: ReviewContract };
 type Draft = { readonly title?: string; readonly dueAt?: string | null; readonly content?: string };
 
-export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack }: ReviewScreenProps) {
-  const client = useMemo(() => createReviewClient(apiBaseUrl), [apiBaseUrl]);
+export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: providedClient }: ReviewScreenProps) {
+  const client = useMemo(() => providedClient ?? createReviewClient(apiBaseUrl), [apiBaseUrl, providedClient]);
   const [state, setState] = useState<ReviewStatus>({ status: "loading" });
   const [draft, setDraft] = useState<Draft>({});
   const [editing, setEditing] = useState<"title" | "dueAt" | "content" | null>(null);
