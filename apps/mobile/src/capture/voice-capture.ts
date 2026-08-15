@@ -1,3 +1,5 @@
+import { responseError } from "../http/request-error";
+
 export interface RecordedAudio {
   readonly uri: string;
   readonly contentType: string;
@@ -38,7 +40,8 @@ export function createCaptureSubmitter(
         }),
       });
       if (!response.ok) {
-        throw new Error(`Unable to submit Capture (${response.status})`);
+        const message = `Unable to submit Capture (${response.status})`;
+        throw responseError(message, response.status);
       }
       const body: unknown = await response.json();
       if (!isCaptureSubmissionResponse(body)) throw new Error("Invalid Capture submission response");

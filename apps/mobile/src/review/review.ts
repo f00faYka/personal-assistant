@@ -1,3 +1,5 @@
+import { responseError } from "../http/request-error";
+
 export type ReviewOutcome =
   | { readonly kind: "task"; readonly id: string; readonly title: string; readonly dueAt?: string; readonly status: "open" | "completed"; readonly version: number }
   | { readonly kind: "note"; readonly id: string; readonly content: string; readonly reviewState: "none" | "needs_review"; readonly version: number };
@@ -69,7 +71,10 @@ export function createReviewFixtureClient(kind: "task" | "note"): ReviewClient {
 
 async function readResponse<T>(response: Response): Promise<T> {
   const body = await response.json() as T | { error?: string };
-  if (!response.ok) throw new Error(typeof body === "object" && body !== null && "error" in body && typeof body.error === "string" ? body.error : `Request failed (${response.status})`);
+  if (!response.ok) {
+    const message = typeof body === "object" && body !== null && "error" in body && typeof body.error === "string" ? body.error : `Request failed (${response.status})`;
+    throw responseError(message, response.status);
+  }
   return body as T;
 }
 

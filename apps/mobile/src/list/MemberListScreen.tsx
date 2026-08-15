@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, SafeAreaView, StyleSheet, Text, View } from "react-native";
 
 import { createIdempotencyKey, type CaptureSubmitter, type RecordedAudio, type VoiceRecorder } from "../capture/voice-capture";
+import { shouldPersistOfflineDraft } from "../http/request-error";
+import type { OfflineDraft, OfflineDraftStore } from "../offline/offline-drafts";
 import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, type ListState, type MemberListItem } from "./member-items";
 import { beginPreview, expirePreview, resolvePreview, savePreview, timeOutPreview, type PreviewItem, type PreviewState } from "../preview/result-preview";
 
@@ -11,6 +13,7 @@ interface MemberListScreenProps {
   readonly onOpenDetail?: (detailUrl: string) => void;
   readonly voiceRecorder?: VoiceRecorder;
   readonly captureSubmitter?: CaptureSubmitter;
+  readonly offlineDraftStore?: OfflineDraftStore;
 }
 
 type CaptureState =
@@ -19,17 +22,26 @@ type CaptureState =
   | { readonly status: "permission_denied" | "error"; readonly message: string }
   | { readonly status: "ready" | "failed"; readonly audio: RecordedAudio; readonly message?: string };
 
-export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceRecorder, captureSubmitter }: MemberListScreenProps) {
+type TimelineItem =
+  | { readonly kind: "offline_draft"; readonly draft: OfflineDraft }
+  | { readonly kind: "server_item"; readonly item: MemberListItem };
+
+export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceRecorder, captureSubmitter, offlineDraftStore }: MemberListScreenProps) {
   const client = useMemo(() => createMemberItemsClient(apiBaseUrl), [apiBaseUrl]);
   const [state, setState] = useState<ListState>(initialListState);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [capture, setCapture] = useState<CaptureState>({ status: "idle" });
+  const [offlineDrafts, setOfflineDrafts] = useState<readonly OfflineDraft[]>([]);
+  const [offlineDraftError, setOfflineDraftError] = useState<string | null>(null);
+  const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0);
   const submissionInFlight = useRef(false);
   const captureKey = useRef<string | null>(null);
+  const captureCreatedAt = useRef<string | null>(null);
   const loadingCursor = useRef<string | null>(null);
+  const deletedOfflineDraftIds = useRef(new Set<string>());
 
   const load = useCallback(async (isRefresh = false, cursor?: string) => {
     if (isRefresh) setRefreshing(true);
@@ -76,6 +88,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       const audio = await voiceRecorder.stop();
       if (!audio) throw new Error("No recording was created");
       captureKey.current = createIdempotencyKey();
+      captureCreatedAt.current = new Date().toISOString();
       setCapture({ status: "ready", audio });
     } catch (error) {
       setCapture({ status: "error", message: error instanceof Error ? error.message : "Unable to finish recording" });
@@ -87,11 +100,13 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       if (capture.status !== "permission_denied" && capture.status !== "error") await voiceRecorder?.cancel();
       setCapture({ status: "idle" });
       captureKey.current = null;
+      captureCreatedAt.current = null;
       return;
     }
     if (!voiceRecorder || (capture.status !== "recording" && capture.status !== "stopping")) return;
     await voiceRecorder.cancel();
     captureKey.current = null;
+    captureCreatedAt.current = null;
     setCapture({ status: "idle" });
   }, [capture.status, voiceRecorder]);
 
@@ -99,19 +114,75 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     if (!captureSubmitter || submissionInFlight.current || !captureKey.current) return;
     submissionInFlight.current = true;
     setCapture({ status: "submitting" });
+    const draftId = captureKey.current;
+    const capturedAt = captureCreatedAt.current ?? new Date().toISOString();
     try {
-      const result = await captureSubmitter.submit({ memberId, idempotencyKey: captureKey.current, audio, capturedAt: new Date().toISOString() });
+      const result = await captureSubmitter.submit({ memberId, idempotencyKey: draftId, audio, capturedAt });
       captureKey.current = null;
+      captureCreatedAt.current = null;
       setCapture({ status: "idle" });
       setPreview(beginPreview(result.captureId));
     } catch (error) {
-      setCapture({ status: "failed", audio, message: error instanceof Error ? error.message : "Unable to submit Capture" });
+      const submissionMessage = error instanceof Error ? error.message : "Unable to submit Capture";
+      if (!offlineDraftStore || !shouldPersistOfflineDraft(error)) {
+        setCapture({ status: "failed", audio, message: submissionMessage });
+      } else {
+        try {
+          const draft = await offlineDraftStore.save({ draftId, memberId, capturedAt, source: { kind: "audio", uri: audio.uri, contentType: audio.contentType } });
+          deletedOfflineDraftIds.current.delete(draft.draftId);
+          setOfflineDrafts((current) => [draft, ...current.filter((candidate) => candidate.draftId !== draft.draftId)]);
+          setOfflineDraftError(null);
+          captureKey.current = null;
+          captureCreatedAt.current = null;
+          setCapture({ status: "idle" });
+          try { await voiceRecorder?.cancel(); } catch { /* The durable copy is already confirmed locally. */ }
+        } catch (persistenceError) {
+          const persistenceMessage = persistenceError instanceof Error ? persistenceError.message : "local storage failed";
+          setCapture({ status: "failed", audio, message: `${submissionMessage}. Offline draft was not saved: ${persistenceMessage}` });
+        }
+      }
     } finally {
       submissionInFlight.current = false;
     }
-  }, [captureSubmitter, memberId]);
+  }, [captureSubmitter, memberId, offlineDraftStore, voiceRecorder]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!offlineDraftStore) return;
+    let cancelled = false;
+    void offlineDraftStore.list(memberId).then((drafts) => {
+      if (cancelled) return;
+      setOfflineDrafts((current) => {
+        const restoredIds = new Set(drafts.map((draft) => draft.draftId));
+        return [...drafts.filter((draft) => !deletedOfflineDraftIds.current.has(draft.draftId)), ...current.filter((draft) => !restoredIds.has(draft.draftId))]
+          .sort((left, right) => right.capturedAt.localeCompare(left.capturedAt));
+      });
+      setOfflineDraftError(null);
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        const message = error instanceof Error ? error.message : "local storage failed";
+        setOfflineDraftError(`Couldn’t restore Offline drafts: ${message}`);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [memberId, offlineDraftStore]);
+
+  const deleteOfflineDraft = useCallback(async (draftId: string) => {
+    if (!offlineDraftStore || deletingDraftId) return;
+    setDeletingDraftId(draftId);
+    setOfflineDraftError(null);
+    try {
+      await offlineDraftStore.remove(memberId, draftId);
+      deletedOfflineDraftIds.current.add(draftId);
+      setOfflineDrafts((current) => current.filter((draft) => draft.draftId !== draftId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "local storage failed";
+      setOfflineDraftError(`Couldn’t delete Offline draft: ${message}`);
+    } finally {
+      setDeletingDraftId(null);
+    }
+  }, [deletingDraftId, memberId, offlineDraftStore]);
 
   useEffect(() => {
     if (!preview || preview.status !== "processing") return;
@@ -160,6 +231,11 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     return () => clearInterval(timer);
   }, [capture.status]);
 
+  const timelineItems: readonly TimelineItem[] = [
+    ...offlineDrafts.map((draft): TimelineItem => ({ kind: "offline_draft", draft })),
+    ...state.items.map((item): TimelineItem => ({ kind: "server_item", item })),
+  ];
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.header}>
@@ -169,20 +245,23 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       </View>
       {voiceRecorder && capture.status !== "idle" ? <CapturePanel state={capture} recordingElapsedSeconds={recordingElapsedSeconds} onStop={() => void stopCapture()} onCancel={() => void cancelCapture()} onSubmit={(audio) => void submitCapture(audio)} /> : null}
       {preview ? <ResultPreview state={preview} onSave={saveResultPreview} /> : null}
-      {state.status === "loading" && state.items.length === 0 ? <LoadingState /> : null}
-      {state.status === "error" && state.items.length === 0 ? <ErrorState message={state.message} onRetry={() => void load()} /> : null}
-      {state.status === "ready" && state.items.length === 0 ? <EmptyState onRefresh={() => void load(true)} /> : null}
-      {state.status === "error" && state.items.length > 0 ? <ErrorBanner message={state.message} /> : null}
-      {state.items.length > 0 ? (
+      {offlineDraftError ? <OfflineDraftErrorBanner message={offlineDraftError} /> : null}
+      {state.status === "loading" && timelineItems.length === 0 ? <LoadingState /> : null}
+      {state.status === "error" && timelineItems.length === 0 ? <ErrorState message={state.message} onRetry={() => void load()} /> : null}
+      {state.status === "ready" && timelineItems.length === 0 ? <EmptyState onRefresh={() => void load(true)} /> : null}
+      {state.status === "error" && timelineItems.length > 0 ? <ErrorBanner message={state.message} /> : null}
+      {timelineItems.length > 0 ? (
         <FlatList
-          data={state.items}
-          keyExtractor={(item) => `${item.kind}:${item.id}`}
+          data={timelineItems}
+          keyExtractor={(entry) => entry.kind === "offline_draft" ? `offline:${entry.draft.draftId}` : `${entry.item.kind}:${entry.item.id}`}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} />}
           onEndReached={state.status === "ready" && state.nextCursor && !loadingMore ? () => void load(false, state.nextCursor ?? undefined) : undefined}
           onEndReachedThreshold={0.5}
           ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} /> : null}
           contentContainerStyle={styles.list}
-          renderItem={({ item }) => <ListCard item={item} onPress={onOpenDetail} />}
+          renderItem={({ item: entry }) => entry.kind === "offline_draft"
+            ? <OfflineDraftCard draft={entry.draft} deleting={deletingDraftId === entry.draft.draftId} onDelete={() => void deleteOfflineDraft(entry.draft.draftId)} />
+            : <ListCard item={entry.item} onPress={onOpenDetail} />}
         />
       ) : null}
     </SafeAreaView>
@@ -220,6 +299,16 @@ function AudioWaveform({ tick }: { readonly tick: number }) {
   return <View accessibilityLabel="Recording waveform" style={[styles.waveform, styles.recordingWaveform]}>{bars.map((height, index) => <View key={index} style={[styles.waveformBar, styles.recordingWaveformBar, { height }, index === tick % bars.length && styles.recordingWaveformBarActive]} />)}</View>;
 }
 
+function OfflineDraftCard({ draft, deleting, onDelete }: { readonly draft: OfflineDraft; readonly deleting: boolean; readonly onDelete: () => void }) {
+  const title = draft.source.kind === "audio" ? "Voice Capture" : draft.source.text;
+  return <View accessibilityLabel={`Offline draft, not confirmed: ${title}`} style={[styles.card, styles.offlineDraftCard]}>
+    <View style={styles.cardHeader}><Text style={styles.offlineDraftLabel}>Offline draft</Text><Text style={styles.date}>{formatDate(draft.capturedAt)}</Text></View>
+    <Text style={cardTitleStyle}>{title}</Text>
+    <Text style={styles.offlineDraftStatus}>Not confirmed · Waiting to synchronize</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Delete Offline draft ${title}`} disabled={deleting} onPress={onDelete}><Text style={styles.deleteDraft}>{deleting ? "Deleting…" : "Delete draft"}</Text></Pressable>
+  </View>;
+}
+
 function ListCard({ item, onPress }: { readonly item: MemberListItem; readonly onPress: ((detailUrl: string) => void) | undefined }) {
   const label = listItemLabel(item);
   const title = item.kind === "task" ? item.title : item.kind === "note" ? item.content : item.state === "failed" ? "Capture processing failed" : "Processing your Capture";
@@ -237,6 +326,7 @@ function ListCard({ item, onPress }: { readonly item: MemberListItem; readonly o
 function LoadingState() { return <View style={styles.state}><ActivityIndicator accessibilityLabel="Loading items" /><Text style={styles.stateText}>Loading your items…</Text></View>; }
 function EmptyState({ onRefresh }: { readonly onRefresh: () => void }) { return <View style={styles.state}><Text style={styles.stateTitle}>Nothing here yet</Text><Text style={styles.stateText}>Your Tasks and Notes will appear here after your first Capture.</Text><Pressable accessibilityRole="button" onPress={onRefresh} style={styles.retry}><Text style={styles.retryText}>Refresh</Text></Pressable></View>; }
 function ErrorBanner({ message }: { readonly message: string }) { return <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>Refresh failed: {message}</Text></View>; }
+function OfflineDraftErrorBanner({ message }: { readonly message: string }) { return <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{message}</Text></View>; }
 function ErrorState({ message, onRetry }: { readonly message: string; readonly onRetry: () => void }) { return <View style={styles.state}><Text style={styles.stateTitle}>Couldn’t load your items</Text><Text style={styles.stateText}>{message}</Text><Pressable accessibilityRole="button" onPress={onRetry} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>; }
 function formatDate(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
 function formatDuration(totalSeconds: number): string { const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, "0"); const seconds = (totalSeconds % 60).toString().padStart(2, "0"); return `${minutes}:${seconds}`; }
@@ -244,5 +334,5 @@ function formatDuration(totalSeconds: number): string { const minutes = Math.flo
 const cardTitleStyle = { color: "#24221F", fontSize: 18, fontWeight: "600" as const, lineHeight: 24 };
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, header: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 34, fontWeight: "700", marginTop: 6 }, captureButton: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 12, paddingHorizontal: 16, paddingVertical: 11, alignSelf: "flex-start" }, captureButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, actionButton: { alignItems: "center", flex: 1, height: 48, justifyContent: "center", paddingHorizontal: 12 }, actionPrimaryButton: { alignSelf: "stretch", marginTop: 0 }, actionButtonContent: { alignItems: "center", flexDirection: "row", gap: 6 }, actionIcon: { fontSize: 16, fontWeight: "700", lineHeight: 18 }, capturePanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewPanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewEyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, recordingPanel: { backgroundColor: "#FCE8E5", borderColor: "#E5A49B", borderWidth: 1 }, captureTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, recordingTitle: { color: "#B43C32", fontSize: 17, fontWeight: "700" }, recordingText: { color: "#8C3D25", fontSize: 15, lineHeight: 21, marginTop: 6 }, recordingHeader: { alignItems: "center", flexDirection: "row", gap: 8 }, recordingDot: { backgroundColor: "#C44739", borderRadius: 5, height: 10, width: 10 }, recordingTimer: { color: "#B43C32", fontSize: 16, fontVariant: ["tabular-nums"], marginLeft: "auto" }, waveform: { alignItems: "center", flexDirection: "row", gap: 3, height: 44, justifyContent: "center", marginTop: 14 }, recordingWaveform: { backgroundColor: "#F8D5D0", borderRadius: 14 }, waveformBar: { backgroundColor: "#D9A88A", borderRadius: 2, minHeight: 6, width: 4 }, recordingWaveformBar: { backgroundColor: "#E08B80" }, recordingWaveformBarActive: { backgroundColor: "#B43C32" }, captureText: { color: "#716B64", fontSize: 15, lineHeight: 21, marginTop: 6 }, captureActions: { alignItems: "stretch", flexDirection: "row", gap: 10, marginTop: 14 }, secondaryButton: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10 }, secondaryButtonText: { color: "#5D5146", fontSize: 15, fontWeight: "600" }, recordingButton: { backgroundColor: "#B43C32" }, recordingButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, recordingSecondaryButton: { borderColor: "#B43C32" }, recordingSecondaryButtonText: { color: "#B43C32", fontSize: 15, fontWeight: "600" }, recordingIcon: { color: "#B43C32", fontSize: 16, fontWeight: "700", lineHeight: 18 }, list: { padding: 16, paddingTop: 4, gap: 12 }, card: { backgroundColor: "#FFFFFF", borderColor: "#E5E0D8", borderRadius: 16, borderWidth: 1, padding: 18 }, cardPressed: { opacity: 0.7 }, cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }, label: { color: "#7A5C36", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, date: { color: "#908A82", fontSize: 12 }, detail: { color: "#716B64", fontSize: 14, marginTop: 8 }, reviewHint: { color: "#A15B2A", fontSize: 14, marginTop: 8 }, errorBanner: { backgroundColor: "#FCE8DF", marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 10 }, errorText: { color: "#8C3D25", fontSize: 14 }, state: { alignItems: "center", flex: 1, justifyContent: "center", padding: 32 }, stateTitle: { color: "#24221F", fontSize: 20, fontWeight: "700", textAlign: "center" }, stateText: { color: "#716B64", fontSize: 16, lineHeight: 23, marginTop: 8, maxWidth: 300, textAlign: "center" }, retry: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 20, paddingHorizontal: 20, paddingVertical: 12 }, retryText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, footer: { padding: 16 },
+  safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, header: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 34, fontWeight: "700", marginTop: 6 }, captureButton: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 12, paddingHorizontal: 16, paddingVertical: 11, alignSelf: "flex-start" }, captureButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, actionButton: { alignItems: "center", flex: 1, height: 48, justifyContent: "center", paddingHorizontal: 12 }, actionPrimaryButton: { alignSelf: "stretch", marginTop: 0 }, actionButtonContent: { alignItems: "center", flexDirection: "row", gap: 6 }, actionIcon: { fontSize: 16, fontWeight: "700", lineHeight: 18 }, capturePanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewPanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewEyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, recordingPanel: { backgroundColor: "#FCE8E5", borderColor: "#E5A49B", borderWidth: 1 }, captureTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, recordingTitle: { color: "#B43C32", fontSize: 17, fontWeight: "700" }, recordingText: { color: "#8C3D25", fontSize: 15, lineHeight: 21, marginTop: 6 }, recordingHeader: { alignItems: "center", flexDirection: "row", gap: 8 }, recordingDot: { backgroundColor: "#C44739", borderRadius: 5, height: 10, width: 10 }, recordingTimer: { color: "#B43C32", fontSize: 16, fontVariant: ["tabular-nums"], marginLeft: "auto" }, waveform: { alignItems: "center", flexDirection: "row", gap: 3, height: 44, justifyContent: "center", marginTop: 14 }, recordingWaveform: { backgroundColor: "#F8D5D0", borderRadius: 14 }, waveformBar: { backgroundColor: "#D9A88A", borderRadius: 2, minHeight: 6, width: 4 }, recordingWaveformBar: { backgroundColor: "#E08B80" }, recordingWaveformBarActive: { backgroundColor: "#B43C32" }, captureText: { color: "#716B64", fontSize: 15, lineHeight: 21, marginTop: 6 }, captureActions: { alignItems: "stretch", flexDirection: "row", gap: 10, marginTop: 14 }, secondaryButton: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10 }, secondaryButtonText: { color: "#5D5146", fontSize: 15, fontWeight: "600" }, recordingButton: { backgroundColor: "#B43C32" }, recordingButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, recordingSecondaryButton: { borderColor: "#B43C32" }, recordingSecondaryButtonText: { color: "#B43C32", fontSize: 15, fontWeight: "600" }, recordingIcon: { color: "#B43C32", fontSize: 16, fontWeight: "700", lineHeight: 18 }, list: { padding: 16, paddingTop: 4, gap: 12 }, card: { backgroundColor: "#FFFFFF", borderColor: "#E5E0D8", borderRadius: 16, borderWidth: 1, padding: 18 }, offlineDraftCard: { backgroundColor: "#FFF8E8", borderColor: "#CFAE70", borderStyle: "dashed" }, offlineDraftLabel: { color: "#8C641F", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, offlineDraftStatus: { color: "#8C641F", fontSize: 14, fontWeight: "600", marginTop: 8 }, deleteDraft: { color: "#8C3D25", fontSize: 14, fontWeight: "600", marginTop: 14 }, cardPressed: { opacity: 0.7 }, cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }, label: { color: "#7A5C36", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, date: { color: "#908A82", fontSize: 12 }, detail: { color: "#716B64", fontSize: 14, marginTop: 8 }, reviewHint: { color: "#A15B2A", fontSize: 14, marginTop: 8 }, errorBanner: { backgroundColor: "#FCE8DF", marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 10 }, errorText: { color: "#8C3D25", fontSize: 14 }, state: { alignItems: "center", flex: 1, justifyContent: "center", padding: 32 }, stateTitle: { color: "#24221F", fontSize: 20, fontWeight: "700", textAlign: "center" }, stateText: { color: "#716B64", fontSize: 16, lineHeight: 23, marginTop: 8, maxWidth: 300, textAlign: "center" }, retry: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 20, paddingHorizontal: 20, paddingVertical: 12 }, retryText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, footer: { padding: 16 },
 });

@@ -12,6 +12,7 @@ vi.mock("react-native", async () => {
 
 import { TextInput } from "react-native";
 import { ReviewScreen } from "./ReviewScreen";
+import type { OfflineDraftStore } from "../offline/offline-drafts";
 
 describe("ReviewScreen", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -122,6 +123,49 @@ describe("ReviewScreen", () => {
     expect(onBack).not.toHaveBeenCalled();
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
     expect(onBack).toHaveBeenCalledOnce();
+    renderer.unmount();
+  });
+
+  test("preserves explicitly entered review text as an unconfirmed Offline draft", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "needs_review", version: 0 }) }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "offline" }), { status: 503 }))
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "needs_review", version: 0 }) }));
+    vi.stubGlobal("fetch", fetcher);
+    const offlineDraftStore = draftStore({
+      save: vi.fn(async (draft) => ({ ...draft, source: { ...draft.source } })),
+    });
+    const onBack = vi.fn();
+    const renderer = await renderScreen(onBack, { offlineDraftStore });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Note" }).props.onPress(); });
+    await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Call the dentist tomorrow"); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
+
+    expect(offlineDraftStore.save).toHaveBeenCalledWith(expect.objectContaining({
+      memberId: "member-1",
+      source: { kind: "text", text: "Call the dentist tomorrow" },
+    }));
+    expect(textContent(renderer)).toContain("Saved as an Offline draft · Not confirmed");
+    expect(onBack).not.toHaveBeenCalled();
+    renderer.unmount();
+  });
+
+  test("does not turn a confirmed Note conflict into an Offline draft", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 2 }) }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "Note changed elsewhere" }), { status: 409 }))
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 3 }) }));
+    vi.stubGlobal("fetch", fetcher);
+    const offlineDraftStore = draftStore();
+    const renderer = await renderScreen(vi.fn(), { offlineDraftStore });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Note" }).props.onPress(); });
+    await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Call the dentist tomorrow"); });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
+
+    expect(offlineDraftStore.save).not.toHaveBeenCalled();
+    expect(textContent(renderer)).toContain("Note changed elsewhere");
+    expect(textContent(renderer)).not.toContain("Saved as an Offline draft");
     renderer.unmount();
   });
 
@@ -246,9 +290,9 @@ describe("ReviewScreen", () => {
   });
 });
 
-async function renderScreen(onBack: () => void): Promise<ReactTestRenderer> {
+async function renderScreen(onBack: () => void, props: Partial<React.ComponentProps<typeof ReviewScreen>> = {}): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
-  await act(async () => { renderer = create(<ReviewScreen apiBaseUrl="http://api.test" memberId="member-1" detailUrl="/captures/capture-1/review" onBack={onBack} />); });
+  await act(async () => { renderer = create(<ReviewScreen apiBaseUrl="http://api.test" memberId="member-1" detailUrl="/captures/capture-1/review" onBack={onBack} {...props} />); });
   return renderer;
 }
 
@@ -258,3 +302,7 @@ function reviewWith(outcome: object | null, overrides: object = {}) {
 
 function jsonResponse(body: unknown): Response { return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }); }
 function textContent(renderer: ReactTestRenderer): string { return renderer.root.findAll((node) => String(node.type) === "Text").flatMap((node) => node.children).filter((child): child is string => typeof child === "string").join(" "); }
+
+function draftStore(overrides: Partial<OfflineDraftStore> = {}): OfflineDraftStore {
+  return { list: vi.fn().mockResolvedValue([]), save: vi.fn(), remove: vi.fn().mockResolvedValue(undefined), ...overrides };
+}

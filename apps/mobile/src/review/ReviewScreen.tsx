@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { createOfflineDraftId, type OfflineDraftStore } from "../offline/offline-drafts";
+import { shouldPersistOfflineDraft } from "../http/request-error";
 import { createReviewClient, type ReviewClient, type ReviewContract, type ReviewOutcome } from "./review";
 
 interface ReviewScreenProps {
@@ -9,12 +11,13 @@ interface ReviewScreenProps {
   readonly detailUrl: string;
   readonly onBack: () => void;
   readonly client?: ReviewClient;
+  readonly offlineDraftStore?: OfflineDraftStore;
 }
 
 type ReviewStatus = { readonly status: "loading" } | { readonly status: "error"; readonly message: string } | { readonly status: "ready"; readonly review: ReviewContract };
 type Draft = { readonly title?: string; readonly dueAt?: string | null; readonly content?: string };
 
-export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: providedClient }: ReviewScreenProps) {
+export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: providedClient, offlineDraftStore }: ReviewScreenProps) {
   const client = useMemo(() => providedClient ?? createReviewClient(apiBaseUrl), [apiBaseUrl, providedClient]);
   const [state, setState] = useState<ReviewStatus>({ status: "loading" });
   const [draft, setDraft] = useState<Draft>({});
@@ -25,6 +28,7 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
   const [completionError, setCompletionError] = useState<string | null>(null);
   const savingInFlight = useRef(false);
   const completionInFlight = useRef(false);
+  const textDraftIdentity = useRef<{ readonly draftId: string; readonly capturedAt: string; readonly text: string } | null>(null);
 
   const load = useCallback(async () => {
     setState({ status: "loading" });
@@ -57,8 +61,8 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     savingInFlight.current = true;
     setSaving(true);
     setSaveError(null);
+    const outcome = state.review.outcome;
     try {
-      const outcome = state.review.outcome;
       if (outcome.kind === "task") {
         const changes: { title?: string; dueAt?: string | null } = {};
         if (draft.title !== outcome.title && draft.title !== undefined) changes.title = draft.title;
@@ -69,13 +73,29 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
       }
       onBack();
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Unable to save review");
+      const saveMessage = error instanceof Error ? error.message : "Unable to save review";
+      const text = draft.content ?? "";
+      if (outcome.kind === "note" && text !== outcome.content && offlineDraftStore && shouldPersistOfflineDraft(error)) {
+        if (textDraftIdentity.current?.text !== text) {
+          textDraftIdentity.current = { draftId: createOfflineDraftId(), capturedAt: new Date().toISOString(), text };
+        }
+        try {
+          const identity = textDraftIdentity.current;
+          await offlineDraftStore.save({ draftId: identity.draftId, memberId, capturedAt: identity.capturedAt, source: { kind: "text", text } });
+          setSaveError(`${saveMessage}. Saved as an Offline draft · Not confirmed`);
+        } catch (persistenceError) {
+          const persistenceMessage = persistenceError instanceof Error ? persistenceError.message : "local storage failed";
+          setSaveError(`${saveMessage}. Offline draft was not saved: ${persistenceMessage}`);
+        }
+      } else {
+        setSaveError(saveMessage);
+      }
       await refreshReviewVersion();
     } finally {
       savingInFlight.current = false;
       setSaving(false);
     }
-  }, [client, draft, memberId, onBack, refreshReviewVersion, state]);
+  }, [client, draft, memberId, offlineDraftStore, onBack, refreshReviewVersion, state]);
 
   const complete = useCallback(async () => {
     if (state.status !== "ready" || state.review.outcome?.kind !== "task" || state.review.outcome.status !== "open" || completionInFlight.current) return;
