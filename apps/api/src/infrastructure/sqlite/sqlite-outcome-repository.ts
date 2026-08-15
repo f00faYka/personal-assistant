@@ -119,6 +119,20 @@ export class SqliteOutcomeRepository implements OutcomeRepository {
     return outcome?.kind === "note" ? outcome : undefined;
   }
 
+  convertNoteToTask(noteId: string, memberId: string, expectedVersion: number): TaskOutcome | undefined {
+    const result = this.database
+      .prepare(
+        `UPDATE outcomes
+         SET kind = 'task', title = content, content = NULL, review_state = NULL,
+             status = 'open', due_at = NULL, version = version + 1
+         WHERE id = ? AND member_id = ? AND version = ? AND kind = 'note'`,
+      )
+      .run(noteId, memberId, expectedVersion);
+    if (result.changes === 0) return undefined;
+    const outcome = this.findById(noteId);
+    return outcome?.kind === "task" ? outcome : undefined;
+  }
+
   close(): void {
     this.database.close();
   }

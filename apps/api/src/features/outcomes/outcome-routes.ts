@@ -15,6 +15,8 @@ const noteEditSchema = z.object({
   content: z.string(),
 });
 
+const noteConversionSchema = z.object({ memberId: z.string(), expectedVersion: z.number().int().nonnegative() });
+
 const noteSaveSchema = z.object({ memberId: z.string(), content: z.string() });
 
 interface ReviewReader {
@@ -58,6 +60,18 @@ export function registerOutcomeRoutes(application: FastifyInstance, noteService:
       return { note: noteService.edit(request.params.id, body.memberId, body.expectedVersion, { content: body.content }) };
     } catch (error) {
       if (error instanceof z.ZodError || error instanceof InvalidNoteMutationError) return reply.code(400).send({ error: error.message });
+      if (error instanceof NoteNotFoundError) return reply.code(404).send({ error: error.message });
+      if (error instanceof ConcurrentNoteUpdateError) return reply.code(409).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  application.post<{ Params: { id: string }; Body: unknown }>("/notes/:id/convert-to-task", async (request, reply) => {
+    try {
+      const body = noteConversionSchema.parse(request.body);
+      return { task: noteService.convertToTask(request.params.id, body.memberId, body.expectedVersion) };
+    } catch (error) {
+      if (error instanceof z.ZodError || error instanceof InvalidNoteMutationError) return reply.code(400).send({ error: error instanceof Error ? error.message : "invalid Note conversion" });
       if (error instanceof NoteNotFoundError) return reply.code(404).send({ error: error.message });
       if (error instanceof ConcurrentNoteUpdateError) return reply.code(409).send({ error: error.message });
       throw error;

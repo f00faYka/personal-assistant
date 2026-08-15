@@ -238,6 +238,43 @@ describe("OutcomeService", () => {
     service.edit(note!.id, "member-1", 0, { content: "The garden is thriving" });
     expect(() => service.edit(note!.id, "member-1", 0, { content: "The garden needs water" })).toThrowError(ConcurrentNoteUpdateError);
   });
+
+  test("converts a Note into one Task in place and preserves provenance", () => {
+    const repository = new MemoryRepository();
+    const note = new OutcomeService(repository).materialize({
+      memberId: "member-1",
+      transcriptionText: "Call the gardener about the garage",
+      interpretation: interpretation({ classification: "ambiguous" }),
+    });
+    const task = new NoteService(repository).convertToTask(note!.id, "member-1", 0);
+
+    expect(task).toMatchObject({
+      kind: "task",
+      id: note!.id,
+      title: "Call the gardener about the garage",
+      status: "open",
+      version: 1,
+      memberId: "member-1",
+      interpretationId: note!.interpretationId,
+      captureId: note!.captureId,
+      sourceId: note!.sourceId,
+    });
+    expect(repository.values).toHaveLength(1);
+  });
+
+  test("makes repeated Note conversion idempotent and rejects stale conversion", () => {
+    const repository = new MemoryRepository();
+    const note = new OutcomeService(repository).materialize({
+      memberId: "member-1",
+      transcriptionText: "Call the gardener",
+      interpretation: interpretation({ classification: "ordinary" }),
+    });
+    const service = new NoteService(repository);
+    const converted = service.convertToTask(note!.id, "member-1", 0);
+
+    expect(service.convertToTask(note!.id, "member-1", 0)).toEqual(converted);
+    expect(() => service.convertToTask(note!.id, "member-1", 0)).not.toThrow();
+  });
 });
 
 function interpretation(overrides: {
@@ -302,5 +339,26 @@ class MemoryRepository implements OutcomeRepository {
     };
     this.values[index] = updated;
     return updated;
+  }
+
+  convertNoteToTask(noteId: string, memberId: string, expectedVersion: number): TaskOutcome | undefined {
+    const index = this.values.findIndex((value) => value.id === noteId && value.kind === "note" && value.memberId === memberId && value.version === expectedVersion);
+    if (index < 0) return undefined;
+    const note = this.values[index];
+    if (!note || note.kind !== "note") return undefined;
+    const task: TaskOutcome = {
+      kind: "task",
+      id: note.id,
+      memberId: note.memberId,
+      interpretationId: note.interpretationId,
+      captureId: note.captureId,
+      sourceId: note.sourceId,
+      title: note.content,
+      status: "open",
+      version: note.version + 1,
+      createdAt: note.createdAt,
+    };
+    this.values[index] = task;
+    return task;
   }
 }
