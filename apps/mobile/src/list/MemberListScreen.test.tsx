@@ -24,6 +24,7 @@ import { Pressable, RefreshControl } from "react-native";
 
 import { MemberListScreen } from "./MemberListScreen";
 import type { CaptureSubmitter, VoiceRecorder } from "../capture/voice-capture";
+import type { OfflineDraftStore } from "../offline/offline-drafts";
 
 const task = { kind: "task" as const, id: "task-1", captureId: "capture-1", title: "Buy milk", state: "open" as const, createdAt: "2026-08-14T08:00:00Z", detailUrl: "/captures/capture-1/review" };
 const note = { kind: "note" as const, id: "note-1", captureId: "capture-2", content: "Call the dentist", state: "none" as const, createdAt: "2026-08-14T08:00:00Z", detailUrl: "/captures/capture-2/review" };
@@ -170,6 +171,73 @@ describe("MemberListScreen", () => {
     expect(submit.mock.calls[0]?.[0].idempotencyKey).toBe(submit.mock.calls[1]?.[0].idempotencyKey);
     renderer.unmount();
   });
+
+  test("durably saves an unavailable audio submission and presents it as unconfirmed", async () => {
+    const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn().mockResolvedValue({ uri: "file:///capture.m4a", contentType: "audio/m4a" }), cancel: vi.fn().mockResolvedValue(undefined) };
+    const captureSubmitter: CaptureSubmitter = { submit: vi.fn().mockRejectedValue(new Error("offline")) };
+    const saved = { draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "audio" as const, uri: "file:///documents/draft-1.m4a", contentType: "audio/m4a" } };
+    const offlineDraftStore = draftStore({ save: vi.fn().mockResolvedValue(saved) });
+    const renderer = await renderScreen({ voiceRecorder: recorder, captureSubmitter, offlineDraftStore });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
+    await act(async () => { findButton(renderer, "Finish recording").props.onPress(); });
+    await act(async () => { findButton(renderer, "Submit Capture").props.onPress(); });
+
+    expect(offlineDraftStore.save).toHaveBeenCalledWith(expect.objectContaining({
+      memberId: "member-1",
+      source: { kind: "audio", uri: "file:///capture.m4a", contentType: "audio/m4a" },
+    }));
+    expect(textContent(renderer)).toContain("Offline draft");
+    expect(textContent(renderer)).toContain("Voice Capture");
+    expect(textContent(renderer)).toContain("Not confirmed");
+    expect(textContent(renderer)).not.toContain("Capture submission failed");
+    renderer.unmount();
+  });
+
+  test("restores multiple Offline drafts while the backend remains unavailable", async () => {
+    const offlineDraftStore = draftStore({ list: vi.fn().mockResolvedValue([
+      { draftId: "draft-audio", memberId: "member-1", capturedAt: "2026-08-15T11:00:00.000Z", source: { kind: "audio", uri: "file:///documents/draft-audio.m4a", contentType: "audio/m4a" } },
+      { draftId: "draft-text", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "text", text: "Call the dentist" } },
+    ]) });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    const renderer = await renderScreen({ offlineDraftStore });
+
+    expect(textContent(renderer)).toContain("Voice Capture");
+    expect(textContent(renderer)).toContain("Call the dentist");
+    expect(textContent(renderer).match(/Not confirmed/g)).toHaveLength(2);
+    expect(textContent(renderer)).not.toContain("Couldn’t load your items");
+    expect(textContent(renderer)).not.toContain("Task");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Delete Offline draft Voice Capture" }).props.onPress(); });
+    expect(offlineDraftStore.remove).toHaveBeenCalledWith("member-1", "draft-audio");
+    expect(textContent(renderer)).not.toContain("Voice Capture");
+    expect(textContent(renderer)).toContain("Call the dentist");
+    renderer.unmount();
+  });
+
+  test("surfaces a persistence failure without claiming an Offline draft was saved", async () => {
+    const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn().mockResolvedValue({ uri: "file:///capture.m4a", contentType: "audio/m4a" }), cancel: vi.fn() };
+    const captureSubmitter: CaptureSubmitter = { submit: vi.fn().mockRejectedValue(new Error("offline")) };
+    const offlineDraftStore = draftStore({ save: vi.fn().mockRejectedValue(new Error("disk full")) });
+    const renderer = await renderScreen({ voiceRecorder: recorder, captureSubmitter, offlineDraftStore });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
+    await act(async () => { findButton(renderer, "Finish recording").props.onPress(); });
+    await act(async () => { findButton(renderer, "Submit Capture").props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Capture submission failed");
+    expect(textContent(renderer)).toContain("Offline draft was not saved: disk full");
+    expect(textContent(renderer)).not.toContain("Not confirmed");
+    renderer.unmount();
+  });
+
+  test("surfaces corrupted Offline draft storage", async () => {
+    const offlineDraftStore = draftStore({ list: vi.fn().mockRejectedValue(new Error("Offline draft storage is corrupted")) });
+    const renderer = await renderScreen({ offlineDraftStore });
+
+    expect(textContent(renderer)).toContain("Couldn’t restore Offline drafts: Offline draft storage is corrupted");
+    renderer.unmount();
+  });
 });
 
 async function renderScreen(props: Partial<React.ComponentProps<typeof MemberListScreen>> = {}): Promise<ReactTestRenderer> {
@@ -201,4 +269,13 @@ function reactNodeText(value: unknown): string {
     return reactNodeText((value as { props?: { children?: unknown } }).props?.children);
   }
   return "";
+}
+
+function draftStore(overrides: Partial<OfflineDraftStore> = {}): OfflineDraftStore {
+  return {
+    list: vi.fn().mockResolvedValue([]),
+    save: vi.fn(),
+    remove: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
 }
