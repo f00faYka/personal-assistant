@@ -37,7 +37,11 @@ describe("ReviewScreen", () => {
   });
 
   test("keeps the review visible and exposes a retry after save failure", async () => {
-    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "needs_review", version: 0 }) })).mockResolvedValueOnce(new Response(JSON.stringify({ error: "offline" }), { status: 503 }));
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "needs_review", version: 0 }) }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "offline" }), { status: 503 }))
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "needs_review", version: 0 }) }))
+      .mockResolvedValueOnce(jsonResponse({ note: { kind: "note", id: "note-1", content: "Call the dentist tomorrow", reviewState: "none", version: 1 } }));
     vi.stubGlobal("fetch", fetcher);
     const onBack = vi.fn();
     const renderer = await renderScreen(onBack);
@@ -48,6 +52,41 @@ describe("ReviewScreen", () => {
     expect(textContent(renderer)).toContain("offline");
     expect(renderer.root.findByType(TextInput).props.value).toBe("Call the dentist tomorrow");
     expect(onBack).not.toHaveBeenCalled();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
+    expect(onBack).toHaveBeenCalledOnce();
+    renderer.unmount();
+  });
+
+  test("keeps original transcription distinct from editable Note content", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 2 }, { transcription: { status: "succeeded", text: "Call the dentist tomorrow" } }) })));
+    const renderer = await renderScreen(vi.fn());
+
+    expect(textContent(renderer)).toContain("Original transcription");
+    expect(textContent(renderer)).toContain("Call the dentist tomorrow");
+    expect(textContent(renderer)).toContain("Call the dentist");
+    renderer.unmount();
+  });
+
+  test("prevents duplicate Note saves while one request is in flight", async () => {
+    let resolveSave!: (response: Response) => void;
+    const save = new Promise<Response>((resolve) => { resolveSave = resolve; });
+    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 0 }) })).mockReturnValueOnce(save);
+    vi.stubGlobal("fetch", fetcher);
+    const onBack = vi.fn();
+    const renderer = await renderScreen(onBack);
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Note" }).props.onPress(); });
+    await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Call the dentist tomorrow"); });
+
+    act(() => {
+      const button = renderer.root.findByProps({ accessibilityLabel: "Save" });
+      button.props.onPress();
+      button.props.onPress();
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    resolveSave(jsonResponse({ note: { kind: "note", id: "note-1", content: "Call the dentist tomorrow", reviewState: "none", version: 1 } }));
+    await act(async () => { await save; });
+    expect(onBack).toHaveBeenCalledOnce();
     renderer.unmount();
   });
 
@@ -146,7 +185,7 @@ async function renderScreen(onBack: () => void): Promise<ReactTestRenderer> {
 }
 
 function reviewWith(outcome: object | null, overrides: object = {}) {
-  return { state: "completed", capture: { id: "capture-1", memberId: "member-1" }, source: { id: "source-1" }, transcription: { status: "succeeded" }, correction: null, interpretation: { id: "interpretation-1" }, outcome, failure: null, ...overrides };
+  return { state: "completed", capture: { id: "capture-1", memberId: "member-1" }, source: { id: "source-1" }, transcription: { status: "succeeded", text: "Call the dentist" }, correction: null, interpretation: { id: "interpretation-1" }, outcome, failure: null, ...overrides };
 }
 
 function jsonResponse(body: unknown): Response { return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }); }
