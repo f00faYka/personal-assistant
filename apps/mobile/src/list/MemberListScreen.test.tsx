@@ -24,6 +24,7 @@ import { Pressable, RefreshControl } from "react-native";
 
 import { MemberListScreen } from "./MemberListScreen";
 import type { CaptureSubmitter, VoiceRecorder } from "../capture/voice-capture";
+import { ConfirmedRequestError } from "../http/request-error";
 import type { OfflineDraftStore } from "../offline/offline-drafts";
 
 const task = { kind: "task" as const, id: "task-1", captureId: "capture-1", title: "Buy milk", state: "open" as const, createdAt: "2026-08-14T08:00:00Z", detailUrl: "/captures/capture-1/review" };
@@ -191,6 +192,63 @@ describe("MemberListScreen", () => {
     expect(textContent(renderer)).toContain("Voice Capture");
     expect(textContent(renderer)).toContain("Not confirmed");
     expect(textContent(renderer)).not.toContain("Capture submission failed");
+    renderer.unmount();
+  });
+
+  test("does not turn a confirmed client rejection into an Offline draft", async () => {
+    const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn().mockResolvedValue({ uri: "file:///capture.m4a", contentType: "audio/m4a" }), cancel: vi.fn() };
+    const captureSubmitter: CaptureSubmitter = { submit: vi.fn().mockRejectedValue(new ConfirmedRequestError("Invalid Capture", 400)) };
+    const offlineDraftStore = draftStore();
+    const renderer = await renderScreen({ voiceRecorder: recorder, captureSubmitter, offlineDraftStore });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
+    await act(async () => { findButton(renderer, "Finish recording").props.onPress(); });
+    await act(async () => { findButton(renderer, "Submit Capture").props.onPress(); });
+
+    expect(offlineDraftStore.save).not.toHaveBeenCalled();
+    expect(textContent(renderer)).toContain("Capture submission failed");
+    expect(textContent(renderer)).not.toContain("Not confirmed");
+    renderer.unmount();
+  });
+
+  test("keeps a newly saved draft when startup restoration finishes later", async () => {
+    let resolveDrafts!: (drafts: readonly []) => void;
+    const startupDrafts = new Promise<readonly []>((resolve) => { resolveDrafts = resolve; });
+    const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn().mockResolvedValue({ uri: "file:///capture.m4a", contentType: "audio/m4a" }), cancel: vi.fn().mockResolvedValue(undefined) };
+    const saved = { draftId: "draft-new", memberId: "member-1", capturedAt: "2026-08-15T12:00:00.000Z", source: { kind: "audio" as const, uri: "file:///documents/draft-new.m4a", contentType: "audio/m4a" } };
+    const offlineDraftStore = draftStore({ list: vi.fn().mockReturnValue(startupDrafts), save: vi.fn().mockResolvedValue(saved) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ items: [], nextCursor: null })));
+    let renderer!: ReactTestRenderer;
+    act(() => { renderer = create(<MemberListScreen apiBaseUrl="http://api.test" memberId="member-1" voiceRecorder={recorder} captureSubmitter={{ submit: vi.fn().mockRejectedValue(new Error("offline")) }} offlineDraftStore={offlineDraftStore} />); });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
+    await act(async () => { findButton(renderer, "Finish recording").props.onPress(); });
+    await act(async () => { findButton(renderer, "Submit Capture").props.onPress(); });
+    expect(textContent(renderer)).toContain("Voice Capture");
+
+    await act(async () => { resolveDrafts([]); await startupDrafts; });
+
+    expect(textContent(renderer)).toContain("Voice Capture");
+    renderer.unmount();
+  });
+
+  test("does not restore a draft deleted while startup restoration is pending", async () => {
+    const draft = { draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T12:00:00.000Z", source: { kind: "audio" as const, uri: "file:///documents/draft-1.m4a", contentType: "audio/m4a" } };
+    let resolveDrafts!: (drafts: readonly [typeof draft]) => void;
+    const startupDrafts = new Promise<readonly [typeof draft]>((resolve) => { resolveDrafts = resolve; });
+    const offlineDraftStore = draftStore({ list: vi.fn().mockReturnValue(startupDrafts), save: vi.fn().mockResolvedValue(draft) });
+    const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn().mockResolvedValue({ uri: "file:///capture.m4a", contentType: "audio/m4a" }), cancel: vi.fn().mockResolvedValue(undefined) };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ items: [], nextCursor: null })));
+    let renderer!: ReactTestRenderer;
+    act(() => { renderer = create(<MemberListScreen apiBaseUrl="http://api.test" memberId="member-1" voiceRecorder={recorder} captureSubmitter={{ submit: vi.fn().mockRejectedValue(new Error("offline")) }} offlineDraftStore={offlineDraftStore} />); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
+    await act(async () => { findButton(renderer, "Finish recording").props.onPress(); });
+    await act(async () => { findButton(renderer, "Submit Capture").props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Delete Offline draft Voice Capture" }).props.onPress(); });
+
+    await act(async () => { resolveDrafts([draft]); await startupDrafts; });
+
+    expect(textContent(renderer)).not.toContain("Voice Capture");
     renderer.unmount();
   });
 

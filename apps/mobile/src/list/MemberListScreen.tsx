@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, SafeAreaView, StyleSheet, Text, View } from "react-native";
 
 import { createIdempotencyKey, type CaptureSubmitter, type RecordedAudio, type VoiceRecorder } from "../capture/voice-capture";
+import { shouldPersistOfflineDraft } from "../http/request-error";
 import type { OfflineDraft, OfflineDraftStore } from "../offline/offline-drafts";
 import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, type ListState, type MemberListItem } from "./member-items";
 import { beginPreview, expirePreview, resolvePreview, savePreview, timeOutPreview, type PreviewItem, type PreviewState } from "../preview/result-preview";
@@ -40,6 +41,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
   const captureKey = useRef<string | null>(null);
   const captureCreatedAt = useRef<string | null>(null);
   const loadingCursor = useRef<string | null>(null);
+  const deletedOfflineDraftIds = useRef(new Set<string>());
 
   const load = useCallback(async (isRefresh = false, cursor?: string) => {
     if (isRefresh) setRefreshing(true);
@@ -122,11 +124,12 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       setPreview(beginPreview(result.captureId));
     } catch (error) {
       const submissionMessage = error instanceof Error ? error.message : "Unable to submit Capture";
-      if (!offlineDraftStore) {
+      if (!offlineDraftStore || !shouldPersistOfflineDraft(error)) {
         setCapture({ status: "failed", audio, message: submissionMessage });
       } else {
         try {
           const draft = await offlineDraftStore.save({ draftId, memberId, capturedAt, source: { kind: "audio", uri: audio.uri, contentType: audio.contentType } });
+          deletedOfflineDraftIds.current.delete(draft.draftId);
           setOfflineDrafts((current) => [draft, ...current.filter((candidate) => candidate.draftId !== draft.draftId)]);
           setOfflineDraftError(null);
           captureKey.current = null;
@@ -150,7 +153,11 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     let cancelled = false;
     void offlineDraftStore.list(memberId).then((drafts) => {
       if (cancelled) return;
-      setOfflineDrafts(drafts);
+      setOfflineDrafts((current) => {
+        const restoredIds = new Set(drafts.map((draft) => draft.draftId));
+        return [...drafts.filter((draft) => !deletedOfflineDraftIds.current.has(draft.draftId)), ...current.filter((draft) => !restoredIds.has(draft.draftId))]
+          .sort((left, right) => right.capturedAt.localeCompare(left.capturedAt));
+      });
       setOfflineDraftError(null);
     }).catch((error: unknown) => {
       if (!cancelled) {
@@ -167,6 +174,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     setOfflineDraftError(null);
     try {
       await offlineDraftStore.remove(memberId, draftId);
+      deletedOfflineDraftIds.current.add(draftId);
       setOfflineDrafts((current) => current.filter((draft) => draft.draftId !== draftId));
     } catch (error) {
       const message = error instanceof Error ? error.message : "local storage failed";

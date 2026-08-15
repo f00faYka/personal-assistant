@@ -73,7 +73,7 @@ describe("Offline draft store", () => {
       capturedAt: "2026-08-15T10:00:00.000Z",
       source: { kind: "audio", uri: "file:///temporary/capture.m4a", contentType: "audio/m4a" },
     })).rejects.toThrow("disk full");
-    expect(persistence.deleteAudio).toHaveBeenCalledWith("file:///documents/draft-audio-1.m4a");
+    expect(persistence.deleteAudio).toHaveBeenCalledWith("draft-audio-1");
   });
 
   test("removes a draft only through the explicit delete operation", async () => {
@@ -85,7 +85,74 @@ describe("Offline draft store", () => {
     await store.remove("member-1", "draft-1");
 
     await expect(store.list("member-1")).resolves.toEqual([]);
-    expect(persistence.deleteAudio).toHaveBeenCalledWith("file:///documents/draft-1.m4a");
+    expect(persistence.stageAudioDeletion).toHaveBeenCalledWith("draft-1");
+    expect(persistence.commitAudioDeletion).toHaveBeenCalledWith("draft-1");
+  });
+
+  test("keeps the durable draft when managed audio deletion fails", async () => {
+    let manifest: string | null = null;
+    const persistence: OfflineDraftPersistence = {
+      readManifest: vi.fn(async () => manifest),
+      writeManifest: vi.fn(async (contents: string) => {
+        manifest = contents;
+      }),
+      copyAudio: vi.fn(async () => "file:///documents/draft-1.m4a"),
+      deleteAudio: vi.fn(async () => undefined),
+      stageAudioDeletion: vi.fn(async () => undefined),
+      restoreAudioDeletion: vi.fn(async () => undefined),
+      commitAudioDeletion: vi.fn(async () => undefined),
+    };
+    const store = createOfflineDraftStore(persistence);
+    await store.save({ draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "audio", uri: "file:///temporary/capture.m4a", contentType: "audio/m4a" } });
+    vi.mocked(persistence.stageAudioDeletion).mockRejectedValueOnce(new Error("file locked"));
+
+    await expect(store.remove("member-1", "draft-1")).rejects.toThrow("file locked");
+
+    expect(persistence.writeManifest).toHaveBeenCalledOnce();
+    await expect(store.list("member-1")).resolves.toHaveLength(1);
+  });
+
+  test("restores staged audio when removing the draft from the manifest fails", async () => {
+    const persistence = memoryPersistence();
+    const store = createOfflineDraftStore(persistence);
+    await store.save({ draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "audio", uri: "file:///temporary/capture.m4a", contentType: "audio/m4a" } });
+    vi.mocked(persistence.writeManifest).mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(store.remove("member-1", "draft-1")).rejects.toThrow("disk full");
+
+    expect(persistence.stageAudioDeletion).toHaveBeenCalledWith("draft-1");
+    expect(persistence.restoreAudioDeletion).toHaveBeenCalledWith("draft-1");
+    expect(persistence.commitAudioDeletion).not.toHaveBeenCalled();
+    await expect(store.list("member-1")).resolves.toHaveLength(1);
+  });
+
+  test("reports deletion from the committed manifest while staged-file cleanup is deferred", async () => {
+    const persistence = memoryPersistence();
+    const store = createOfflineDraftStore(persistence);
+    await store.save({ draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "audio", uri: "file:///temporary/capture.m4a", contentType: "audio/m4a" } });
+    vi.mocked(persistence.commitAudioDeletion).mockRejectedValueOnce(new Error("file busy"));
+
+    await expect(store.remove("member-1", "draft-1")).resolves.toBeUndefined();
+
+    await expect(store.list("member-1")).resolves.toEqual([]);
+  });
+
+  test("never lets a stored audio URI choose the file deleted for a draft", async () => {
+    const persistence = memoryPersistence();
+    persistence.readManifest = vi.fn().mockResolvedValue(JSON.stringify({
+      version: 1,
+      drafts: [{
+        draftId: "draft-1",
+        memberId: "member-1",
+        capturedAt: "2026-08-15T10:00:00.000Z",
+        source: { kind: "audio", uri: "file:///documents/offline-drafts/../private.txt", contentType: "audio/m4a" },
+      }],
+    }));
+
+    await createOfflineDraftStore(persistence).remove("member-1", "draft-1");
+
+    expect(persistence.stageAudioDeletion).toHaveBeenCalledWith("draft-1");
+    expect(persistence.commitAudioDeletion).toHaveBeenCalledWith("draft-1");
   });
 
   test("serializes concurrent mutations so one draft cannot overwrite another", async () => {
@@ -121,5 +188,8 @@ function memoryPersistence(): OfflineDraftPersistence {
     writeManifest: vi.fn(async (value: string) => { manifest = value; }),
     copyAudio: vi.fn(async (_sourceUri: string, draftId: string) => `file:///documents/${draftId}.m4a`),
     deleteAudio: vi.fn(async () => undefined),
+    stageAudioDeletion: vi.fn(async () => undefined),
+    restoreAudioDeletion: vi.fn(async () => undefined),
+    commitAudioDeletion: vi.fn(async () => undefined),
   };
 }

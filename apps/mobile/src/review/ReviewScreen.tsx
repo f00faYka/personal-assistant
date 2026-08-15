@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { createOfflineDraftId, type OfflineDraftStore } from "../offline/offline-drafts";
+import { shouldPersistOfflineDraft } from "../http/request-error";
 import { createReviewClient, type ReviewClient, type ReviewContract, type ReviewOutcome } from "./review";
 
 interface ReviewScreenProps {
@@ -74,7 +75,7 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     } catch (error) {
       const saveMessage = error instanceof Error ? error.message : "Unable to save review";
       const text = draft.content ?? "";
-      if (outcome.kind === "note" && text !== outcome.content && offlineDraftStore) {
+      if (outcome.kind === "note" && text !== outcome.content && offlineDraftStore && shouldPersistOfflineDraft(error)) {
         if (textDraftIdentity.current?.text !== text) {
           textDraftIdentity.current = { draftId: createOfflineDraftId(), capturedAt: new Date().toISOString(), text };
         }

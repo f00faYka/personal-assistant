@@ -150,6 +150,25 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
+  test("does not turn a confirmed Note conflict into an Offline draft", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 2 }) }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "Note changed elsewhere" }), { status: 409 }))
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 3 }) }));
+    vi.stubGlobal("fetch", fetcher);
+    const offlineDraftStore = draftStore();
+    const renderer = await renderScreen(vi.fn(), { offlineDraftStore });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Note" }).props.onPress(); });
+    await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Call the dentist tomorrow"); });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
+
+    expect(offlineDraftStore.save).not.toHaveBeenCalled();
+    expect(textContent(renderer)).toContain("Note changed elsewhere");
+    expect(textContent(renderer)).not.toContain("Saved as an Offline draft");
+    renderer.unmount();
+  });
+
   test("keeps original transcription distinct from editable Note content", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 2 }, { transcription: { status: "succeeded", text: "Call the dentist tomorrow" } }) })));
     const renderer = await renderScreen(vi.fn());

@@ -21,7 +21,10 @@ export interface OfflineDraftPersistence {
   readManifest(): Promise<string | null>;
   writeManifest(contents: string): Promise<void>;
   copyAudio(sourceUri: string, draftId: string): Promise<string>;
-  deleteAudio(uri: string): Promise<void>;
+  deleteAudio(draftId: string): Promise<void>;
+  stageAudioDeletion(draftId: string): Promise<void>;
+  restoreAudioDeletion(draftId: string): Promise<void>;
+  commitAudioDeletion(draftId: string): Promise<void>;
 }
 
 interface OfflineDraftManifest {
@@ -74,7 +77,7 @@ export function createOfflineDraftStore(persistence: OfflineDraftPersistence): O
           await writeDrafts(persistence, [...drafts, draft]);
           return draft;
         } catch (error) {
-          try { await persistence.deleteAudio(uri); } catch { /* Preserve the original persistence error. */ }
+          try { await persistence.deleteAudio(input.draftId); } catch { /* Preserve the original persistence error. */ }
           throw error;
         }
       });
@@ -86,15 +89,18 @@ export function createOfflineDraftStore(persistence: OfflineDraftPersistence): O
         const draft = drafts.find((candidate) => candidate.memberId === memberId && candidate.draftId === draftId);
         if (!draft) return;
         const remaining = drafts.filter((candidate) => candidate !== draft);
-        await writeDrafts(persistence, remaining);
         if (draft.source.kind === "audio") {
+          await persistence.stageAudioDeletion(draft.draftId);
           try {
-            await persistence.deleteAudio(draft.source.uri);
+            await writeDrafts(persistence, remaining);
           } catch (error) {
-            try { await writeDrafts(persistence, drafts); } catch { /* The deletion failure remains the actionable error. */ }
+            try { await persistence.restoreAudioDeletion(draft.draftId); } catch { /* Startup recovery sees the staged file and durable manifest. */ }
             throw error;
           }
+          try { await persistence.commitAudioDeletion(draft.draftId); } catch { /* The manifest is committed; startup reconciliation finishes managed cleanup. */ }
+          return;
         }
+        await writeDrafts(persistence, remaining);
       });
     },
   };
