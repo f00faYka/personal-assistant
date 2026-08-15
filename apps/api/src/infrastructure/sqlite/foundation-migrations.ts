@@ -125,4 +125,27 @@ export const foundationMigrations: readonly Migration[] = [
       ALTER TABLE outcomes_v7 RENAME TO outcomes;
     `,
   },
+  {
+    version: 8,
+    name: "create offline drafts",
+    sql: `
+      CREATE TABLE offline_drafts (
+        draft_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        captured_at TEXT NOT NULL,
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('audio', 'text')),
+        content_type TEXT,
+        text TEXT,
+        source_sha256 TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('accepted', 'failed')),
+        capture_id TEXT,
+        error TEXT,
+        retryable INTEGER NOT NULL CHECK (retryable IN (0, 1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (member_id, draft_id),
+        CHECK ((source_kind = 'audio' AND content_type IS NOT NULL AND text IS NULL) OR (source_kind = 'text' AND content_type IS NULL AND text IS NOT NULL))
+      ) STRICT
+    `,
+  },
 ];
