@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 
 import type {
   Transcription,
+  TranscriptionCapture,
   TranscriptionRepository,
   TranscriptionResult,
 } from "../../features/transcriptions/transcription.js";
@@ -21,6 +22,12 @@ interface TranscriptionRow {
   updated_at: string;
 }
 
+interface UnqueuedCaptureRow {
+  capture_id: string;
+  source_id: string;
+  content_type: string;
+}
+
 export class SqliteTranscriptionRepository implements TranscriptionRepository {
   private readonly database: Database.Database;
 
@@ -33,6 +40,45 @@ export class SqliteTranscriptionRepository implements TranscriptionRepository {
       .prepare<[string], TranscriptionRow>("SELECT * FROM transcriptions WHERE capture_id = ?")
       .get(captureId);
     return row ? toTranscription(row) : undefined;
+  }
+
+  findRecoverable(maxAttempts: number): readonly Transcription[] {
+    return this.database
+      .prepare<[number], TranscriptionRow>(
+        `SELECT * FROM transcriptions
+         WHERE status != 'succeeded' AND attempt_count < ?
+         ORDER BY created_at, id`,
+      )
+      .all(maxAttempts)
+      .map(toTranscription);
+  }
+
+  findExhaustedProcessing(maxAttempts: number): readonly Transcription[] {
+    return this.database
+      .prepare<[number], TranscriptionRow>(
+        `SELECT * FROM transcriptions
+         WHERE status = 'processing' AND attempt_count >= ?
+         ORDER BY created_at, id`,
+      )
+      .all(maxAttempts)
+      .map(toTranscription);
+  }
+
+  findUnqueuedCaptures(): readonly TranscriptionCapture[] {
+    return this.database
+      .prepare<[], UnqueuedCaptureRow>(
+        `SELECT c.id AS capture_id, c.source_id, c.content_type
+         FROM captures c
+         LEFT JOIN transcriptions t ON t.capture_id = c.id
+         WHERE c.storage_state = 'stored' AND t.id IS NULL
+         ORDER BY c.created_at, c.id`,
+      )
+      .all()
+      .map((row) => ({
+        captureId: row.capture_id,
+        sourceId: row.source_id,
+        contentType: row.content_type,
+      }));
   }
 
   create(transcription: Transcription): Transcription {

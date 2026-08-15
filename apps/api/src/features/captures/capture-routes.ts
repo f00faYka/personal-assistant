@@ -4,6 +4,7 @@ import * as z from "zod";
 import {
   CaptureNotFoundError,
   CaptureService,
+  type CaptureStoredHandler,
   ConflictingCaptureRetryError,
   InvalidCaptureSubmissionError,
 } from "./capture.js";
@@ -16,7 +17,11 @@ const submissionSchema = z.object({
   capturedAt: z.string(),
 });
 
-export function registerCaptureRoutes(application: FastifyInstance, service: CaptureService): void {
+export function registerCaptureRoutes(
+  application: FastifyInstance,
+  service: CaptureService,
+  storedHandler?: CaptureStoredHandler,
+): void {
   application.post<{ Body: unknown }>("/captures", async (request, reply) => {
     try {
       const body = submissionSchema.parse(request.body);
@@ -27,6 +32,7 @@ export function registerCaptureRoutes(application: FastifyInstance, service: Cap
         contentType: body.contentType,
         capturedAt: body.capturedAt,
       });
+      await storedHandler?.handleStoredCapture(capture);
       return reply.code(201).send({ capture });
     } catch (error) {
       if (error instanceof z.ZodError || error instanceof InvalidCaptureSubmissionError) {

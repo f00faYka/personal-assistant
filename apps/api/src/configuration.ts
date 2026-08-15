@@ -9,6 +9,13 @@ const configurationSchema = z.object({
   API_PORT: z.coerce.number().int().min(1).max(65_535).default(3_000),
   API_DATABASE_PATH: z.string().min(1).default("local-data/api.sqlite"),
   API_BLOB_ROOT: z.string().min(1).default("local-data/blobs"),
+  WHISPER_ENDPOINT: z.url().refine(
+    (value) => value.startsWith("http://") || value.startsWith("https://"),
+    "WHISPER_ENDPOINT must use HTTP or HTTPS",
+  ).default("http://127.0.0.1:8080/inference"),
+  WHISPER_MODEL: z.string().min(1).default("ggml-base.en"),
+  WHISPER_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(120_000),
+  TRANSCRIPTION_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
 });
 
 export interface ApiConfiguration {
@@ -16,6 +23,10 @@ export interface ApiConfiguration {
   readonly port: number;
   readonly databasePath: string;
   readonly blobRoot: string;
+  readonly whisperEndpoint: string;
+  readonly whisperModel: string;
+  readonly whisperTimeoutMilliseconds: number;
+  readonly transcriptionMaxAttempts: number;
 }
 
 export function loadLocalEnvironment(filePath = resolve(repositoryRoot, ".env")): void {
@@ -40,6 +51,10 @@ export function loadConfiguration(environment: NodeJS.ProcessEnv): ApiConfigurat
     port: result.data.API_PORT,
     databasePath: resolve(repositoryRoot, result.data.API_DATABASE_PATH),
     blobRoot: resolve(repositoryRoot, result.data.API_BLOB_ROOT),
+    whisperEndpoint: result.data.WHISPER_ENDPOINT,
+    whisperModel: result.data.WHISPER_MODEL,
+    whisperTimeoutMilliseconds: result.data.WHISPER_TIMEOUT_MS,
+    transcriptionMaxAttempts: result.data.TRANSCRIPTION_MAX_ATTEMPTS,
   };
 }
 

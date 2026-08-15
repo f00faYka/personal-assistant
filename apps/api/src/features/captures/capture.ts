@@ -30,6 +30,10 @@ export interface CaptureRepository {
   markStored(id: string): void;
 }
 
+export interface CaptureStoredHandler {
+  handleStoredCapture(capture: Capture): Promise<void>;
+}
+
 export class CaptureService {
   private readonly inFlightSubmissions = new Map<string, Promise<Capture>>();
 
