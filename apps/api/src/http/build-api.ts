@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 
-import type { CaptureService } from "../features/captures/capture.js";
+import type { CaptureService, CaptureStoredHandler } from "../features/captures/capture.js";
 import type { NoteService, TaskService } from "../features/outcomes/outcome.js";
 import { registerOutcomeRoutes } from "../features/outcomes/outcome-routes.js";
 import { registerTaskRoutes } from "../features/outcomes/task-routes.js";
@@ -14,6 +14,7 @@ import { registerOfflineDraftRoutes } from "../features/offline-drafts/offline-d
 
 export interface BuildApiOptions extends FastifyServerOptions {
   readonly captureService?: CaptureService;
+  readonly captureStoredHandler?: CaptureStoredHandler;
   readonly reviewService?: ReviewService;
   readonly noteService?: NoteService;
   readonly taskService?: TaskService;
@@ -27,7 +28,7 @@ export function buildApi(options: BuildApiOptions = {}): FastifyInstance {
   application.get("/health", async () => ({ status: "ok" }));
 
   if (options.captureService) {
-    registerCaptureRoutes(application, options.captureService);
+    registerCaptureRoutes(application, options.captureService, options.captureStoredHandler);
   }
   if (options.reviewService) {
     registerReviewRoutes(application, options.reviewService);

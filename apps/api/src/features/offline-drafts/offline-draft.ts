@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { CaptureService } from "../captures/capture.js";
+import type { CaptureService, CaptureStoredHandler } from "../captures/capture.js";
 
 export type OfflineDraftSource =
   | { readonly kind: "audio"; readonly audio: Uint8Array; readonly contentType: string }
@@ -64,6 +64,7 @@ export class OfflineDraftService {
     private readonly repository: OfflineDraftRepository,
     private readonly captureService: CaptureService,
     private readonly reviewReader?: OfflineDraftReviewReader,
+    private readonly captureStoredHandler?: CaptureStoredHandler,
   ) {}
 
   async sync(submission: OfflineDraftSubmission): Promise<OfflineDraft> {
@@ -161,6 +162,7 @@ export class OfflineDraftService {
         contentType: submission.source.contentType,
         capturedAt: submission.capturedAt,
       });
+      await this.captureStoredHandler?.handleStoredCapture(capture);
       return this.repository.update(draft.memberId, draft.draftId, {
         status: "accepted",
         captureId: capture.id,

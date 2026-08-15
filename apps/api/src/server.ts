@@ -13,6 +13,9 @@ import { MemberItemsService } from "./features/items/items.js";
 import { SqliteMemberItemsRepository } from "./infrastructure/sqlite/sqlite-member-items-repository.js";
 import { OfflineDraftService } from "./features/offline-drafts/offline-draft.js";
 import { SqliteOfflineDraftRepository } from "./infrastructure/sqlite/sqlite-offline-draft-repository.js";
+import { TranscriptionService } from "./features/transcriptions/transcription.js";
+import { TranscriptionWorker } from "./features/transcriptions/transcription-worker.js";
+import { LocalWhisperProvider } from "./infrastructure/transcription/local-whisper-provider.js";
 
 async function start(): Promise<void> {
   loadLocalEnvironment();
@@ -25,10 +28,23 @@ async function start(): Promise<void> {
   const outcomeRepository = new SqliteOutcomeRepository(configuration.databasePath);
   const memberItemsRepository = new SqliteMemberItemsRepository(configuration.databasePath);
   const offlineDraftRepository = new SqliteOfflineDraftRepository(configuration.databasePath);
-  const captureService = new CaptureService(
-    repository,
-    new FileSystemBlobStorage(configuration.blobRoot),
-  );
+  const captureService = new CaptureService(repository, new FileSystemBlobStorage(configuration.blobRoot));
+  const transcriptionWorker = new TranscriptionWorker({
+    service: new TranscriptionService(
+      transcriptionRepository,
+      captureService,
+      new LocalWhisperProvider({
+        endpoint: configuration.whisperEndpoint,
+        model: configuration.whisperModel,
+        timeoutMilliseconds: configuration.whisperTimeoutMilliseconds,
+      }),
+    ),
+    repository: transcriptionRepository,
+    maxAttempts: configuration.transcriptionMaxAttempts,
+    onError: (error, captureId) => {
+      console.error(`Transcription failed for Capture ${captureId}`, error);
+    },
+  });
   const reviewService = new ReviewService({
     captureService,
     transcriptionRepository,
@@ -38,13 +54,20 @@ async function start(): Promise<void> {
   const application = buildApi({
     logger: true,
     captureService,
+    captureStoredHandler: transcriptionWorker,
     reviewService,
     noteService: new NoteService(outcomeRepository),
     taskService: new TaskService(outcomeRepository),
     memberItemsService: new MemberItemsService(memberItemsRepository),
-    offlineDraftService: new OfflineDraftService(offlineDraftRepository, captureService, reviewService),
+    offlineDraftService: new OfflineDraftService(
+      offlineDraftRepository,
+      captureService,
+      reviewService,
+      transcriptionWorker,
+    ),
   });
-  application.addHook("onClose", () => {
+  application.addHook("onClose", async () => {
+    await transcriptionWorker.stop();
     repository.close();
     transcriptionRepository.close();
     interpretationRepository.close();
@@ -58,6 +81,7 @@ async function start(): Promise<void> {
     });
   }
 
+  await transcriptionWorker.start();
   await application.listen({
     host: configuration.host,
     port: configuration.port,

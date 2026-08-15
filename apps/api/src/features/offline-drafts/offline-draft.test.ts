@@ -13,7 +13,13 @@ describe("OfflineDraftService", () => {
   test("accepts an audio draft into one idempotent Capture", async () => {
     const repository = new MemoryDraftRepository();
     const blobs = new MemoryBlobStorage();
-    const service = new OfflineDraftService(repository, new CaptureService(new MemoryCaptureRepository(), blobs));
+    const handled: Capture[] = [];
+    const service = new OfflineDraftService(
+      repository,
+      new CaptureService(new MemoryCaptureRepository(), blobs),
+      undefined,
+      { handleStoredCapture: async (capture) => { handled.push(capture); } },
+    );
     const submission = { draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "audio" as const, audio: Uint8Array.from([1, 2]), contentType: "audio/m4a" } };
 
     const first = await service.sync(submission);
@@ -23,6 +29,7 @@ describe("OfflineDraftService", () => {
     expect(first).toMatchObject({ draftId: "draft-1", status: "accepted", captureId: expect.any(String), retryable: false });
     expect(blobs.values.get(blobIdentifier({ id: first.captureId! }))).toEqual(Uint8Array.from([1, 2]));
     expect(repository.values).toHaveLength(1);
+    expect(handled).toEqual([expect.objectContaining({ id: first.captureId })]);
   });
 
   test("preserves text drafts without inventing a confirmed outcome", async () => {
