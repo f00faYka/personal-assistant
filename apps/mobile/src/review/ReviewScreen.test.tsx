@@ -202,6 +202,88 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
+  test("explicitly converts a saved Note in place and renders the same item as a Task", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 1 }) }))
+      .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "note-1", title: "Call the dentist", status: "open", version: 2 } }));
+    vi.stubGlobal("fetch", fetcher);
+    const onBack = vi.fn();
+    const renderer = await renderScreen(onBack);
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Convert saved Note to Task" }).props.onPress(); });
+
+    expect(fetcher).toHaveBeenLastCalledWith("http://api.test/notes/note-1/convert-to-task", expect.objectContaining({ method: "POST", body: JSON.stringify({ memberId: "member-1", expectedVersion: 1 }) }));
+    expect(textContent(renderer)).toContain("Converted to Task. Identity and provenance were kept.");
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Edit Note" })).toHaveLength(0);
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Title" })).toBeDefined();
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Convert saved Note to Task" })).toHaveLength(0);
+    expect(onBack).not.toHaveBeenCalled();
+    renderer.unmount();
+  });
+
+  test("prevents duplicate Note conversion requests while one is in flight", async () => {
+    let resolveConversion!: (response: Response) => void;
+    const conversion = new Promise<Response>((resolve) => { resolveConversion = resolve; });
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 1 }) }))
+      .mockReturnValueOnce(conversion);
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen(vi.fn());
+    const button = renderer.root.findByProps({ accessibilityLabel: "Convert saved Note to Task" });
+
+    act(() => { button.props.onPress(); button.props.onPress(); });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    resolveConversion(jsonResponse({ task: { kind: "task", id: "note-1", title: "Call the dentist", status: "open", version: 2 } }));
+    await act(async () => { await conversion; });
+    renderer.unmount();
+  });
+
+  test("keeps a Needs review Note intact and retries conversion with the refreshed version", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Maybe book a trip", reviewState: "needs_review", version: 0 }, { state: "needs_review" }) }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "offline" }), { status: 503 }))
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Maybe book a trip", reviewState: "needs_review", version: 1 }, { state: "needs_review" }) }))
+      .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "note-1", title: "Maybe book a trip", status: "open", version: 2 } }));
+    vi.stubGlobal("fetch", fetcher);
+    const offlineDraftStore = draftStore();
+    const onBack = vi.fn();
+    const renderer = await renderScreen(onBack, { offlineDraftStore });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Convert saved Note to Task" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Needs review");
+    expect(textContent(renderer)).toContain("capture-1");
+    expect(textContent(renderer)).toContain("source-1");
+    expect(textContent(renderer)).toContain("Unable to convert Note: offline");
+    expect(offlineDraftStore.save).not.toHaveBeenCalled();
+    expect(onBack).not.toHaveBeenCalled();
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Convert saved Note to Task" }).props.onPress(); });
+
+    expect(fetcher).toHaveBeenLastCalledWith("http://api.test/notes/note-1/convert-to-task", expect.objectContaining({ body: JSON.stringify({ memberId: "member-1", expectedVersion: 1 }) }));
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Title" })).toBeDefined();
+    renderer.unmount();
+  });
+
+  test("recognizes a converted Task when the mutation response is lost and detail refresh succeeds", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 0 }) }))
+      .mockRejectedValueOnce(new Error("connection lost"))
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "note-1", title: "Call the dentist", status: "open", version: 1 }) }));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen(vi.fn());
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Convert saved Note to Task" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Conversion confirmed after refreshing.");
+    expect(textContent(renderer)).toContain("Call the dentist");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Title" })).toBeDefined();
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Convert saved Note to Task" })).toHaveLength(0);
+    expect(textContent(renderer)).not.toContain("Unable to convert Note");
+    renderer.unmount();
+  });
+
   test("completes an open Task once after server confirmation", async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 3 }) }))
@@ -276,7 +358,8 @@ describe("ReviewScreen", () => {
 
     expect(textContent(renderer)).toContain("The Capture was ambiguous");
     expect(textContent(renderer)).toContain("Maybe book a trip");
-    expect(textContent(renderer)).not.toContain("Task");
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Edit Title" })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Complete task" })).toHaveLength(0);
     renderer.unmount();
   });
 

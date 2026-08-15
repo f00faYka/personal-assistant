@@ -26,6 +26,14 @@ describe("review client", () => {
     expect(fetch).toHaveBeenCalledWith("http://api.test/tasks/task-1/complete", expect.objectContaining({ method: "POST", body: JSON.stringify({ memberId: "member-1", expectedVersion: 3 }) }));
   });
 
+  test("converts a Note through the reviewed in-place mutation contract", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ task: { kind: "task", id: "note-1", title: "Call the dentist", status: "open", version: 2 } }), { status: 200 })));
+
+    await createReviewClient("http://api.test").convertNoteToTask("note-1", "member-1", 1);
+
+    expect(fetch).toHaveBeenCalledWith("http://api.test/notes/note-1/convert-to-task", expect.objectContaining({ method: "POST", body: JSON.stringify({ memberId: "member-1", expectedVersion: 1 }) }));
+  });
+
   test("surfaces server validation failures", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "title must not be empty" }), { status: 400 })));
 

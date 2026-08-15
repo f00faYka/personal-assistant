@@ -26,8 +26,12 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
   const [completionError, setCompletionError] = useState<string | null>(null);
+  const [converting, setConverting] = useState(false);
+  const [conversionError, setConversionError] = useState<string | null>(null);
+  const [conversionNotice, setConversionNotice] = useState<string | null>(null);
   const savingInFlight = useRef(false);
   const completionInFlight = useRef(false);
+  const conversionInFlight = useRef(false);
   const textDraftIdentity = useRef<{ readonly draftId: string; readonly capturedAt: string; readonly text: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -45,8 +49,10 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     try {
       const review = await client.get(detailUrl);
       setState({ status: "ready", review });
+      return review;
     } catch {
       // Keep the current review visible when the recovery read also fails.
+      return undefined;
     }
   }, [client, detailUrl]);
 
@@ -114,6 +120,36 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     }
   }, [client, memberId, onBack, refreshReviewVersion, state]);
 
+  const convertNoteToTask = useCallback(async () => {
+    if (state.status !== "ready" || state.review.outcome?.kind !== "note" || conversionInFlight.current) return;
+    conversionInFlight.current = true;
+    setConverting(true);
+    setConversionError(null);
+    setConversionNotice(null);
+    const note = state.review.outcome;
+    try {
+      const task = await client.convertNoteToTask(note.id, memberId, note.version);
+      if (task.id !== note.id) throw new Error("Conversion response did not preserve item identity");
+      setState({ status: "ready", review: { ...state.review, state: "completed", outcome: task } });
+      setDraft({ title: task.title, dueAt: task.dueAt ?? null });
+      setEditing(null);
+      setConversionNotice("Converted to Task. Identity and provenance were kept.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "conversion failed";
+      const refreshed = await refreshReviewVersion();
+      if (refreshed?.outcome?.kind === "task" && refreshed.outcome.id === note.id) {
+        setDraft({ title: refreshed.outcome.title, dueAt: refreshed.outcome.dueAt ?? null });
+        setEditing(null);
+        setConversionNotice("Conversion confirmed after refreshing.");
+      } else {
+        setConversionError(`Unable to convert Note: ${message}`);
+      }
+    } finally {
+      conversionInFlight.current = false;
+      setConverting(false);
+    }
+  }, [client, memberId, refreshReviewVersion, state]);
+
   if (state.status === "loading") return <ReviewShell onBack={onBack}><ActivityIndicator accessibilityLabel="Loading review" /><Text style={styles.stateText}>Loading review…</Text></ReviewShell>;
   if (state.status === "error") return <ReviewShell onBack={onBack}><Text style={styles.title}>Couldn’t load review</Text><Text style={styles.stateText}>{state.message}</Text><Button label="Try again" onPress={() => void load()} /></ReviewShell>;
   return <ReviewShell onBack={onBack}>
@@ -122,9 +158,21 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     <Text style={styles.title}>{state.review.outcome?.kind === "task" ? "Task" : state.review.outcome?.kind === "note" ? "Note" : state.review.state === "failed" ? "Processing failed" : "Processing"}</Text>
     <Text style={styles.stateText}>Original source and processing history remain separate from editable result fields.</Text>
     {state.review.outcome ? <ReviewFields outcome={state.review.outcome} draft={draft} editing={editing} onEdit={setEditing} onChange={setDraft} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}
-    {state.review.outcome ? <><Text style={styles.sectionTitle}>Source and provenance</Text><Text style={styles.provenance}>Capture {state.review.capture.id} · source {state.review.source.id}</Text>{state.review.transcription ? <><Text style={styles.fieldLabel}>Original transcription</Text><Text style={styles.originalText}>{state.review.transcription.text ?? `Status: ${state.review.transcription.status}`}</Text></> : <Text style={styles.provenance}>Original transcription · pending</Text>}{state.review.outcome.kind === "task" && state.review.outcome.status === "open" ? <Button label={completing ? "Completing…" : "Complete task"} onPress={() => void complete()} disabled={completing || saving} /> : null}{state.review.outcome.kind === "note" || state.review.outcome.status === "open" ? <Button label={saving ? "Saving…" : "Save"} onPress={() => void save()} disabled={saving || completing} /> : null}</> : null}
+    {state.review.outcome ? <>
+      <Text style={styles.sectionTitle}>Source and provenance</Text>
+      <Text style={styles.provenance}>Capture {state.review.capture.id} · source {state.review.source.id}</Text>
+      {state.review.transcription ? <><Text style={styles.fieldLabel}>Original transcription</Text><Text style={styles.originalText}>{state.review.transcription.text ?? `Status: ${state.review.transcription.status}`}</Text></> : <Text style={styles.provenance}>Original transcription · pending</Text>}
+      {state.review.outcome.kind === "task" && state.review.outcome.status === "open" ? <Button label={completing ? "Completing…" : "Complete task"} onPress={() => void complete()} disabled={completing || saving || converting} /> : null}
+      {state.review.outcome.kind === "note" || state.review.outcome.status === "open" ? <Button label={saving ? "Saving…" : "Save"} onPress={() => void save()} disabled={saving || completing || converting} /> : null}
+      {state.review.outcome.kind === "note" ? <>
+        <Text style={styles.stateText}>Conversion requires a connection. The saved Note becomes a Task while keeping its identity and provenance.</Text>
+        <Button label={converting ? "Converting…" : "Convert saved Note to Task"} onPress={() => void convertNoteToTask()} disabled={saving || completing || converting} />
+      </> : null}
+    </> : null}
     {saveError ? <Text accessibilityRole="alert" style={styles.error}>{saveError}</Text> : null}
     {completionError ? <Text accessibilityRole="alert" style={styles.error}>{completionError}</Text> : null}
+    {conversionError ? <Text accessibilityRole="alert" style={styles.error}>{conversionError}</Text> : null}
+    {conversionNotice ? <Text accessibilityRole="alert" style={styles.success}>{conversionNotice}</Text> : null}
   </ReviewShell>;
 }
 
@@ -226,4 +274,4 @@ function pad(value: number): string { return String(value).padStart(2, "0"); }
 function ReviewShell({ children, onBack }: { readonly children: ReactNode; readonly onBack: () => void }) { return <SafeAreaView style={styles.safeArea}><Pressable accessibilityRole="button" accessibilityLabel="Back to items" onPress={onBack}><Text style={styles.back}>‹ Items</Text></Pressable><ScrollView contentContainerStyle={styles.content}>{children}</ScrollView></SafeAreaView>; }
 function Button({ label, onPress, disabled = false }: { readonly label: string; readonly onPress: () => void; readonly disabled?: boolean }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress} style={styles.button}><Text style={styles.buttonText}>{label}</Text></Pressable>; }
 
-const styles = StyleSheet.create({ safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, content: { padding: 24 }, back: { color: "#7A5C36", fontSize: 16, paddingHorizontal: 24, paddingTop: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 32, fontWeight: "700", marginTop: 6 }, stateText: { color: "#716B64", fontSize: 15, lineHeight: 22, marginTop: 8 }, reviewState: { color: "#8C3D25", fontSize: 15, fontWeight: "600", lineHeight: 22, marginTop: 18 }, field: { marginTop: 24 }, fieldLabel: { color: "#8B7355", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, value: { color: "#24221F", fontSize: 19, lineHeight: 27, marginTop: 5 }, originalText: { color: "#716B64", fontSize: 16, lineHeight: 24, marginTop: 5 }, input: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", fontSize: 19, lineHeight: 27, paddingVertical: 5 }, sectionTitle: { color: "#24221F", fontSize: 17, fontWeight: "700", marginTop: 32 }, provenance: { color: "#716B64", fontSize: 14, lineHeight: 21, marginTop: 6 }, button: { alignSelf: "flex-start", backgroundColor: "#24221F", borderRadius: 12, marginTop: 24, paddingHorizontal: 20, paddingVertical: 12 }, buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, error: { color: "#A33B31", fontSize: 14, marginTop: 12 }, dueBubbles: { flexDirection: "row", gap: 8, marginTop: 10 }, dueBubble: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 }, dueBubbleText: { color: "#24221F", fontSize: 16 }, clearDue: { color: "#8C3D25", fontSize: 14, marginTop: 12 }, pickerPanel: { backgroundColor: "#EFEAE2", borderRadius: 16, marginTop: 14, padding: 16 }, pickerHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" }, pickerTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, pickerHint: { color: "#716B64", fontSize: 13, marginTop: 8 }, monthRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginVertical: 18 }, calendarGrid: { flexDirection: "row", flexWrap: "wrap" }, calendarDay: { alignItems: "center", justifyContent: "center", minHeight: 38, width: "14.285%" }, calendarDaySelected: { backgroundColor: "#D5B98D", borderRadius: 19 } });
+const styles = StyleSheet.create({ safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, content: { padding: 24 }, back: { color: "#7A5C36", fontSize: 16, paddingHorizontal: 24, paddingTop: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 32, fontWeight: "700", marginTop: 6 }, stateText: { color: "#716B64", fontSize: 15, lineHeight: 22, marginTop: 8 }, reviewState: { color: "#8C3D25", fontSize: 15, fontWeight: "600", lineHeight: 22, marginTop: 18 }, field: { marginTop: 24 }, fieldLabel: { color: "#8B7355", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, value: { color: "#24221F", fontSize: 19, lineHeight: 27, marginTop: 5 }, originalText: { color: "#716B64", fontSize: 16, lineHeight: 24, marginTop: 5 }, input: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", fontSize: 19, lineHeight: 27, paddingVertical: 5 }, sectionTitle: { color: "#24221F", fontSize: 17, fontWeight: "700", marginTop: 32 }, provenance: { color: "#716B64", fontSize: 14, lineHeight: 21, marginTop: 6 }, button: { alignSelf: "flex-start", backgroundColor: "#24221F", borderRadius: 12, marginTop: 24, paddingHorizontal: 20, paddingVertical: 12 }, buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, error: { color: "#A33B31", fontSize: 14, marginTop: 12 }, success: { color: "#356445", fontSize: 14, marginTop: 12 }, dueBubbles: { flexDirection: "row", gap: 8, marginTop: 10 }, dueBubble: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 }, dueBubbleText: { color: "#24221F", fontSize: 16 }, clearDue: { color: "#8C3D25", fontSize: 14, marginTop: 12 }, pickerPanel: { backgroundColor: "#EFEAE2", borderRadius: 16, marginTop: 14, padding: 16 }, pickerHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" }, pickerTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, pickerHint: { color: "#716B64", fontSize: 13, marginTop: 8 }, monthRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginVertical: 18 }, calendarGrid: { flexDirection: "row", flexWrap: "wrap" }, calendarDay: { alignItems: "center", justifyContent: "center", minHeight: 38, width: "14.285%" }, calendarDaySelected: { backgroundColor: "#D5B98D", borderRadius: 19 } });
