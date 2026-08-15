@@ -37,6 +37,29 @@ describe("Offline draft routes", () => {
     const response = await application.inject({ method: "POST", url: "/offline-drafts/sync", payload: { draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "audio", audioBase64: "%%%", contentType: "audio/m4a" } } });
 
     expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ status: { state: "failed", retryable: false, failure: { classification: "terminal" } } });
+  });
+
+  test("returns a stable synchronization status and result link", async () => {
+    const application = buildApi({ logger: false });
+    const repository = new MemoryDraftRepository();
+    const service = new OfflineDraftService(
+      repository,
+      new CaptureService(new MemoryCaptureRepository(), new MemoryBlobStorage()),
+      { get: () => ({ state: "completed" as const, outcome: { kind: "note" as const, id: "note-1" } }) },
+    );
+    registerOfflineDraftRoutes(application, service);
+    applications.push(application);
+
+    await application.inject({
+      method: "POST",
+      url: "/offline-drafts/sync",
+      payload: { draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "audio", audioBase64: "AQ==", contentType: "audio/m4a" } },
+    });
+    const response = await application.inject({ method: "GET", url: "/offline-drafts/draft-1/status?memberId=member-1" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ status: { state: "confirmed", processing: "confirmed", result: { kind: "note", id: "note-1" } } });
   });
 });
 

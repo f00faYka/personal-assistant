@@ -7,6 +7,26 @@ export type OfflineDraftSource =
   | { readonly kind: "text"; readonly text: string };
 
 export type OfflineDraftStatus = "accepted" | "failed";
+export type OfflineDraftProcessingState = "not_started" | "pending" | "confirmed" | "failed";
+
+export interface OfflineDraftReviewReader {
+  get(captureId: string): {
+    readonly state: "pending" | "failed" | "completed" | "needs_review";
+    readonly outcome: { readonly kind: "task" | "note"; readonly id: string } | null;
+    readonly failure?: { readonly message: string } | null;
+  };
+}
+
+export interface OfflineDraftStatusContract {
+  readonly draftId: string;
+  readonly memberId: string;
+  readonly state: "accepted" | "processing" | "confirmed" | "failed";
+  readonly processing: OfflineDraftProcessingState;
+  readonly retryable: boolean;
+  readonly capture?: { readonly id: string; readonly detailUrl: string };
+  readonly result?: { readonly kind: "task" | "note"; readonly id: string; readonly detailUrl: string };
+  readonly failure?: { readonly classification: "retryable" | "terminal"; readonly message: string };
+}
 
 export interface OfflineDraftSubmission {
   readonly draftId: string;
@@ -43,6 +63,7 @@ export class OfflineDraftService {
   constructor(
     private readonly repository: OfflineDraftRepository,
     private readonly captureService: CaptureService,
+    private readonly reviewReader?: OfflineDraftReviewReader,
   ) {}
 
   async sync(submission: OfflineDraftSubmission): Promise<OfflineDraft> {
@@ -70,6 +91,49 @@ export class OfflineDraftService {
     const draft = this.repository.find(memberId, draftId);
     if (!draft) throw new OfflineDraftNotFoundError(draftId);
     return draft;
+  }
+
+  getStatus(memberId: string, draftId: string): OfflineDraftStatusContract {
+    const draft = this.get(memberId, draftId);
+    if (draft.status === "failed") {
+      return {
+        draftId: draft.draftId,
+        memberId: draft.memberId,
+        state: "failed",
+        processing: "not_started",
+        retryable: draft.retryable,
+        ...(draft.error === undefined ? {} : { failure: { classification: draft.retryable ? "retryable" as const : "terminal" as const, message: draft.error } }),
+      };
+    }
+    if (draft.captureId === undefined) {
+      return { draftId: draft.draftId, memberId: draft.memberId, state: "accepted", processing: "not_started", retryable: false };
+    }
+
+    const capture = { id: draft.captureId, detailUrl: `/captures/${draft.captureId}/review` };
+    const review = this.reviewReader?.get(draft.captureId);
+    if (review?.outcome !== null && review?.outcome !== undefined && (review.state === "completed" || review.state === "needs_review")) {
+      return {
+        draftId: draft.draftId,
+        memberId: draft.memberId,
+        state: "confirmed",
+        processing: "confirmed",
+        retryable: false,
+        capture,
+        result: { ...review.outcome, detailUrl: capture.detailUrl },
+      };
+    }
+    if (review?.state === "failed") {
+      return {
+        draftId: draft.draftId,
+        memberId: draft.memberId,
+        state: "processing",
+        processing: "failed",
+        retryable: false,
+        capture,
+        ...(review.failure === undefined || review.failure === null ? {} : { failure: { classification: "terminal" as const, message: review.failure.message } }),
+      };
+    }
+    return { draftId: draft.draftId, memberId: draft.memberId, state: "processing", processing: "pending", retryable: false, capture };
   }
 
   private async syncOnce(submission: OfflineDraftSubmission, sourceSha256: string): Promise<OfflineDraft> {

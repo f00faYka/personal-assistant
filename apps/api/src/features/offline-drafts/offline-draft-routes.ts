@@ -23,8 +23,29 @@ export function registerOfflineDraftRoutes(application: FastifyInstance, service
         : body.source;
       return { draft: await service.sync({ draftId: body.draftId, memberId: body.memberId, capturedAt: body.capturedAt, source }) };
     } catch (error) {
-      if (error instanceof z.ZodError || error instanceof InvalidOfflineDraftError) return reply.code(400).send({ error: error instanceof Error ? error.message : "invalid Offline draft" });
+      if (error instanceof z.ZodError || error instanceof InvalidOfflineDraftError) {
+        const message = error instanceof Error ? error.message : "invalid Offline draft";
+        return reply.code(400).send({
+          error: message,
+          status: {
+            state: "failed",
+            processing: "not_started",
+            retryable: false,
+            failure: { classification: "terminal", message },
+          },
+        });
+      }
       if (error instanceof ConflictingOfflineDraftError) return reply.code(409).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  application.get<{ Params: { id: string }; Querystring: { memberId?: string } }>("/offline-drafts/:id/status", async (request, reply) => {
+    try {
+      if (!request.query.memberId) return reply.code(400).send({ error: "memberId is required" });
+      return { status: service.getStatus(request.query.memberId, request.params.id) };
+    } catch (error) {
+      if (error instanceof OfflineDraftNotFoundError) return reply.code(404).send({ error: error.message });
       throw error;
     }
   });

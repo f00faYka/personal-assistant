@@ -47,6 +47,40 @@ describe("OfflineDraftService", () => {
     expect(recovered).toMatchObject({ status: "accepted", captureId: expect.any(String), retryable: false });
     await expect(service.sync({ ...common, source: { ...common.source, audio: Uint8Array.from([2]) } })).rejects.toThrowError(ConflictingOfflineDraftError);
   });
+
+  test("exposes accepted, processing, confirmed, and retryable failed states", async () => {
+    const repository = new MemoryDraftRepository();
+    const captureRepository = new MemoryCaptureRepository();
+    const captureService = new CaptureService(captureRepository, new MemoryBlobStorage());
+    const service = new OfflineDraftService(repository, captureService, {
+      get: (captureId: string) => captureId === "capture-confirmed"
+        ? { state: "completed" as const, outcome: { kind: "task" as const, id: "task-1" } }
+        : { state: "pending" as const, outcome: null },
+    });
+
+    const text = await service.sync({ draftId: "text-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "text", text: "Buy milk" } });
+    expect(service.getStatus("member-1", text.draftId)).toMatchObject({ state: "accepted", processing: "not_started", retryable: false });
+
+    const audio = await service.sync({ draftId: "audio-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "audio", audio: Uint8Array.from([1]), contentType: "audio/m4a" } });
+    expect(service.getStatus("member-1", audio.draftId)).toMatchObject({ state: "processing", processing: "pending", capture: { id: audio.captureId, detailUrl: `/captures/${audio.captureId}/review` } });
+
+    repository.create({ ...audio, draftId: "confirmed-1", captureId: "capture-confirmed" });
+    expect(service.getStatus("member-1", "confirmed-1")).toMatchObject({
+      state: "confirmed",
+      processing: "confirmed",
+      result: { kind: "task", id: "task-1", detailUrl: "/captures/capture-confirmed/review" },
+    });
+
+    const failedRepository = new MemoryDraftRepository();
+    const failedService = new OfflineDraftService(failedRepository, new CaptureService(new MemoryCaptureRepository(), new FailingBlobStorage()));
+    const failed = await failedService.sync({ draftId: "failed-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "audio", audio: Uint8Array.from([1]), contentType: "audio/m4a" } });
+    expect(failedService.getStatus("member-1", failed.draftId)).toMatchObject({
+      state: "failed",
+      processing: "not_started",
+      retryable: true,
+      failure: { classification: "retryable" },
+    });
+  });
 });
 
 class MemoryDraftRepository implements OfflineDraftRepository {
