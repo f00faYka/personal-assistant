@@ -9,6 +9,7 @@ vi.mock("react-native", async () => {
   const host = (name: string) => function Host(props: HostProps) { return React.createElement(name, props, props.children); };
   const FlatList = (props: HostProps & { readonly data?: readonly unknown[]; readonly renderItem?: (info: { readonly item: unknown; readonly index: number }) => React.ReactNode }) => React.createElement("FlatList", props, props.refreshControl, React.Children.toArray(props.data?.map((item, index) => props.renderItem?.({ item, index }))));
   return {
+    AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
     ActivityIndicator: host("ActivityIndicator"),
     FlatList,
     Pressable: host("Pressable"),
@@ -26,6 +27,7 @@ import { MemberListScreen } from "./MemberListScreen";
 import type { CaptureSubmitter, VoiceRecorder } from "../capture/voice-capture";
 import { ConfirmedRequestError } from "../http/request-error";
 import type { OfflineDraftStore } from "../offline/offline-drafts";
+import type { OfflineDraftSyncClient } from "../offline/synchronize-offline-drafts";
 
 const task = { kind: "task" as const, id: "task-1", captureId: "capture-1", title: "Buy milk", state: "open" as const, createdAt: "2026-08-14T08:00:00Z", detailUrl: "/captures/capture-1/review" };
 const note = { kind: "note" as const, id: "note-1", captureId: "capture-2", content: "Call the dentist", state: "none" as const, createdAt: "2026-08-14T08:00:00Z", detailUrl: "/captures/capture-2/review" };
@@ -270,6 +272,43 @@ describe("MemberListScreen", () => {
     expect(offlineDraftStore.remove).toHaveBeenCalledWith("member-1", "draft-audio");
     expect(textContent(renderer)).not.toContain("Voice Capture");
     expect(textContent(renderer)).toContain("Call the dentist");
+    renderer.unmount();
+  });
+
+  test("synchronizes restored drafts, removes only confirmed drafts, and offers retry after failure", async () => {
+    const confirmed = { draftId: "draft-confirmed", memberId: "member-1", capturedAt: "2026-08-15T11:00:00.000Z", source: { kind: "text" as const, text: "Confirmed note" } };
+    const failed = { draftId: "draft-failed", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "text" as const, text: "Retry me" } };
+    const offlineDraftStore = draftStore({ list: vi.fn().mockResolvedValue([confirmed, failed]) });
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({ items: [note], nextCursor: null }))));
+    const synchronize = vi.fn<OfflineDraftSyncClient["synchronize"]>()
+      .mockResolvedValueOnce({ draftId: confirmed.draftId, state: "confirmed", retryable: false })
+      .mockResolvedValueOnce({ draftId: failed.draftId, state: "failed", retryable: true, message: "offline" })
+      .mockResolvedValueOnce({ draftId: failed.draftId, state: "confirmed", retryable: false });
+    const offlineDraftSyncClient: OfflineDraftSyncClient = { synchronize };
+    const renderer = await renderScreen({ offlineDraftStore, offlineDraftSyncClient });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); });
+
+    expect(offlineDraftStore.remove).toHaveBeenCalledWith("member-1", "draft-confirmed");
+    expect(textContent(renderer)).toContain("Retry me");
+    expect(textContent(renderer)).toContain("offline");
+    await act(async () => { findButton(renderer, "Retry synchronization").props.onPress(); });
+    expect(offlineDraftStore.remove).toHaveBeenCalledWith("member-1", "draft-failed");
+    expect(synchronize).toHaveBeenCalledTimes(3);
+    renderer.unmount();
+  });
+
+  test("keeps a confirmed draft retryable when local cleanup fails", async () => {
+    const draft = { draftId: "draft-confirmed", memberId: "member-1", capturedAt: "2026-08-15T11:00:00.000Z", source: { kind: "text" as const, text: "Confirmed note" } };
+    const remove = vi.fn().mockRejectedValueOnce(new Error("file locked")).mockResolvedValue(undefined);
+    const offlineDraftStore = draftStore({ list: vi.fn().mockResolvedValue([draft]), remove });
+    const synchronize = vi.fn<OfflineDraftSyncClient["synchronize"]>().mockResolvedValue({ draftId: draft.draftId, state: "confirmed", retryable: false });
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({ items: [note], nextCursor: null }))));
+    const renderer = await renderScreen({ offlineDraftStore, offlineDraftSyncClient: { synchronize } });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); });
+
+    expect(textContent(renderer)).toContain("Local cleanup failed: file locked");
+    await act(async () => { findButton(renderer, "Retry synchronization").props.onPress(); });
+    expect(remove).toHaveBeenCalledTimes(2);
     renderer.unmount();
   });
 
