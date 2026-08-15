@@ -48,6 +48,7 @@ export interface ListRow {
   readonly captureState: "pending" | "stored";
   readonly transcriptionStatus: "pending" | "processing" | "succeeded" | "failed" | null;
   readonly transcriptionError: string | null;
+  readonly interpretationStatus?: "pending" | "processing" | "succeeded" | "failed" | null;
   readonly outcomeKind: "task" | "note" | null;
   readonly outcomeId: string | null;
   readonly title: string | null;
@@ -109,7 +110,9 @@ function toListItem(row: ListRow): MemberListItem {
     if (row.outcomeId === null || row.content === null || row.noteState === null) throw new Error(`Invalid Note list row: ${row.captureId}`);
     return { kind: "note", id: row.outcomeId, captureId: row.captureId, content: row.content, state: row.noteState, createdAt: row.createdAt, detailUrl };
   }
-  const state = row.transcriptionStatus === "failed" ? "failed" : "pending";
+  const state = row.transcriptionStatus === "failed" || row.interpretationStatus === "failed"
+    ? "failed"
+    : "pending";
   return {
     kind: "capture", id: row.captureId, captureId: row.captureId, state,
     createdAt: row.createdAt, detailUrl,

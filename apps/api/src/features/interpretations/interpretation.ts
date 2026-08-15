@@ -49,8 +49,26 @@ export interface InterpretationRepository {
   create(interpretation: Interpretation): Interpretation;
 }
 
+export interface InterpretationProviderInput {
+  readonly transcriptionText: string;
+  readonly catalogVersion: string;
+}
+
+export interface InterpretationProviderResult {
+  readonly model: string;
+  readonly rawOutput: unknown;
+}
+
+export interface InterpretationProvider {
+  interpret(input: InterpretationProviderInput): Promise<InterpretationProviderResult>;
+}
+
 export class InterpretationService {
   constructor(private readonly repository: InterpretationRepository) {}
+
+  getByTranscriptionId(transcriptionId: string): Interpretation | undefined {
+    return this.repository.findByTranscriptionId(transcriptionId);
+  }
 
   evaluate(input: InterpretationInput): Interpretation {
     if (input.transcriptionStatus !== "succeeded") {

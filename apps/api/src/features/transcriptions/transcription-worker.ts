@@ -16,7 +16,12 @@ export interface TranscriptionWorkerOptions {
   readonly service: TranscriptionService;
   readonly repository: TranscriptionRecoveryRepository;
   readonly maxAttempts: number;
+  readonly succeededHandler?: TranscriptionSucceededHandler;
   readonly onError?: (error: unknown, captureId: string) => void;
+}
+
+export interface TranscriptionSucceededHandler {
+  handleSucceededTranscription(transcription: Transcription): Promise<void>;
 }
 
 export class TranscriptionWorker implements CaptureStoredHandler {
@@ -54,6 +59,10 @@ export class TranscriptionWorker implements CaptureStoredHandler {
       sourceId: capture.sourceId,
       contentType: capture.contentType,
     });
+    if (transcription.status === "succeeded") {
+      await this.options.succeededHandler?.handleSucceededTranscription(transcription);
+      return;
+    }
     this.schedule(transcription);
   }
 
@@ -75,7 +84,8 @@ export class TranscriptionWorker implements CaptureStoredHandler {
     this.scheduled.add(transcription.captureId);
     this.queue = this.queue.then(async () => {
       try {
-        await this.options.service.process(transcription.captureId);
+        const succeeded = await this.options.service.process(transcription.captureId);
+        await this.options.succeededHandler?.handleSucceededTranscription(succeeded);
       } catch (error) {
         this.options.onError?.(error, transcription.captureId);
       } finally {
