@@ -81,6 +81,26 @@ describe("Review routes", () => {
         outcomes[index] = updated;
         return updated;
       },
+      convertNoteToTask: (id: string, memberId: string, expectedVersion: number) => {
+        const index = outcomes.findIndex((value) => value.id === id && value.kind === "note" && value.memberId === memberId && value.version === expectedVersion);
+        if (index < 0) return undefined;
+        const note = outcomes[index];
+        if (!note || note.kind !== "note") return undefined;
+        const task = {
+          kind: "task" as const,
+          id: note.id,
+          memberId: note.memberId,
+          interpretationId: note.interpretationId,
+          captureId: note.captureId,
+          sourceId: note.sourceId,
+          title: note.content,
+          status: "open" as const,
+          version: note.version + 1,
+          createdAt: note.createdAt,
+        };
+        outcomes[index] = task;
+        return task;
+      },
     };
     const application = buildApi({ logger: false });
     registerReviewRoutes(application, new ReviewService({
@@ -107,11 +127,26 @@ describe("Review routes", () => {
       url: "/notes/" + saved.json().note.id,
       payload: { memberId: "member-1", expectedVersion: 0, content: "Water the garden on Sunday" },
     });
+    const converted = await application.inject({
+      method: "POST",
+      url: "/notes/" + saved.json().note.id + "/convert-to-task",
+      payload: { memberId: "member-1", expectedVersion: 1 },
+    });
 
     expect(saved.statusCode).toBe(201);
     expect(edited.statusCode).toBe(200);
     expect(edited.json().note).toMatchObject({ content: "Water the garden on Sunday", version: 1 });
     expect(edited.json().note).toMatchObject({ captureId: "capture-1", sourceId: "source-1", interpretationId: "interpretation-1" });
+    expect(converted.statusCode).toBe(200);
+    expect(converted.json().task).toMatchObject({
+      id: saved.json().note.id,
+      title: "Water the garden on Sunday",
+      status: "open",
+      version: 2,
+      captureId: "capture-1",
+      sourceId: "source-1",
+      interpretationId: "interpretation-1",
+    });
   });
 });
 

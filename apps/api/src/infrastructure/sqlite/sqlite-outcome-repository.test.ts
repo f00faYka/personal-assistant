@@ -151,4 +151,42 @@ describe("SqliteOutcomeRepository", () => {
     expect(saved).toMatchObject({ captureId: "capture-1", sourceId: "source-1", interpretationId: "interpretation-1" });
     repository.close();
   });
+
+  test("converts a Note in place and rejects stale or cross-member conversion", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "personal-assistant-note-conversion-"));
+    directories.push(directory);
+    const databasePath = join(directory, "api.sqlite");
+    migrateDatabase({ databasePath, migrations: foundationMigrations });
+    const repository = new SqliteOutcomeRepository(databasePath);
+    const note: Outcome = {
+      kind: "note",
+      id: "note-1",
+      memberId: "member-1",
+      interpretationId: "interpretation-1",
+      captureId: "capture-1",
+      sourceId: "source-1",
+      content: "Call the gardener",
+      reviewState: "needs_review",
+      version: 0,
+      createdAt: "2026-08-14T10:00:00.000Z",
+    };
+    repository.create(note);
+
+    const converted = repository.convertNoteToTask("note-1", "member-1", 0);
+
+    expect(converted).toMatchObject({
+      kind: "task",
+      id: "note-1",
+      title: "Call the gardener",
+      status: "open",
+      version: 1,
+      memberId: "member-1",
+      interpretationId: "interpretation-1",
+      captureId: "capture-1",
+      sourceId: "source-1",
+    });
+    expect(repository.convertNoteToTask("note-1", "member-1", 0)).toBeUndefined();
+    expect(repository.convertNoteToTask("note-1", "other-member", 1)).toBeUndefined();
+    repository.close();
+  });
 });

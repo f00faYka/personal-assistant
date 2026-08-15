@@ -59,6 +59,11 @@ export interface OutcomeRepository {
     expectedVersion: number,
     changes: NoteChanges,
   ): NoteOutcome | undefined;
+  convertNoteToTask(
+    noteId: string,
+    memberId: string,
+    expectedVersion: number,
+  ): TaskOutcome | undefined;
 }
 
 export interface TaskChanges {
@@ -174,7 +179,7 @@ export class TaskService {
 }
 
 export class NoteService {
-  constructor(private readonly repository: Pick<OutcomeRepository, "findById" | "updateNote" | "findByInterpretationId" | "create">) {}
+  constructor(private readonly repository: Pick<OutcomeRepository, "findById" | "updateNote" | "findByInterpretationId" | "create" | "convertNoteToTask">) {}
 
   saveFromReview(input: ReviewNoteInput): NoteOutcome {
     validateNoteChanges({ content: input.content });
@@ -217,6 +222,15 @@ export class NoteService {
     const updated = this.repository.updateNote(noteId, memberId, expectedVersion, changes);
     if (!updated) throw new ConcurrentNoteUpdateError(note.id);
     return updated;
+  }
+
+  convertToTask(noteId: string, memberId: string, expectedVersion: number): TaskOutcome {
+    const outcome = this.repository.findById(noteId);
+    if (!outcome || outcome.memberId !== memberId) throw new NoteNotFoundError(noteId);
+    if (outcome.kind === "task") return outcome;
+    const converted = this.repository.convertNoteToTask(noteId, memberId, expectedVersion);
+    if (!converted) throw new ConcurrentNoteUpdateError(noteId);
+    return converted;
   }
 
   private getNote(noteId: string, memberId: string): NoteOutcome {
