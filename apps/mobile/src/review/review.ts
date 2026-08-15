@@ -20,6 +20,7 @@ export interface ReviewClient {
   updateTask(taskId: string, memberId: string, expectedVersion: number, changes: { readonly title?: string; readonly dueAt?: string | null }): Promise<ReviewOutcome>;
   completeTask(taskId: string, memberId: string, expectedVersion: number): Promise<ReviewOutcome>;
   updateNote(noteId: string, memberId: string, expectedVersion: number, content: string): Promise<ReviewOutcome>;
+  convertNoteToTask(noteId: string, memberId: string, expectedVersion: number): Promise<Extract<ReviewOutcome, { readonly kind: "task" }>>;
 }
 
 export function createReviewClient(apiBaseUrl: string): ReviewClient {
@@ -39,6 +40,10 @@ export function createReviewClient(apiBaseUrl: string): ReviewClient {
     async updateNote(noteId, memberId, expectedVersion, content) {
       const response = await fetch(url(apiBaseUrl, `/notes/${noteId}`), { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ memberId, expectedVersion, content }) });
       return readResponse<{ note: ReviewOutcome }>(response).then((body) => body.note);
+    },
+    async convertNoteToTask(noteId, memberId, expectedVersion) {
+      const response = await fetch(url(apiBaseUrl, `/notes/${noteId}/convert-to-task`), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ memberId, expectedVersion }) });
+      return readResponse<{ task: Extract<ReviewOutcome, { readonly kind: "task" }> }>(response).then((body) => body.task);
     },
   };
 }
@@ -64,6 +69,11 @@ export function createReviewFixtureClient(kind: "task" | "note"): ReviewClient {
     async updateNote(_noteId, _memberId, _expectedVersion, content) {
       if (outcome.kind !== "note") throw new Error("Demo fixture is a Task");
       outcome = { ...outcome, content, reviewState: "none", version: outcome.version + 1 };
+      return outcome;
+    },
+    async convertNoteToTask() {
+      if (outcome.kind !== "note") throw new Error("Demo fixture is a Task");
+      outcome = { kind: "task", id: outcome.id, title: outcome.content, status: "open", version: outcome.version + 1 };
       return outcome;
     },
   };
