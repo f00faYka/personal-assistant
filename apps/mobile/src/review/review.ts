@@ -16,6 +16,7 @@ export interface ReviewContract {
 export interface ReviewClient {
   get(detailUrl: string): Promise<ReviewContract>;
   updateTask(taskId: string, memberId: string, expectedVersion: number, changes: { readonly title?: string; readonly dueAt?: string | null }): Promise<ReviewOutcome>;
+  completeTask(taskId: string, memberId: string, expectedVersion: number): Promise<ReviewOutcome>;
   updateNote(noteId: string, memberId: string, expectedVersion: number, content: string): Promise<ReviewOutcome>;
 }
 
@@ -27,6 +28,10 @@ export function createReviewClient(apiBaseUrl: string): ReviewClient {
     },
     async updateTask(taskId, memberId, expectedVersion, changes) {
       const response = await fetch(url(apiBaseUrl, `/tasks/${taskId}`), { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ memberId, expectedVersion, ...changes }) });
+      return readResponse<{ task: ReviewOutcome }>(response).then((body) => body.task);
+    },
+    async completeTask(taskId, memberId, expectedVersion) {
+      const response = await fetch(url(apiBaseUrl, `/tasks/${taskId}/complete`), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ memberId, expectedVersion }) });
       return readResponse<{ task: ReviewOutcome }>(response).then((body) => body.task);
     },
     async updateNote(noteId, memberId, expectedVersion, content) {
@@ -47,6 +52,11 @@ export function createReviewFixtureClient(kind: "task" | "note"): ReviewClient {
     async updateTask(_taskId, _memberId, _expectedVersion, changes) {
       if (outcome.kind !== "task") throw new Error("Demo fixture is a Note");
       outcome = { ...outcome, ...(changes.title === undefined ? {} : { title: changes.title }), ...(changes.dueAt === undefined || changes.dueAt === null ? {} : { dueAt: changes.dueAt }), version: outcome.version + 1 };
+      return outcome;
+    },
+    async completeTask() {
+      if (outcome.kind !== "task") throw new Error("Demo fixture is a Note");
+      outcome = { ...outcome, status: "completed", version: outcome.version + 1 };
       return outcome;
     },
     async updateNote(_noteId, _memberId, _expectedVersion, content) {

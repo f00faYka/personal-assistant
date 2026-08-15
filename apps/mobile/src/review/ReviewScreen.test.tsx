@@ -51,6 +51,58 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
+  test("completes an open Task once after server confirmation", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 3 }) }))
+      .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "task-1", title: "Buy milk", status: "completed", version: 4 } }));
+    vi.stubGlobal("fetch", fetcher);
+    const onBack = vi.fn();
+    const renderer = await renderScreen(onBack);
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Complete task" }).props.onPress(); });
+
+    expect(fetcher).toHaveBeenLastCalledWith("http://api.test/tasks/task-1/complete", expect.objectContaining({ method: "POST" }));
+    expect(onBack).toHaveBeenCalledOnce();
+    renderer.unmount();
+  });
+
+  test("prevents duplicate completion requests while one is in flight", async () => {
+    let resolveCompletion!: (response: Response) => void;
+    const completion = new Promise<Response>((resolve) => { resolveCompletion = resolve; });
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 3 }) }))
+      .mockReturnValueOnce(completion);
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen(vi.fn());
+    const button = renderer.root.findByProps({ accessibilityLabel: "Complete task" });
+
+    act(() => { button.props.onPress(); button.props.onPress(); });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    resolveCompletion(jsonResponse({ task: { kind: "task", id: "task-1", title: "Buy milk", status: "completed", version: 4 } }));
+    await act(async () => { await completion; });
+    renderer.unmount();
+  });
+
+  test("keeps the Task visible and retries after completion failure", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 3 }) }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "Task changed elsewhere" }), { status: 409 }))
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy oat milk", status: "open", version: 4 }) }))
+      .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "task-1", title: "Buy oat milk", status: "completed", version: 5 } }));
+    vi.stubGlobal("fetch", fetcher);
+    const onBack = vi.fn();
+    const renderer = await renderScreen(onBack);
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Complete task" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("Task changed elsewhere");
+    expect(onBack).not.toHaveBeenCalled();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Complete task" }).props.onPress(); });
+
+    expect(onBack).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenLastCalledWith("http://api.test/tasks/task-1/complete", expect.objectContaining({ body: JSON.stringify({ memberId: "member-1", expectedVersion: 4 }) }));
+    renderer.unmount();
+  });
+
   test("distinguishes failed processing and Needs review without presenting a Task", async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ review: reviewWith(null, { state: "failed", failure: { stage: "transcription", message: "provider offline" } }) }));
