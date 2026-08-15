@@ -222,13 +222,14 @@ function AudioWaveform({ tick }: { readonly tick: number }) {
 
 function ListCard({ item, onPress }: { readonly item: MemberListItem; readonly onPress: ((detailUrl: string) => void) | undefined }) {
   const label = listItemLabel(item);
-  const title = item.kind === "task" ? item.title : item.kind === "note" ? item.content : item.state === "failed" ? "This Capture could not be processed" : "Processing your Capture";
+  const title = item.kind === "task" ? item.title : item.kind === "note" ? item.content : item.state === "failed" ? "Capture processing failed" : "Processing your Capture";
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${title}`} onPress={() => onPress?.(item.detailUrl)} style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}>
       <View style={styles.cardHeader}><Text style={styles.label}>{label}</Text><Text style={styles.date}>{formatDate(item.createdAt)}</Text></View>
       <Text style={cardTitleStyle}>{title}</Text>
       {item.kind === "task" && item.dueAt ? <Text style={styles.detail}>Due {formatDate(item.dueAt)}</Text> : null}
       {item.kind === "note" && item.state === "needs_review" ? <Text style={styles.reviewHint}>Review this item to confirm what it means.</Text> : null}
+      {item.kind === "capture" && item.state === "failed" ? <Text style={styles.reviewHint}>Open review to inspect the failure.</Text> : null}
     </Pressable>
   );
 }
