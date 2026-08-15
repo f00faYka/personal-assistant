@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, SafeAreaView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, FlatList, Pressable, RefreshControl, SafeAreaView, StyleSheet, Text, View } from "react-native";
 
 import { createIdempotencyKey, type CaptureSubmitter, type RecordedAudio, type VoiceRecorder } from "../capture/voice-capture";
 import { shouldPersistOfflineDraft } from "../http/request-error";
 import type { OfflineDraft, OfflineDraftStore } from "../offline/offline-drafts";
+import type { OfflineDraftSynchronizationResult, OfflineDraftSyncClient } from "../offline/synchronize-offline-drafts";
 import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, type ListState, type MemberListItem } from "./member-items";
 import { beginPreview, expirePreview, resolvePreview, savePreview, timeOutPreview, type PreviewItem, type PreviewState } from "../preview/result-preview";
 
@@ -14,6 +15,7 @@ interface MemberListScreenProps {
   readonly voiceRecorder?: VoiceRecorder;
   readonly captureSubmitter?: CaptureSubmitter;
   readonly offlineDraftStore?: OfflineDraftStore;
+  readonly offlineDraftSyncClient?: OfflineDraftSyncClient;
 }
 
 type CaptureState =
@@ -26,7 +28,7 @@ type TimelineItem =
   | { readonly kind: "offline_draft"; readonly draft: OfflineDraft }
   | { readonly kind: "server_item"; readonly item: MemberListItem };
 
-export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceRecorder, captureSubmitter, offlineDraftStore }: MemberListScreenProps) {
+export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceRecorder, captureSubmitter, offlineDraftStore, offlineDraftSyncClient }: MemberListScreenProps) {
   const client = useMemo(() => createMemberItemsClient(apiBaseUrl), [apiBaseUrl]);
   const [state, setState] = useState<ListState>(initialListState);
   const [refreshing, setRefreshing] = useState(false);
@@ -34,6 +36,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
   const [capture, setCapture] = useState<CaptureState>({ status: "idle" });
   const [offlineDrafts, setOfflineDrafts] = useState<readonly OfflineDraft[]>([]);
   const [offlineDraftError, setOfflineDraftError] = useState<string | null>(null);
+  const [offlineDraftSync, setOfflineDraftSync] = useState<Record<string, OfflineDraftSynchronizationResult>>({});
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0);
@@ -42,6 +45,38 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
   const captureCreatedAt = useRef<string | null>(null);
   const loadingCursor = useRef<string | null>(null);
   const deletedOfflineDraftIds = useRef(new Set<string>());
+
+  const synchronizeDraft = useCallback(async (draft: OfflineDraft) => {
+    if (!offlineDraftStore || !offlineDraftSyncClient) return;
+    setOfflineDraftSync((current) => ({ ...current, [draft.draftId]: { draftId: draft.draftId, state: "processing", retryable: false } }));
+    let result: OfflineDraftSynchronizationResult;
+    try {
+      result = await offlineDraftSyncClient.synchronize(draft);
+    } catch (error) {
+      result = { draftId: draft.draftId, state: "failed", retryable: true, message: error instanceof Error ? error.message : "Unable to synchronize Offline draft" };
+    }
+    if (result.state === "confirmed") {
+      try {
+        await offlineDraftStore.remove(memberId, draft.draftId);
+        deletedOfflineDraftIds.current.add(draft.draftId);
+        setOfflineDrafts((current) => current.filter((candidate) => candidate.draftId !== draft.draftId));
+        setOfflineDraftSync((current) => { const next = { ...current }; delete next[draft.draftId]; return next; });
+        try {
+          const page = await client.list(memberId);
+          setState(listStateFromPage(page));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unable to refresh confirmed result";
+          setOfflineDraftError(`Server confirmed the draft, but the timeline could not refresh: ${message}`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "local storage failed";
+        setOfflineDraftError(`Server confirmed the draft, but local cleanup failed: ${message}`);
+        setOfflineDraftSync((current) => ({ ...current, [draft.draftId]: { draftId: draft.draftId, state: "failed", retryable: true, message: `Local cleanup failed: ${message}` } }));
+      }
+      return;
+    }
+    setOfflineDraftSync((current) => ({ ...current, [draft.draftId]: result }));
+  }, [client, memberId, offlineDraftStore, offlineDraftSyncClient]);
 
   const load = useCallback(async (isRefresh = false, cursor?: string) => {
     if (isRefresh) setRefreshing(true);
@@ -136,6 +171,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
           captureCreatedAt.current = null;
           setCapture({ status: "idle" });
           try { await voiceRecorder?.cancel(); } catch { /* The durable copy is already confirmed locally. */ }
+          void synchronizeDraft(draft);
         } catch (persistenceError) {
           const persistenceMessage = persistenceError instanceof Error ? persistenceError.message : "local storage failed";
           setCapture({ status: "failed", audio, message: `${submissionMessage}. Offline draft was not saved: ${persistenceMessage}` });
@@ -144,7 +180,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     } finally {
       submissionInFlight.current = false;
     }
-  }, [captureSubmitter, memberId, offlineDraftStore, voiceRecorder]);
+  }, [captureSubmitter, memberId, offlineDraftStore, synchronizeDraft, voiceRecorder]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -159,6 +195,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
           .sort((left, right) => right.capturedAt.localeCompare(left.capturedAt));
       });
       setOfflineDraftError(null);
+      void Promise.all(drafts.map((draft) => synchronizeDraft(draft)));
     }).catch((error: unknown) => {
       if (!cancelled) {
         const message = error instanceof Error ? error.message : "local storage failed";
@@ -166,7 +203,16 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       }
     });
     return () => { cancelled = true; };
-  }, [memberId, offlineDraftStore]);
+  }, [memberId, offlineDraftStore, synchronizeDraft]);
+
+  useEffect(() => {
+    if (!offlineDraftStore || !offlineDraftSyncClient) return;
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") return;
+      void offlineDraftStore.list(memberId).then((drafts) => Promise.all(drafts.map((draft) => synchronizeDraft(draft))));
+    });
+    return () => subscription.remove();
+  }, [memberId, offlineDraftStore, offlineDraftSyncClient, synchronizeDraft]);
 
   const deleteOfflineDraft = useCallback(async (draftId: string) => {
     if (!offlineDraftStore || deletingDraftId) return;
@@ -183,6 +229,11 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       setDeletingDraftId(null);
     }
   }, [deletingDraftId, memberId, offlineDraftStore]);
+
+  const retryOfflineDraft = useCallback((draftId: string) => {
+    const draft = offlineDrafts.find((candidate) => candidate.draftId === draftId);
+    if (draft) void synchronizeDraft(draft);
+  }, [offlineDrafts, synchronizeDraft]);
 
   useEffect(() => {
     if (!preview || preview.status !== "processing") return;
@@ -260,7 +311,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
           ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} /> : null}
           contentContainerStyle={styles.list}
           renderItem={({ item: entry }) => entry.kind === "offline_draft"
-            ? <OfflineDraftCard draft={entry.draft} deleting={deletingDraftId === entry.draft.draftId} onDelete={() => void deleteOfflineDraft(entry.draft.draftId)} />
+            ? <OfflineDraftCard draft={entry.draft} sync={offlineDraftSync[entry.draft.draftId]} deleting={deletingDraftId === entry.draft.draftId} onDelete={() => void deleteOfflineDraft(entry.draft.draftId)} onSync={() => retryOfflineDraft(entry.draft.draftId)} />
             : <ListCard item={entry.item} onPress={onOpenDetail} />}
         />
       ) : null}
@@ -299,12 +350,15 @@ function AudioWaveform({ tick }: { readonly tick: number }) {
   return <View accessibilityLabel="Recording waveform" style={[styles.waveform, styles.recordingWaveform]}>{bars.map((height, index) => <View key={index} style={[styles.waveformBar, styles.recordingWaveformBar, { height }, index === tick % bars.length && styles.recordingWaveformBarActive]} />)}</View>;
 }
 
-function OfflineDraftCard({ draft, deleting, onDelete }: { readonly draft: OfflineDraft; readonly deleting: boolean; readonly onDelete: () => void }) {
+function OfflineDraftCard({ draft, sync, deleting, onDelete, onSync }: { readonly draft: OfflineDraft; readonly sync?: OfflineDraftSynchronizationResult | undefined; readonly deleting: boolean; readonly onDelete: () => void; readonly onSync: () => void }) {
   const title = draft.source.kind === "audio" ? "Voice Capture" : draft.source.text;
+  const status = sync?.state === "confirmed" ? "Confirmed by server" : sync?.state === "processing" ? "Synchronizing…" : sync?.state === "accepted" ? "Accepted · waiting for server result" : sync?.state === "failed" ? sync.message ?? "Synchronization failed" : "Not confirmed · Waiting to synchronize";
+  const canSync = sync === undefined || sync.state === "accepted" || (sync.state === "failed" && sync.retryable);
   return <View accessibilityLabel={`Offline draft, not confirmed: ${title}`} style={[styles.card, styles.offlineDraftCard]}>
     <View style={styles.cardHeader}><Text style={styles.offlineDraftLabel}>Offline draft</Text><Text style={styles.date}>{formatDate(draft.capturedAt)}</Text></View>
     <Text style={cardTitleStyle}>{title}</Text>
-    <Text style={styles.offlineDraftStatus}>Not confirmed · Waiting to synchronize</Text>
+    <Text style={styles.offlineDraftStatus}>{status}</Text>
+    {canSync ? <Pressable accessibilityRole="button" accessibilityLabel={`${sync?.state === "failed" ? "Retry" : "Synchronize"} Offline draft ${title}`} disabled={deleting} onPress={onSync}><Text style={styles.retryDraft}>{sync?.state === "failed" ? "Retry synchronization" : "Synchronize now"}</Text></Pressable> : null}
     <Pressable accessibilityRole="button" accessibilityLabel={`Delete Offline draft ${title}`} disabled={deleting} onPress={onDelete}><Text style={styles.deleteDraft}>{deleting ? "Deleting…" : "Delete draft"}</Text></Pressable>
   </View>;
 }
@@ -334,5 +388,5 @@ function formatDuration(totalSeconds: number): string { const minutes = Math.flo
 const cardTitleStyle = { color: "#24221F", fontSize: 18, fontWeight: "600" as const, lineHeight: 24 };
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, header: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 34, fontWeight: "700", marginTop: 6 }, captureButton: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 12, paddingHorizontal: 16, paddingVertical: 11, alignSelf: "flex-start" }, captureButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, actionButton: { alignItems: "center", flex: 1, height: 48, justifyContent: "center", paddingHorizontal: 12 }, actionPrimaryButton: { alignSelf: "stretch", marginTop: 0 }, actionButtonContent: { alignItems: "center", flexDirection: "row", gap: 6 }, actionIcon: { fontSize: 16, fontWeight: "700", lineHeight: 18 }, capturePanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewPanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewEyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, recordingPanel: { backgroundColor: "#FCE8E5", borderColor: "#E5A49B", borderWidth: 1 }, captureTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, recordingTitle: { color: "#B43C32", fontSize: 17, fontWeight: "700" }, recordingText: { color: "#8C3D25", fontSize: 15, lineHeight: 21, marginTop: 6 }, recordingHeader: { alignItems: "center", flexDirection: "row", gap: 8 }, recordingDot: { backgroundColor: "#C44739", borderRadius: 5, height: 10, width: 10 }, recordingTimer: { color: "#B43C32", fontSize: 16, fontVariant: ["tabular-nums"], marginLeft: "auto" }, waveform: { alignItems: "center", flexDirection: "row", gap: 3, height: 44, justifyContent: "center", marginTop: 14 }, recordingWaveform: { backgroundColor: "#F8D5D0", borderRadius: 14 }, waveformBar: { backgroundColor: "#D9A88A", borderRadius: 2, minHeight: 6, width: 4 }, recordingWaveformBar: { backgroundColor: "#E08B80" }, recordingWaveformBarActive: { backgroundColor: "#B43C32" }, captureText: { color: "#716B64", fontSize: 15, lineHeight: 21, marginTop: 6 }, captureActions: { alignItems: "stretch", flexDirection: "row", gap: 10, marginTop: 14 }, secondaryButton: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10 }, secondaryButtonText: { color: "#5D5146", fontSize: 15, fontWeight: "600" }, recordingButton: { backgroundColor: "#B43C32" }, recordingButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, recordingSecondaryButton: { borderColor: "#B43C32" }, recordingSecondaryButtonText: { color: "#B43C32", fontSize: 15, fontWeight: "600" }, recordingIcon: { color: "#B43C32", fontSize: 16, fontWeight: "700", lineHeight: 18 }, list: { padding: 16, paddingTop: 4, gap: 12 }, card: { backgroundColor: "#FFFFFF", borderColor: "#E5E0D8", borderRadius: 16, borderWidth: 1, padding: 18 }, offlineDraftCard: { backgroundColor: "#FFF8E8", borderColor: "#CFAE70", borderStyle: "dashed" }, offlineDraftLabel: { color: "#8C641F", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, offlineDraftStatus: { color: "#8C641F", fontSize: 14, fontWeight: "600", marginTop: 8 }, deleteDraft: { color: "#8C3D25", fontSize: 14, fontWeight: "600", marginTop: 14 }, cardPressed: { opacity: 0.7 }, cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }, label: { color: "#7A5C36", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, date: { color: "#908A82", fontSize: 12 }, detail: { color: "#716B64", fontSize: 14, marginTop: 8 }, reviewHint: { color: "#A15B2A", fontSize: 14, marginTop: 8 }, errorBanner: { backgroundColor: "#FCE8DF", marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 10 }, errorText: { color: "#8C3D25", fontSize: 14 }, state: { alignItems: "center", flex: 1, justifyContent: "center", padding: 32 }, stateTitle: { color: "#24221F", fontSize: 20, fontWeight: "700", textAlign: "center" }, stateText: { color: "#716B64", fontSize: 16, lineHeight: 23, marginTop: 8, maxWidth: 300, textAlign: "center" }, retry: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 20, paddingHorizontal: 20, paddingVertical: 12 }, retryText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, footer: { padding: 16 },
+  safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, header: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 34, fontWeight: "700", marginTop: 6 }, captureButton: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 12, paddingHorizontal: 16, paddingVertical: 11, alignSelf: "flex-start" }, captureButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, actionButton: { alignItems: "center", flex: 1, height: 48, justifyContent: "center", paddingHorizontal: 12 }, actionPrimaryButton: { alignSelf: "stretch", marginTop: 0 }, actionButtonContent: { alignItems: "center", flexDirection: "row", gap: 6 }, actionIcon: { fontSize: 16, fontWeight: "700", lineHeight: 18 }, capturePanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewPanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewEyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, recordingPanel: { backgroundColor: "#FCE8E5", borderColor: "#E5A49B", borderWidth: 1 }, captureTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, recordingTitle: { color: "#B43C32", fontSize: 17, fontWeight: "700" }, recordingText: { color: "#8C3D25", fontSize: 15, lineHeight: 21, marginTop: 6 }, recordingHeader: { alignItems: "center", flexDirection: "row", gap: 8 }, recordingDot: { backgroundColor: "#C44739", borderRadius: 5, height: 10, width: 10 }, recordingTimer: { color: "#B43C32", fontSize: 16, fontVariant: ["tabular-nums"], marginLeft: "auto" }, waveform: { alignItems: "center", flexDirection: "row", gap: 3, height: 44, justifyContent: "center", marginTop: 14 }, recordingWaveform: { backgroundColor: "#F8D5D0", borderRadius: 14 }, waveformBar: { backgroundColor: "#D9A88A", borderRadius: 2, minHeight: 6, width: 4 }, recordingWaveformBar: { backgroundColor: "#E08B80" }, recordingWaveformBarActive: { backgroundColor: "#B43C32" }, captureText: { color: "#716B64", fontSize: 15, lineHeight: 21, marginTop: 6 }, captureActions: { alignItems: "stretch", flexDirection: "row", gap: 10, marginTop: 14 }, secondaryButton: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10 }, secondaryButtonText: { color: "#5D5146", fontSize: 15, fontWeight: "600" }, recordingButton: { backgroundColor: "#B43C32" }, recordingButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, recordingSecondaryButton: { borderColor: "#B43C32" }, recordingSecondaryButtonText: { color: "#B43C32", fontSize: 15, fontWeight: "600" }, recordingIcon: { color: "#B43C32", fontSize: 16, fontWeight: "700", lineHeight: 18 }, list: { padding: 16, paddingTop: 4, gap: 12 }, card: { backgroundColor: "#FFFFFF", borderColor: "#E5E0D8", borderRadius: 16, borderWidth: 1, padding: 18 }, offlineDraftCard: { backgroundColor: "#FFF8E8", borderColor: "#CFAE70", borderStyle: "dashed" }, offlineDraftLabel: { color: "#8C641F", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, offlineDraftStatus: { color: "#8C641F", fontSize: 14, fontWeight: "600", marginTop: 8 }, retryDraft: { color: "#8C641F", fontSize: 14, fontWeight: "700", marginTop: 14 }, deleteDraft: { color: "#8C3D25", fontSize: 14, fontWeight: "600", marginTop: 14 }, cardPressed: { opacity: 0.7 }, cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }, label: { color: "#7A5C36", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, date: { color: "#908A82", fontSize: 12 }, detail: { color: "#716B64", fontSize: 14, marginTop: 8 }, reviewHint: { color: "#A15B2A", fontSize: 14, marginTop: 8 }, errorBanner: { backgroundColor: "#FCE8DF", marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 10 }, errorText: { color: "#8C3D25", fontSize: 14 }, state: { alignItems: "center", flex: 1, justifyContent: "center", padding: 32 }, stateTitle: { color: "#24221F", fontSize: 20, fontWeight: "700", textAlign: "center" }, stateText: { color: "#716B64", fontSize: 16, lineHeight: 23, marginTop: 8, maxWidth: 300, textAlign: "center" }, retry: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 20, paddingHorizontal: 20, paddingVertical: 12 }, retryText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, footer: { padding: 16 },
 });
