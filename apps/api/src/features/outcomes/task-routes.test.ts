@@ -11,12 +11,24 @@ describe("Task routes", () => {
   test("edits a Task through the reviewed optimistic-concurrency contract", async () => {
     const task: TaskOutcome = { kind: "task", id: "task-1", memberId: "member-1", interpretationId: "interpretation-1", captureId: "capture-1", sourceId: "source-1", title: "Buy milk", status: "open", version: 0, createdAt: "2026-08-15T10:00:00.000Z" };
     const application = buildApi({ logger: false });
-    registerTaskRoutes(application, new TaskService({ findById: (id) => id === task.id ? task : undefined, updateTask: (_id, _memberId, version, changes) => version === 0 ? { ...task, ...(changes.title === undefined ? {} : { title: changes.title }), version: 1 } : undefined }));
+    registerTaskRoutes(application, new TaskService({ findById: (id) => id === task.id ? task : undefined, updateTask: (_id, _memberId, version, changes) => version === 0 ? { ...task, ...(changes.title === undefined ? {} : { title: changes.title }), ...(changes.status === undefined ? {} : { status: changes.status }), version: 1 } : undefined }));
     applications.push(application);
 
     const response = await application.inject({ method: "PATCH", url: "/tasks/task-1", payload: { memberId: "member-1", expectedVersion: 0, title: "Buy bread" } });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ task: { ...task, title: "Buy bread", version: 1 } });
+  });
+
+  test("completes a Task through the reviewed optimistic-concurrency contract", async () => {
+    const task: TaskOutcome = { kind: "task", id: "task-1", memberId: "member-1", interpretationId: "interpretation-1", captureId: "capture-1", sourceId: "source-1", title: "Buy milk", status: "open", version: 0, createdAt: "2026-08-15T10:00:00.000Z" };
+    const application = buildApi({ logger: false });
+    registerTaskRoutes(application, new TaskService({ findById: (id) => id === task.id ? task : undefined, updateTask: (_id, _memberId, version, changes) => version === 0 ? { ...task, ...(changes.status === undefined ? {} : { status: changes.status }), version: 1 } : undefined }));
+    applications.push(application);
+
+    const response = await application.inject({ method: "POST", url: "/tasks/task-1/complete", payload: { memberId: "member-1", expectedVersion: 0 } });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ task: { ...task, status: "completed", version: 1 } });
   });
 });

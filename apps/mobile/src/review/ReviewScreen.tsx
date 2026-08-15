@@ -21,7 +21,10 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
   const [editing, setEditing] = useState<"title" | "dueAt" | "content" | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [completing, setCompleting] = useState(false);
+  const [completionError, setCompletionError] = useState<string | null>(null);
   const savingInFlight = useRef(false);
+  const completionInFlight = useRef(false);
 
   const load = useCallback(async () => {
     setState({ status: "loading" });
@@ -31,6 +34,15 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
       setDraft(review.outcome?.kind === "task" ? { title: review.outcome.title, dueAt: review.outcome.dueAt ?? null } : review.outcome ? { content: review.outcome.content } : {});
     } catch (error) {
       setState({ status: "error", message: error instanceof Error ? error.message : "Unable to load review" });
+    }
+  }, [client, detailUrl]);
+
+  const refreshReviewVersion = useCallback(async () => {
+    try {
+      const review = await client.get(detailUrl);
+      setState({ status: "ready", review });
+    } catch {
+      // Keep the current review visible when the recovery read also fails.
     }
   }, [client, detailUrl]);
 
@@ -54,11 +66,29 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
       onBack();
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Unable to save review");
+      await refreshReviewVersion();
     } finally {
       savingInFlight.current = false;
       setSaving(false);
     }
-  }, [client, draft, memberId, onBack, state]);
+  }, [client, draft, memberId, onBack, refreshReviewVersion, state]);
+
+  const complete = useCallback(async () => {
+    if (state.status !== "ready" || state.review.outcome?.kind !== "task" || state.review.outcome.status !== "open" || completionInFlight.current) return;
+    completionInFlight.current = true;
+    setCompleting(true);
+    setCompletionError(null);
+    try {
+      await client.completeTask(state.review.outcome.id, memberId, state.review.outcome.version);
+      onBack();
+    } catch (error) {
+      setCompletionError(error instanceof Error ? error.message : "Unable to complete Task");
+      await refreshReviewVersion();
+    } finally {
+      completionInFlight.current = false;
+      setCompleting(false);
+    }
+  }, [client, memberId, onBack, refreshReviewVersion, state]);
 
   if (state.status === "loading") return <ReviewShell onBack={onBack}><ActivityIndicator accessibilityLabel="Loading review" /><Text style={styles.stateText}>Loading review…</Text></ReviewShell>;
   if (state.status === "error") return <ReviewShell onBack={onBack}><Text style={styles.title}>Couldn’t load review</Text><Text style={styles.stateText}>{state.message}</Text><Button label="Try again" onPress={() => void load()} /></ReviewShell>;
@@ -68,8 +98,9 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     <Text style={styles.title}>{state.review.outcome?.kind === "task" ? "Task" : state.review.outcome?.kind === "note" ? "Note" : state.review.state === "failed" ? "Processing failed" : "Processing"}</Text>
     <Text style={styles.stateText}>Original source and processing history remain separate from editable result fields.</Text>
     {state.review.outcome ? <ReviewFields outcome={state.review.outcome} draft={draft} editing={editing} onEdit={setEditing} onChange={setDraft} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}
-    {state.review.outcome ? <><Text style={styles.sectionTitle}>Source and provenance</Text><Text style={styles.provenance}>Capture {state.review.capture.id}{state.review.transcription ? ` · transcription ${state.review.transcription.status}` : " · transcription pending"}</Text><Button label={saving ? "Saving…" : "Save"} onPress={() => void save()} disabled={saving} /></> : null}
+    {state.review.outcome ? <><Text style={styles.sectionTitle}>Source and provenance</Text><Text style={styles.provenance}>Capture {state.review.capture.id}{state.review.transcription ? ` · transcription ${state.review.transcription.status}` : " · transcription pending"}</Text>{state.review.outcome.kind === "task" && state.review.outcome.status === "open" ? <Button label={completing ? "Completing…" : "Complete task"} onPress={() => void complete()} disabled={completing || saving} /> : null}{state.review.outcome.kind === "note" || state.review.outcome.status === "open" ? <Button label={saving ? "Saving…" : "Save"} onPress={() => void save()} disabled={saving || completing} /> : null}</> : null}
     {saveError ? <Text accessibilityRole="alert" style={styles.error}>{saveError}</Text> : null}
+    {completionError ? <Text accessibilityRole="alert" style={styles.error}>{completionError}</Text> : null}
   </ReviewShell>;
 }
 
@@ -86,11 +117,12 @@ function ReviewStateBanner({ review }: { readonly review: ReviewContract }) {
 
 function ReviewFields({ outcome, draft, editing, onEdit, onChange }: { readonly outcome: ReviewOutcome; readonly draft: Draft; readonly editing: "title" | "dueAt" | "content" | null; readonly onEdit: (field: "title" | "dueAt" | "content") => void; readonly onChange: (draft: Draft) => void }) {
   if (outcome.kind === "note") return <EditableField field="content" label="Note" value={draft.content ?? ""} editing={editing} onEdit={onEdit} onChange={(value) => onChange({ content: value })} multiline />;
-  return <><EditableField field="title" label="Title" value={draft.title ?? ""} editing={editing} onEdit={onEdit} onChange={(value) => onChange({ ...draft, title: value })} /><EditableField field="dueAt" label="Due information" value={draft.dueAt ?? "Not set"} editing={editing} onEdit={onEdit} onChange={(value) => onChange({ ...draft, dueAt: value || null })} /></>;
+  const editable = outcome.status === "open";
+  return <><EditableField field="title" label="Title" value={draft.title ?? ""} editing={editing} onEdit={onEdit} onChange={(value) => onChange({ ...draft, title: value })} editable={editable} /><EditableField field="dueAt" label="Due information" value={draft.dueAt ?? "Not set"} editing={editing} onEdit={onEdit} onChange={(value) => onChange({ ...draft, dueAt: value || null })} editable={editable} /></>;
 }
 
-function EditableField({ field, label, value, editing, onEdit, onChange, multiline = false }: { readonly field: "title" | "dueAt" | "content"; readonly label: string; readonly value: string; readonly editing: string | null; readonly onEdit: (field: "title" | "dueAt" | "content") => void; readonly onChange: (value: string) => void; readonly multiline?: boolean }) {
-  return <View style={styles.field}><Text style={styles.fieldLabel}>{label}</Text>{editing === field ? <TextInput accessibilityLabel={label} autoFocus value={value} multiline={multiline} onChangeText={onChange} style={styles.input} /> : <Pressable accessibilityRole="button" accessibilityLabel={`Edit ${label}`} onPress={() => onEdit(field)}><Text style={styles.value}>{value}</Text></Pressable>}</View>;
+function EditableField({ field, label, value, editing, onEdit, onChange, multiline = false, editable = true }: { readonly field: "title" | "dueAt" | "content"; readonly label: string; readonly value: string; readonly editing: string | null; readonly onEdit: (field: "title" | "dueAt" | "content") => void; readonly onChange: (value: string) => void; readonly multiline?: boolean; readonly editable?: boolean }) {
+  return <View style={styles.field}><Text style={styles.fieldLabel}>{label}</Text>{editing === field && editable ? <TextInput accessibilityLabel={label} autoFocus value={value} multiline={multiline} onChangeText={onChange} style={styles.input} /> : editable ? <Pressable accessibilityRole="button" accessibilityLabel={`Edit ${label}`} onPress={() => onEdit(field)}><Text style={styles.value}>{value}</Text></Pressable> : <Text style={styles.value}>{value}</Text>}</View>;
 }
 
 function ReviewShell({ children, onBack }: { readonly children: ReactNode; readonly onBack: () => void }) { return <SafeAreaView style={styles.safeArea}><Pressable accessibilityRole="button" accessibilityLabel="Back to items" onPress={onBack}><Text style={styles.back}>‹ Items</Text></Pressable><ScrollView contentContainerStyle={styles.content}>{children}</ScrollView></SafeAreaView>; }
