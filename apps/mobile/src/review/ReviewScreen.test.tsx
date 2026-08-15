@@ -50,6 +50,41 @@ describe("ReviewScreen", () => {
     expect(onBack).not.toHaveBeenCalled();
     renderer.unmount();
   });
+
+  test("distinguishes failed processing and Needs review without presenting a Task", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith(null, { state: "failed", failure: { stage: "transcription", message: "provider offline" } }) }));
+    vi.stubGlobal("fetch", fetcher);
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<ReviewScreen apiBaseUrl="http://api.test" memberId="member-1" detailUrl="/captures/capture-1/review" onBack={vi.fn()} />);
+    });
+
+    expect(textContent(renderer)).toContain("Processing failed");
+    expect(textContent(renderer)).toContain("provider offline");
+    expect(textContent(renderer)).toContain("Review the original Capture and try again when processing is available.");
+    expect(textContent(renderer)).not.toContain("Task");
+    renderer.unmount();
+  });
+
+  test("labels an ambiguous Note as Needs review", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Maybe book a trip", reviewState: "needs_review", version: 0 }, { state: "needs_review", interpretation: { id: "interpretation-1", classification: "ambiguous" } }) })));
+    const renderer = await renderScreen(vi.fn());
+
+    expect(textContent(renderer)).toContain("The Capture was ambiguous");
+    expect(textContent(renderer)).toContain("Maybe book a trip");
+    expect(textContent(renderer)).not.toContain("Task");
+    renderer.unmount();
+  });
+
+  test("distinguishes an unsupported instruction from an ambiguous Note", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Set a timer", reviewState: "needs_review", version: 0 }, { state: "needs_review", interpretation: { id: "interpretation-1", classification: "unsupported" } }) })));
+    const renderer = await renderScreen(vi.fn());
+
+    expect(textContent(renderer)).toContain("This instruction is unsupported");
+    expect(textContent(renderer)).not.toContain("The Capture was ambiguous");
+    renderer.unmount();
+  });
 });
 
 async function renderScreen(onBack: () => void): Promise<ReactTestRenderer> {
@@ -58,8 +93,8 @@ async function renderScreen(onBack: () => void): Promise<ReactTestRenderer> {
   return renderer;
 }
 
-function reviewWith(outcome: object) {
-  return { state: "completed", capture: { id: "capture-1", memberId: "member-1" }, source: { id: "source-1" }, transcription: { status: "succeeded" }, correction: null, interpretation: { id: "interpretation-1" }, outcome, failure: null };
+function reviewWith(outcome: object | null, overrides: object = {}) {
+  return { state: "completed", capture: { id: "capture-1", memberId: "member-1" }, source: { id: "source-1" }, transcription: { status: "succeeded" }, correction: null, interpretation: { id: "interpretation-1" }, outcome, failure: null, ...overrides };
 }
 
 function jsonResponse(body: unknown): Response { return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }); }

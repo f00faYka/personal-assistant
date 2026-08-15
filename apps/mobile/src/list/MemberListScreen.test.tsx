@@ -52,10 +52,45 @@ describe("MemberListScreen", () => {
     expect(textContent(renderer)).toEqual(expect.stringContaining("Call the dentist"));
     expect(textContent(renderer)).toEqual(expect.stringContaining("Needs review"));
     expect(textContent(renderer)).toEqual(expect.stringContaining("Processing your Capture"));
-    expect(textContent(renderer)).toEqual(expect.stringContaining("This Capture could not be processed"));
+    expect(textContent(renderer)).toEqual(expect.stringContaining("Capture processing failed"));
     const firstRow = renderer.root.findAllByType(Pressable).find((node) => node.props.accessibilityLabel === "Task: Buy milk");
     firstRow?.props.onPress();
     expect(onOpenDetail).toHaveBeenCalledWith("/captures/capture-1/review");
+    renderer.unmount();
+  });
+
+  test("keeps review and failure language distinct from Task results", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ items: [
+      { kind: "note", id: "note-2", captureId: "capture-3", content: "Maybe book a trip", state: "needs_review", createdAt: task.createdAt, detailUrl: "/captures/capture-3/review" },
+      { kind: "capture", id: "capture-4", captureId: "capture-4", state: "failed", createdAt: task.createdAt, detailUrl: "/captures/capture-4/review" },
+      { kind: "capture", id: "capture-5", captureId: "capture-5", state: "pending", createdAt: task.createdAt, detailUrl: "/captures/capture-5/review" },
+    ], nextCursor: null })));
+    const renderer = await renderScreen();
+
+    expect(textContent(renderer)).toContain("Needs review");
+    expect(textContent(renderer)).toContain("Review this item to confirm what it means.");
+    expect(textContent(renderer)).toContain("Capture processing failed");
+    expect(textContent(renderer)).toContain("Open review to inspect the failure.");
+    expect(textContent(renderer)).toContain("Processing your Capture");
+    expect(textContent(renderer)).not.toContain("Task");
+    renderer.unmount();
+  });
+
+  test("refreshes a Capture from pending to failed and then to Needs review", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ items: [{ kind: "capture", id: "capture-5", captureId: "capture-5", state: "pending", createdAt: task.createdAt, detailUrl: "/captures/capture-5/review" }], nextCursor: null }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ kind: "capture", id: "capture-5", captureId: "capture-5", state: "failed", createdAt: task.createdAt, detailUrl: "/captures/capture-5/review" }], nextCursor: null }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ kind: "note", id: "note-5", captureId: "capture-5", content: "Maybe book a trip", state: "needs_review", createdAt: task.createdAt, detailUrl: "/captures/capture-5/review" }], nextCursor: null }));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen();
+    const refresh = renderer.root.findByType(RefreshControl);
+
+    expect(textContent(renderer)).toContain("Processing your Capture");
+    await act(async () => { await refresh.props.onRefresh(); });
+    expect(textContent(renderer)).toContain("Capture processing failed");
+    await act(async () => { await refresh.props.onRefresh(); });
+    expect(textContent(renderer)).toContain("Needs review");
+    expect(textContent(renderer)).not.toContain("Task");
     renderer.unmount();
   });
 

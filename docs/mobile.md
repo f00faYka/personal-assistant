@@ -27,6 +27,8 @@ The list consumes the backend `MemberListItem` discriminators without changing t
 
 Loading, empty, and request-failure states remain explicit. A failed request retains already displayed items when available and never creates a local Task or Note. Each row uses the backend's stable `kind` and `id` for its React key and passes its `detailUrl` to the optional `onOpenDetail` callback. This callback is the #63 navigation entry-point seam; #66 owns the actual detail/review destination screen and navigation implementation.
 
+Needs review Notes remain Notes: the list labels them explicitly and opens the detailed review so the Member can confirm or edit the result. The review distinguishes ambiguous from unsupported instructions when that classification is present. Failed Captures remain visible as failed Captures and open detailed review with the failure and original Capture context; the client does not silently retry processing. Pending Captures remain Processing until the server reports a result; none of these states is presented as a Task.
+
 ## Voice Captures
 
 The list's `Record a Capture` action starts the explicit in-app microphone flow. The client requests microphone permission, records locally with `expo-audio`, and shows recording, ready, submitting, and failed states. `Cancel` or `Discard` removes the unsubmitted recording from the flow; it never creates a server item.
