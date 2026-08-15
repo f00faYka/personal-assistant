@@ -36,6 +36,74 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
+  test("shows editable due date and time controls and can clear due information", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", dueAt: "2026-08-15T09:00:00.000Z", status: "open", version: 0 }) }))
+      .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 1 } }));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen(vi.fn());
+
+    expect(textContent(renderer)).toContain("Remind At:");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
+    expect(renderer.root.findByProps({ accessibilityLabel: "Choose due date" })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Choose due time" })).toBeTruthy();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Clear due information" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
+
+    expect(fetcher).toHaveBeenLastCalledWith("http://api.test/tasks/task-1", expect.objectContaining({ body: JSON.stringify({ memberId: "member-1", expectedVersion: 0, dueAt: null }) }));
+    renderer.unmount();
+  });
+
+  test("rejects an invalid due value without invoking notification behavior or saving", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", dueAt: "2026-02-30T09:00:00.000Z", status: "open", version: 0 }) }));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen(vi.fn());
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Due information must be a valid date and time");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(textContent(renderer)).not.toContain("notification");
+    renderer.unmount();
+  });
+
+  test("sets due information from an absent value", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) }))
+      .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "task-1", title: "Buy milk", dueAt: "2026-08-20T09:00:00.000Z", status: "open", version: 1 } }));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen(vi.fn());
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Set due information" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Due date 2026-08-20" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Choose due time" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Due time" }).props.onChangeText("09:00"); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Done due time" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
+
+    expect(fetcher).toHaveBeenLastCalledWith("http://api.test/tasks/task-1", expect.objectContaining({ body: JSON.stringify({ memberId: "member-1", expectedVersion: 0, dueAt: "2026-08-20T09:00:00.000Z" }) }));
+    renderer.unmount();
+  });
+
+  test("saves changed date and time as one non-notifying due value", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", dueAt: "2026-08-15T09:00:00.000Z", status: "open", version: 0 }) }))
+      .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "task-1", title: "Buy milk", dueAt: "2026-08-20T10:30:00.000Z", status: "open", version: 1 } }));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen(vi.fn());
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Choose due date" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Due date 2026-08-20" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Choose due time" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Due time" }).props.onChangeText("10:30"); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Done due time" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
+
+    expect(fetcher).toHaveBeenLastCalledWith("http://api.test/tasks/task-1", expect.objectContaining({ body: JSON.stringify({ memberId: "member-1", expectedVersion: 0, dueAt: "2026-08-20T10:30:00.000Z" }) }));
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual(["http://api.test/captures/capture-1/review", "http://api.test/tasks/task-1"]);
+    renderer.unmount();
+  });
+
   test("keeps the review visible and exposes a retry after save failure", async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "needs_review", version: 0 }) }))
