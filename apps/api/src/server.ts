@@ -29,19 +29,20 @@ async function start(): Promise<void> {
     repository,
     new FileSystemBlobStorage(configuration.blobRoot),
   );
+  const reviewService = new ReviewService({
+    captureService,
+    transcriptionRepository,
+    interpretationRepository,
+    outcomeRepository,
+  });
   const application = buildApi({
     logger: true,
     captureService,
-    reviewService: new ReviewService({
-      captureService,
-      transcriptionRepository,
-      interpretationRepository,
-      outcomeRepository,
-    }),
+    reviewService,
     noteService: new NoteService(outcomeRepository),
     taskService: new TaskService(outcomeRepository),
     memberItemsService: new MemberItemsService(memberItemsRepository),
-    offlineDraftService: new OfflineDraftService(offlineDraftRepository, captureService),
+    offlineDraftService: new OfflineDraftService(offlineDraftRepository, captureService, reviewService),
   });
   application.addHook("onClose", () => {
     repository.close();
