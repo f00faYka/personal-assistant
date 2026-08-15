@@ -37,7 +37,7 @@ Submitting sends one `POST /captures` request with the Member ID, the `.m4a` aud
 
 ## Offline drafts
 
-When the backend cannot confirm a voice-Capture submission, the client copies the recording into the app document directory and records its stable draft ID, Member ID, capture time, content type, and managed file location in a local manifest. This storage survives an ordinary app restart and is private to the app sandbox; it is not separately encrypted by the client. The same store accepts explicitly entered review text without classifying it as a Task or Note. There is no standalone typed-capture entry point.
+When the backend cannot confirm a voice-Capture submission, the client copies the recording into the app document directory and records its stable draft ID, Member ID, capture time, content type, and managed file location in a local manifest. This storage survives an ordinary app restart and is private to the app sandbox; it is not separately encrypted by the client. If the backend cannot save changed Note text from detailed review, the client preserves that explicitly entered text in the same store and labels the save as an unconfirmed Offline draft. It does not classify the text as a Task or Note, and there is no standalone typed-capture entry point.
 
 Restored drafts appear in the timeline as `Offline draft` with `Not confirmed · Waiting to synchronize`. They remain non-interactive as server items and never open review or claim that processing has begun. Multiple drafts are preserved independently and only drafts belonging to the current Member are shown. A backend list failure does not hide restored drafts.
 

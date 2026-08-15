@@ -9,12 +9,7 @@ export interface OfflineDraft {
   readonly source: OfflineDraftSource;
 }
 
-export interface NewOfflineDraft {
-  readonly draftId: string;
-  readonly memberId: string;
-  readonly capturedAt: string;
-  readonly source: OfflineDraftSource;
-}
+export type NewOfflineDraft = OfflineDraft;
 
 export interface OfflineDraftStore {
   list(memberId: string): Promise<readonly OfflineDraft[]>;
@@ -35,56 +30,72 @@ interface OfflineDraftManifest {
 }
 
 export function createOfflineDraftStore(persistence: OfflineDraftPersistence): OfflineDraftStore {
+  let mutationQueue: Promise<void> = Promise.resolve();
+
+  const mutate = <T,>(operation: () => Promise<T>): Promise<T> => {
+    const result = mutationQueue.then(operation, operation);
+    mutationQueue = result.then(() => undefined, () => undefined);
+    return result;
+  };
+
   return {
     async list(memberId) {
+      await mutationQueue;
       const drafts = await readDrafts(persistence);
       return drafts
         .filter((draft) => draft.memberId === memberId)
         .sort((left, right) => right.capturedAt.localeCompare(left.capturedAt));
     },
 
-    async save(input) {
-      validateDraft(input);
-      const drafts = await readDrafts(persistence);
-      const existing = drafts.find((draft) => draft.memberId === input.memberId && draft.draftId === input.draftId);
-      if (existing) return existing;
+    save(input) {
+      return mutate(async () => {
+        validateDraft(input);
+        const drafts = await readDrafts(persistence);
+        const existing = drafts.find((draft) => draft.memberId === input.memberId && draft.draftId === input.draftId);
+        if (existing) {
+          if (!sameSource(existing.source, input.source)) throw new Error(`Offline draft conflicts with existing source: ${input.draftId}`);
+          return existing;
+        }
 
-      if (input.source.kind === "text") {
-        const draft: OfflineDraft = { ...input, source: { ...input.source } };
-        await writeDrafts(persistence, [...drafts, draft]);
-        return draft;
-      }
+        if (input.source.kind === "text") {
+          const draft: OfflineDraft = { ...input, source: { ...input.source } };
+          await writeDrafts(persistence, [...drafts, draft]);
+          return draft;
+        }
 
-      const uri = await persistence.copyAudio(input.source.uri, input.draftId);
-      const draft: OfflineDraft = {
-        draftId: input.draftId,
-        memberId: input.memberId,
-        capturedAt: input.capturedAt,
-        source: { kind: "audio", uri, contentType: input.source.contentType },
-      };
-      try {
-        await writeDrafts(persistence, [...drafts, draft]);
-        return draft;
-      } catch (error) {
-        try { await persistence.deleteAudio(uri); } catch { /* Preserve the original persistence error. */ }
-        throw error;
-      }
-    },
-
-    async remove(memberId, draftId) {
-      const drafts = await readDrafts(persistence);
-      const draft = drafts.find((candidate) => candidate.memberId === memberId && candidate.draftId === draftId);
-      if (!draft) return;
-      const remaining = drafts.filter((candidate) => candidate !== draft);
-      await writeDrafts(persistence, remaining);
-      if (draft.source.kind === "audio") {
+        const uri = await persistence.copyAudio(input.source.uri, input.draftId);
+        const draft: OfflineDraft = {
+          draftId: input.draftId,
+          memberId: input.memberId,
+          capturedAt: input.capturedAt,
+          source: { kind: "audio", uri, contentType: input.source.contentType },
+        };
         try {
-          await persistence.deleteAudio(draft.source.uri);
+          await writeDrafts(persistence, [...drafts, draft]);
+          return draft;
         } catch (error) {
-          try { await writeDrafts(persistence, drafts); } catch { /* The deletion failure remains the actionable error. */ }
+          try { await persistence.deleteAudio(uri); } catch { /* Preserve the original persistence error. */ }
           throw error;
         }
-      }
+      });
+    },
+
+    remove(memberId, draftId) {
+      return mutate(async () => {
+        const drafts = await readDrafts(persistence);
+        const draft = drafts.find((candidate) => candidate.memberId === memberId && candidate.draftId === draftId);
+        if (!draft) return;
+        const remaining = drafts.filter((candidate) => candidate !== draft);
+        await writeDrafts(persistence, remaining);
+        if (draft.source.kind === "audio") {
+          try {
+            await persistence.deleteAudio(draft.source.uri);
+          } catch (error) {
+            try { await writeDrafts(persistence, drafts); } catch { /* The deletion failure remains the actionable error. */ }
+            throw error;
+          }
+        }
+      });
     },
   };
 }
@@ -138,6 +149,13 @@ function validateDraft(draft: NewOfflineDraft): void {
   } else if (!draft.source.text.trim()) {
     throw new Error("Offline draft text is required");
   }
+}
+
+function sameSource(left: OfflineDraftSource, right: OfflineDraftSource): boolean {
+  if (left.kind !== right.kind) return false;
+  return left.kind === "audio" && right.kind === "audio"
+    ? left.uri === right.uri && left.contentType === right.contentType
+    : left.kind === "text" && right.kind === "text" && left.text === right.text;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

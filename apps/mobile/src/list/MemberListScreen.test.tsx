@@ -238,6 +238,22 @@ describe("MemberListScreen", () => {
     expect(textContent(renderer)).toContain("Couldn’t restore Offline drafts: Offline draft storage is corrupted");
     renderer.unmount();
   });
+
+  test("identifies an explicit Offline draft deletion failure", async () => {
+    const offlineDraftStore = draftStore({
+      list: vi.fn().mockResolvedValue([
+        { draftId: "draft-audio", memberId: "member-1", capturedAt: "2026-08-15T11:00:00.000Z", source: { kind: "audio", uri: "file:///documents/draft-audio.m4a", contentType: "audio/m4a" } },
+      ]),
+      remove: vi.fn().mockRejectedValue(new Error("file locked")),
+    });
+    const renderer = await renderScreen({ offlineDraftStore });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Delete Offline draft Voice Capture" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Couldn’t delete Offline draft: file locked");
+    expect(textContent(renderer)).toContain("Voice Capture");
+    renderer.unmount();
+  });
 });
 
 async function renderScreen(props: Partial<React.ComponentProps<typeof MemberListScreen>> = {}): Promise<ReactTestRenderer> {

@@ -153,7 +153,10 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       setOfflineDrafts(drafts);
       setOfflineDraftError(null);
     }).catch((error: unknown) => {
-      if (!cancelled) setOfflineDraftError(error instanceof Error ? error.message : "Unable to restore Offline drafts");
+      if (!cancelled) {
+        const message = error instanceof Error ? error.message : "local storage failed";
+        setOfflineDraftError(`Couldn’t restore Offline drafts: ${message}`);
+      }
     });
     return () => { cancelled = true; };
   }, [memberId, offlineDraftStore]);
@@ -166,7 +169,8 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       await offlineDraftStore.remove(memberId, draftId);
       setOfflineDrafts((current) => current.filter((draft) => draft.draftId !== draftId));
     } catch (error) {
-      setOfflineDraftError(error instanceof Error ? error.message : "Unable to delete Offline draft");
+      const message = error instanceof Error ? error.message : "local storage failed";
+      setOfflineDraftError(`Couldn’t delete Offline draft: ${message}`);
     } finally {
       setDeletingDraftId(null);
     }
@@ -314,7 +318,7 @@ function ListCard({ item, onPress }: { readonly item: MemberListItem; readonly o
 function LoadingState() { return <View style={styles.state}><ActivityIndicator accessibilityLabel="Loading items" /><Text style={styles.stateText}>Loading your items…</Text></View>; }
 function EmptyState({ onRefresh }: { readonly onRefresh: () => void }) { return <View style={styles.state}><Text style={styles.stateTitle}>Nothing here yet</Text><Text style={styles.stateText}>Your Tasks and Notes will appear here after your first Capture.</Text><Pressable accessibilityRole="button" onPress={onRefresh} style={styles.retry}><Text style={styles.retryText}>Refresh</Text></Pressable></View>; }
 function ErrorBanner({ message }: { readonly message: string }) { return <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>Refresh failed: {message}</Text></View>; }
-function OfflineDraftErrorBanner({ message }: { readonly message: string }) { return <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{`Couldn’t restore Offline drafts: ${message}`}</Text></View>; }
+function OfflineDraftErrorBanner({ message }: { readonly message: string }) { return <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{message}</Text></View>; }
 function ErrorState({ message, onRetry }: { readonly message: string; readonly onRetry: () => void }) { return <View style={styles.state}><Text style={styles.stateTitle}>Couldn’t load your items</Text><Text style={styles.stateText}>{message}</Text><Pressable accessibilityRole="button" onPress={onRetry} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>; }
 function formatDate(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
 function formatDuration(totalSeconds: number): string { const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, "0"); const seconds = (totalSeconds % 60).toString().padStart(2, "0"); return `${minutes}:${seconds}`; }

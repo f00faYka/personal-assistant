@@ -25,7 +25,7 @@ function createExpoOfflineDraftPersistence(): OfflineDraftPersistence {
     },
     async copyAudio(sourceUri, draftId) {
       ensureDirectory();
-      const destination = new File(directory, `${safeFileName(draftId)}.m4a`);
+      const destination = new File(directory, `${encodeURIComponent(draftId)}.m4a`);
       if (destination.exists) destination.delete();
       new File(sourceUri).copy(destination);
       return destination.uri;
@@ -36,10 +36,6 @@ function createExpoOfflineDraftPersistence(): OfflineDraftPersistence {
       if (file.exists) file.delete();
     },
   };
-}
-
-function safeFileName(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
 function ensureOwnedAudioUri(directory: Directory, uri: string): void {

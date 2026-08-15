@@ -87,6 +87,31 @@ describe("Offline draft store", () => {
     await expect(store.list("member-1")).resolves.toEqual([]);
     expect(persistence.deleteAudio).toHaveBeenCalledWith("file:///documents/draft-1.m4a");
   });
+
+  test("serializes concurrent mutations so one draft cannot overwrite another", async () => {
+    const persistence = memoryPersistence();
+    let releaseFirstWrite!: () => void;
+    const firstWrite = new Promise<void>((resolve) => { releaseFirstWrite = resolve; });
+    const writeManifest = persistence.writeManifest;
+    vi.mocked(persistence.writeManifest)
+      .mockImplementationOnce(async (contents) => { await firstWrite; await writeManifest(contents); });
+    const store = createOfflineDraftStore(persistence);
+
+    const first = store.save({ draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "text", text: "First" } });
+    const second = store.save({ draftId: "draft-2", memberId: "member-1", capturedAt: "2026-08-15T11:00:00.000Z", source: { kind: "text", text: "Second" } });
+    releaseFirstWrite();
+    await Promise.all([first, second]);
+
+    await expect(store.list("member-1")).resolves.toHaveLength(2);
+  });
+
+  test("rejects reuse of a draft ID for different source content", async () => {
+    const store = createOfflineDraftStore(memoryPersistence());
+    await store.save({ draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "text", text: "First" } });
+
+    await expect(store.save({ draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "text", text: "Changed" } }))
+      .rejects.toThrow("Offline draft conflicts with existing source: draft-1");
+  });
 });
 
 function memoryPersistence(): OfflineDraftPersistence {
