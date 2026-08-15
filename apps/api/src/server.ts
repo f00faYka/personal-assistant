@@ -11,6 +11,8 @@ import { SqliteTranscriptionRepository } from "./infrastructure/sqlite/sqlite-tr
 import { ReviewService } from "./features/reviews/review.js";
 import { MemberItemsService } from "./features/items/items.js";
 import { SqliteMemberItemsRepository } from "./infrastructure/sqlite/sqlite-member-items-repository.js";
+import { OfflineDraftService } from "./features/offline-drafts/offline-draft.js";
+import { SqliteOfflineDraftRepository } from "./infrastructure/sqlite/sqlite-offline-draft-repository.js";
 
 async function start(): Promise<void> {
   loadLocalEnvironment();
@@ -22,6 +24,7 @@ async function start(): Promise<void> {
   const interpretationRepository = new SqliteInterpretationRepository(configuration.databasePath);
   const outcomeRepository = new SqliteOutcomeRepository(configuration.databasePath);
   const memberItemsRepository = new SqliteMemberItemsRepository(configuration.databasePath);
+  const offlineDraftRepository = new SqliteOfflineDraftRepository(configuration.databasePath);
   const captureService = new CaptureService(
     repository,
     new FileSystemBlobStorage(configuration.blobRoot),
@@ -38,6 +41,7 @@ async function start(): Promise<void> {
     noteService: new NoteService(outcomeRepository),
     taskService: new TaskService(outcomeRepository),
     memberItemsService: new MemberItemsService(memberItemsRepository),
+    offlineDraftService: new OfflineDraftService(offlineDraftRepository, captureService),
   });
   application.addHook("onClose", () => {
     repository.close();
@@ -45,6 +49,7 @@ async function start(): Promise<void> {
     interpretationRepository.close();
     outcomeRepository.close();
     memberItemsRepository.close();
+    offlineDraftRepository.close();
   });
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
