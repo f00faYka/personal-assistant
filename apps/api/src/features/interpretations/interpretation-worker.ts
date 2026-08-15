@@ -3,10 +3,12 @@ import type { OutcomeService } from "../outcomes/outcome.js";
 import type {
   Transcription,
   TranscriptionRepository,
+  SucceededTranscriptionReader,
 } from "../transcriptions/transcription.js";
 import type { TranscriptionSucceededHandler } from "../transcriptions/transcription-worker.js";
 import {
   SUPPORTED_INTERPRETATION_CATALOG_VERSION,
+  type Interpretation,
   type InterpretationProvider,
   type InterpretationService,
 } from "./interpretation.js";
@@ -27,7 +29,6 @@ export interface InterpretationJob {
 
 export interface InterpretationJobRepository {
   findByTranscriptionId(transcriptionId: string): InterpretationJob | undefined;
-  findUnqueuedTranscriptions(): readonly Transcription[];
   findRecoverable(maxAttempts: number): readonly InterpretationJob[];
   findExhaustedProcessing(maxAttempts: number): readonly InterpretationJob[];
   create(transcription: Transcription): InterpretationJob;
@@ -41,7 +42,8 @@ export interface InterpretationWorkerOptions {
   readonly outcomeService: OutcomeService;
   readonly provider: InterpretationProvider;
   readonly repository: InterpretationJobRepository;
-  readonly transcriptionRepository: Pick<TranscriptionRepository, "findByCaptureId">;
+  readonly transcriptionRepository: Pick<TranscriptionRepository, "findByCaptureId">
+    & SucceededTranscriptionReader;
   readonly captureReader: Pick<CaptureService, "get">;
   readonly maxAttempts: number;
   readonly onError?: (error: unknown, transcriptionId: string) => void;
@@ -61,8 +63,21 @@ export class InterpretationWorker implements TranscriptionSucceededHandler {
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
-    for (const transcription of this.options.repository.findUnqueuedTranscriptions()) {
-      this.schedule(this.options.repository.create(transcription));
+    for (const transcription of this.options.transcriptionRepository.findSucceeded()) {
+      const job = this.options.repository.findByTranscriptionId(transcription.id)
+        ?? this.options.repository.create(transcription);
+      if (job.status === "succeeded") continue;
+      try {
+        if (this.resumePersistedInterpretation(job, transcription)) continue;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Interpretation failed";
+        this.options.repository.fail(
+          job.transcriptionId,
+          message,
+          job.attemptCount < this.options.maxAttempts,
+        );
+        this.options.onError?.(error, job.transcriptionId);
+      }
     }
     for (const job of this.options.repository.findExhaustedProcessing(this.options.maxAttempts)) {
       this.options.repository.fail(
@@ -132,12 +147,7 @@ export class InterpretationWorker implements TranscriptionSucceededHandler {
           rawOutput: providerResult.rawOutput,
         });
       }
-      const capture = this.options.captureReader.get(transcription.captureId);
-      this.options.outcomeService.materialize({
-        memberId: capture.memberId,
-        transcriptionText: transcription.text,
-        interpretation,
-      });
+      this.materializeOutcome(transcription, transcription.text, interpretation);
       this.options.repository.complete(job.transcriptionId);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Interpretation failed";
@@ -148,5 +158,32 @@ export class InterpretationWorker implements TranscriptionSucceededHandler {
       );
       throw error;
     }
+  }
+
+  private resumePersistedInterpretation(
+    job: InterpretationJob,
+    transcription: Transcription,
+  ): boolean {
+    const interpretation = this.options.service.getByTranscriptionId(job.transcriptionId);
+    if (interpretation === undefined) return false;
+    if (transcription.text === undefined) {
+      throw new Error(`Interpretation requires transcription text: ${job.transcriptionId}`);
+    }
+    this.materializeOutcome(transcription, transcription.text, interpretation);
+    this.options.repository.complete(job.transcriptionId);
+    return true;
+  }
+
+  private materializeOutcome(
+    transcription: Pick<Transcription, "captureId">,
+    transcriptionText: string,
+    interpretation: Interpretation,
+  ): void {
+    const capture = this.options.captureReader.get(transcription.captureId);
+    this.options.outcomeService.materialize({
+      memberId: capture.memberId,
+      transcriptionText,
+      interpretation,
+    });
   }
 }

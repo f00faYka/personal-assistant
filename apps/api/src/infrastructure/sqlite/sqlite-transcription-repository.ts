@@ -42,6 +42,15 @@ export class SqliteTranscriptionRepository implements TranscriptionRepository {
     return row ? toTranscription(row) : undefined;
   }
 
+  findSucceeded(): readonly Transcription[] {
+    return this.database
+      .prepare<[], TranscriptionRow>(
+        "SELECT * FROM transcriptions WHERE status = 'succeeded' ORDER BY created_at, id",
+      )
+      .all()
+      .map(toTranscription);
+  }
+
   findRecoverable(maxAttempts: number): readonly Transcription[] {
     return this.database
       .prepare<[number], TranscriptionRow>(

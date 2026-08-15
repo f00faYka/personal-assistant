@@ -48,6 +48,10 @@ export interface TranscriptionRepository {
   fail(captureId: string, error: string): Transcription;
 }
 
+export interface SucceededTranscriptionReader {
+  findSucceeded(): readonly Transcription[];
+}
+
 export class TranscriptionService {
   constructor(
     private readonly repository: TranscriptionRepository,

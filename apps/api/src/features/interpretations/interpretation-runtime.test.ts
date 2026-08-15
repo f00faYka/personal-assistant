@@ -202,7 +202,7 @@ describe("production interpretation runtime", () => {
     expect(recoveredProvider.calls).toBe(1);
   });
 
-  test("restart resumes after durable interpretation without calling the provider or duplicating the outcome", async () => {
+  test("restart reconciles a durable interpretation after the final provider attempt", async () => {
     const directory = await mkdtemp(join(tmpdir(), "personal-assistant-interpretation-interrupted-"));
     directories.push(directory);
     const captureId = await seedInterruptedInterpretation(directory);
@@ -210,7 +210,7 @@ describe("production interpretation runtime", () => {
       action: "create_task",
       title: "Different Task",
     });
-    const harness = await createHarness(directory, provider);
+    const harness = await createHarness(directory, provider, 1);
     harnesses.push(harness);
 
     expect(await waitForItem(harness, captureId)).toMatchObject({
@@ -221,7 +221,7 @@ describe("production interpretation runtime", () => {
     const review = await waitForReviewState(harness, captureId, "completed");
     expect(review.interpretationProcessing).toMatchObject({
       status: "succeeded",
-      attemptCount: 2,
+      attemptCount: 1,
     });
     expect(provider.calls).toBe(0);
   });

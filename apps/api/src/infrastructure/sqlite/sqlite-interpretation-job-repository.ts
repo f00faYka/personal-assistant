@@ -18,21 +18,6 @@ interface InterpretationJobRow {
   updated_at: string;
 }
 
-interface TranscriptionRow {
-  id: string;
-  capture_id: string;
-  source_id: string;
-  content_type: string;
-  status: Transcription["status"];
-  text: string | null;
-  provider: string | null;
-  model: string | null;
-  error: string | null;
-  attempt_count: number;
-  created_at: string;
-  updated_at: string;
-}
-
 export class SqliteInterpretationJobRepository implements InterpretationJobRepository {
   private readonly database: Database.Database;
 
@@ -47,18 +32,6 @@ export class SqliteInterpretationJobRepository implements InterpretationJobRepos
       )
       .get(transcriptionId);
     return row ? toJob(row) : undefined;
-  }
-
-  findUnqueuedTranscriptions(): readonly Transcription[] {
-    return this.database
-      .prepare<[], TranscriptionRow>(
-        `SELECT t.* FROM transcriptions t
-         LEFT JOIN interpretation_jobs j ON j.transcription_id = t.id
-         WHERE t.status = 'succeeded' AND j.transcription_id IS NULL
-         ORDER BY t.created_at, t.id`,
-      )
-      .all()
-      .map(toTranscription);
   }
 
   findRecoverable(maxAttempts: number): readonly InterpretationJob[] {
@@ -149,23 +122,6 @@ function toJob(row: InterpretationJobRow): InterpretationJob {
     status: row.status,
     ...(row.error === null ? {} : { error: row.error }),
     retryable: row.retryable === 1,
-    attemptCount: row.attempt_count,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function toTranscription(row: TranscriptionRow): Transcription {
-  return {
-    id: row.id,
-    captureId: row.capture_id,
-    sourceId: row.source_id,
-    contentType: row.content_type,
-    status: row.status,
-    ...(row.text === null ? {} : { text: row.text }),
-    ...(row.provider === null ? {} : { provider: row.provider }),
-    ...(row.model === null ? {} : { model: row.model }),
-    ...(row.error === null ? {} : { error: row.error }),
     attemptCount: row.attempt_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
