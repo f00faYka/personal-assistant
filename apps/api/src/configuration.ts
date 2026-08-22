@@ -16,6 +16,13 @@ const configurationSchema = z.object({
   WHISPER_MODEL: z.string().min(1).default("ggml-base.en"),
   WHISPER_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(120_000),
   TRANSCRIPTION_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
+  OLLAMA_ENDPOINT: z.url().refine(
+    (value) => value.startsWith("http://") || value.startsWith("https://"),
+    "OLLAMA_ENDPOINT must use HTTP or HTTPS",
+  ).default("http://127.0.0.1:11434/api/chat"),
+  OLLAMA_MODEL: z.string().min(1).default("qwen3.5:4b"),
+  OLLAMA_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(120_000),
+  INTERPRETATION_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
 });
 
 export interface ApiConfiguration {
@@ -27,6 +34,10 @@ export interface ApiConfiguration {
   readonly whisperModel: string;
   readonly whisperTimeoutMilliseconds: number;
   readonly transcriptionMaxAttempts: number;
+  readonly ollamaEndpoint: string;
+  readonly ollamaModel: string;
+  readonly ollamaTimeoutMilliseconds: number;
+  readonly interpretationMaxAttempts: number;
 }
 
 export function loadLocalEnvironment(filePath = resolve(repositoryRoot, ".env")): void {
@@ -55,6 +66,10 @@ export function loadConfiguration(environment: NodeJS.ProcessEnv): ApiConfigurat
     whisperModel: result.data.WHISPER_MODEL,
     whisperTimeoutMilliseconds: result.data.WHISPER_TIMEOUT_MS,
     transcriptionMaxAttempts: result.data.TRANSCRIPTION_MAX_ATTEMPTS,
+    ollamaEndpoint: result.data.OLLAMA_ENDPOINT,
+    ollamaModel: result.data.OLLAMA_MODEL,
+    ollamaTimeoutMilliseconds: result.data.OLLAMA_TIMEOUT_MS,
+    interpretationMaxAttempts: result.data.INTERPRETATION_MAX_ATTEMPTS,
   };
 }
 

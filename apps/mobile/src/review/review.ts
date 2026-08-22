@@ -11,8 +11,17 @@ export interface ReviewContract {
   readonly transcription: { readonly status: string; readonly text?: string } | null;
   readonly correction: { readonly text: string } | null;
   readonly interpretation: { readonly id: string; readonly classification?: string } | null;
+  readonly interpretationProcessing?: {
+    readonly status: "pending" | "processing" | "succeeded" | "failed";
+    readonly attemptCount: number;
+    readonly retryable: boolean;
+  } | null;
   readonly outcome: ReviewOutcome | null;
-  readonly failure: { readonly stage: "capture" | "transcription"; readonly message: string } | null;
+  readonly failure: {
+    readonly stage: "capture" | "transcription" | "interpretation";
+    readonly message: string;
+    readonly retryable?: boolean;
+  } | null;
 }
 
 export interface ReviewClient {

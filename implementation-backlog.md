@@ -58,4 +58,6 @@ Keep unrelated work out of the branch. If implementation exposes an unresolved p
 | 21 | Stage 2 | [#74 — Persist and display Offline drafts](https://github.com/f00faYka/personal-assistant/issues/74) | FE | #63, #64 |
 | 22 | Stage 2 | [#75 — Synchronize drafts and display server results](https://github.com/f00faYka/personal-assistant/issues/75) | FE | #65, #71, #73, #74 |
 | 23 | Stage 2 | [#76 — Convert a saved Note into a Task](https://github.com/f00faYka/personal-assistant/issues/76) | FE | #68, #69, #72 |
-| 24 | Stage 2 | [#77 — Display synchronization and conversion outcomes](https://github.com/f00faYka/personal-assistant/issues/77) | FE | #73, #75, #76 |
+| 24 | Stage 1 runtime gap | [#98 — Run persisted Captures through local Whisper](https://github.com/f00faYka/personal-assistant/issues/98) | BE | #55, #56 |
+| 25 | Stage 1 runtime gap | [#99 — Interpret transcriptions and materialize runtime outcomes](https://github.com/f00faYka/personal-assistant/issues/99) | BE | #57, #58, #98 |
+| 26 | Stage 2 | [#77 — Display synchronization and conversion outcomes](https://github.com/f00faYka/personal-assistant/issues/77) | FE | #73, #75, #76, #98, #99 |

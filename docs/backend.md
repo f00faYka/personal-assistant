@@ -33,6 +33,10 @@ The process optionally loads `.env` and then validates these values:
 | `WHISPER_MODEL` | `ggml-base.en` | Model identifier recorded with successful transcriptions |
 | `WHISPER_TIMEOUT_MS` | `120000` | Per-attempt local Whisper timeout, from 1 second to 10 minutes |
 | `TRANSCRIPTION_MAX_ATTEMPTS` | `3` | Durable attempt cap, from 1 to 10 |
+| `OLLAMA_ENDPOINT` | `http://127.0.0.1:11434/api/chat` | Local Ollama chat endpoint |
+| `OLLAMA_MODEL` | `qwen3.5:4b` | Local Qwen model used and recorded for interpretations |
+| `OLLAMA_TIMEOUT_MS` | `120000` | Per-attempt local Ollama timeout, from 1 second to 10 minutes |
+| `INTERPRETATION_MAX_ATTEMPTS` | `3` | Durable interpretation attempt cap, from 1 to 10 |
 
 Copy `.env.example` to `.env` to override the defaults. `.env`, SQLite files, `local-data/`, generated output, and other runtime-data directories are excluded from version control.
 
@@ -50,16 +54,50 @@ API startup creates one serial transcription worker before accepting requests. I
 
 Each queue delivery performs at most one provider attempt. Startup recovers durable `pending`, interrupted `processing`, and `failed` records whose attempt count remains below `TRANSCRIPTION_MAX_ATTEMPTS`; an idempotent repeat of the original Capture submission can also redeliver the same job. A provider failure leaves the Capture and original audio unchanged, records a safe `failed` transcription, and increments its attempt count. If the process was interrupted during the final permitted attempt, startup records that interruption as failed without making another provider call. Once the cap is reached, automatic startup/delivery recovery leaves the transcription failed for operator review instead of retrying forever. `GET /captures/<capture-id>/review` and `GET /items` expose the existing failed state; provider response bodies are not stored in the client-visible failure message.
 
-This runtime wiring completes the production gap left after the provider-neutral transcription contract in issue #56. It does not invoke interpretation, materialize a Task or Note, change Capture/source immutability, or add a hosted fallback.
+The transcription layer remains provider-neutral and does not classify content or materialize an item. After it stores a successful transcription, it hands the durable record to the separate interpretation worker described below. This preserves the provider boundary completed in issue #98 without adding a hosted fallback or changing Capture/source immutability.
 
-Startup creates the configured runtime directories and applies every unapplied migration in numeric version order. Applied versions are recorded in `schema_migrations`; a failed migration is rolled back and reported as a `MigrationError`. Migrations 5 and 6 add interpretation and automatic Task/Note outcome records.
+## Local Qwen/Ollama runtime
+
+The production API expects a local [Ollama](https://docs.ollama.com/) process with the configured Qwen model available. Install Ollama, keep its API bound to localhost, and fetch the default model before starting the API:
+
+```sh
+ollama pull qwen3.5:4b
+```
+
+Set `OLLAMA_ENDPOINT` when the local `/api/chat` address differs and set `OLLAMA_MODEL` to another reviewed local model when needed. The adapter sends a non-streaming chat request with temperature zero and the approved Direct-instruction JSON schema in Ollama's [`format` field](https://docs.ollama.com/capabilities/structured-outputs). It records the configured model and the parsed raw structured output with the resulting Interpretation. HTTP failures, timeouts, invalid API responses, and invalid structured JSON are translated to safe errors without retaining provider response bodies.
+
+The serial interpretation worker starts before transcription recovery. It discovers succeeded transcriptions that have no interpretation job, accepts newly succeeded transcriptions, and durably moves each job through `pending`, `processing`, `succeeded`, or `failed`. One provider attempt may create or rediscover one versioned Interpretation, then idempotently materialize its existing outcome contract: a clear `create_task` creates one Task, ordinary content creates one Note, and ambiguous or unsupported content creates one `Needs review` Note. Interpretation and outcome uniqueness prevent duplicate durable results across redelivery or restart.
+
+Each queue delivery performs at most one interpretation attempt. Startup retries `pending`, interrupted `processing`, and retryable `failed` jobs below `INTERPRETATION_MAX_ATTEMPTS`; an idempotent repeat of the original Capture submission also redelivers its already-succeeded transcription without running Whisper again. When an interruption occurs after the Interpretation is durable, startup materializes or rediscovers its outcome and completes the job without another provider call, including after the final permitted provider attempt. A final interrupted attempt with no durable Interpretation becomes non-retryable instead. A provider failure preserves the Capture and succeeded transcription, stores only the safe failure message, and exposes the attempt count and retryable flag in detailed review. `GET /items` shows the Capture as failed until a later retry succeeds. This completes the production composition gap left after issues #57 and #58; it does not expand the approved action catalog, add hosted AI, or perform automatic Note-to-Task conversion.
+
+### Operational verification
+
+With local Whisper, Ollama, and the API running, first confirm that Ollama has the configured model:
+
+```sh
+ollama list
+curl http://127.0.0.1:11434/api/chat \
+  -H 'content-type: application/json' \
+  -d '{"model":"qwen3.5:4b","stream":false,"format":"json","messages":[{"role":"user","content":"Return JSON with an ok field set to true"}]}'
+```
+
+Then record four representative Captures in the iPhone client: a clear Task request, ordinary Note content, an ambiguous instruction, and an unsupported instruction. Poll the Member list and open each returned `detailUrl`:
+
+```sh
+curl --get http://127.0.0.1:3000/items --data-urlencode 'memberId=member-1'
+curl http://127.0.0.1:3000/captures/capture-id-from-items/review
+```
+
+Confirm exactly one item per Capture: the clear request is one open Task, ordinary content is one accepted Note, and ambiguous or unsupported content is one `Needs review` Note with no Task. Each review must retain distinct Capture, source, transcription, Interpretation, and outcome identifiers. To verify recovery, stop Ollama for one additional Capture, confirm `state: "failed"`, `failure.stage: "interpretation"`, and `failure.retryable: true`, then restart Ollama and restart the API or repeat the same idempotent submission. It must resolve to one item without increasing the transcription attempt count or creating duplicate provenance records.
+
+Startup creates the configured runtime directories and applies every unapplied migration in numeric version order. Applied versions are recorded in `schema_migrations`; a failed migration is rolled back and reported as a `MigrationError`. Migrations 5 and 6 add interpretation and automatic Task/Note outcome records; migration 9 adds durable interpretation-processing jobs.
 
 ## Selected libraries and boundaries
 
 - Fastify 5 owns the local HTTP process and testable request lifecycle.
 - Zod 4 validates environment configuration before startup.
 - `better-sqlite3` 12 provides the SQLite connection and transaction primitive.
-- Vitest 4 exercises the health, migration, blob-storage, capture, transcription, and interpretation seams.
+- Vitest 4 exercises the health, migration, blob-storage, capture, transcription, interpretation-provider, interpretation-runtime, and outcome seams.
 - TypeScript 5.9 compiles in strict mode; `tsx` runs the local development entry point.
 - Node filesystem APIs implement blob persistence behind the typed `BlobStorage` port.
 
@@ -73,7 +111,7 @@ The `(memberId, idempotencyKey)` pair is unique. Retrying the same submission re
 
 Transcription is a separate durable feature record keyed one-to-one to a Capture. It moves through `pending`, `processing`, `succeeded`, and `failed` states, retains retry count and provider/model metadata, and stores transcription text without replacing source content. Failed work remains visible and may be retried. The transcription provider and Capture audio reader are typed ports; provider-specific behavior is not part of the feature module.
 
-Interpretation is a separate durable record keyed one-to-one to a succeeded transcription. It preserves the source and transcription identifiers, catalog version, model, raw model output, and deterministic classification. The `direct-instructions.v1` catalog accepts only `create_task` and `complete_task` actions; `none` proposals are classified as `ordinary` or `ambiguous`. Malformed output, unsupported actions, and catalog-version mismatches are classified as `unsupported` with a rejection reason and never execute an action.
+Interpretation is a separate durable record keyed one-to-one to a succeeded transcription. It preserves the source and transcription identifiers, catalog version, model, raw model output, and deterministic classification. Its separate processing job preserves attempt and recovery state without treating provider output as source content. The `direct-instructions.v1` catalog accepts only `create_task` and `complete_task` actions; `none` proposals are classified as `ordinary` or `ambiguous`. Malformed output, unsupported actions, and catalog-version mismatches are classified as `unsupported` with a rejection reason and never execute an action.
 
 Automatic outcomes are separate durable records keyed one-to-one to an Interpretation. A clear `create_task` interpretation creates one open Task with its member and source lineage; ordinary, ambiguous, and unsupported interpretations create one Note containing the transcription text. Ambiguous and unsupported Notes are marked `Needs review`. Retrying materialization returns the existing outcome, and `complete_task` creates no new item. Task mutation uses an integer version for optimistic concurrency: edits require the current version, preserve all provenance identifiers, and may change only the title or non-notifying due information. An open Task may transition to `completed` once; repeating completion returns the completed Task unchanged, while stale edits and invalid transitions are rejected. No mutation invokes notification scheduling or delivery. Corrections and shared visibility remain outside this slice.
 
@@ -83,9 +121,9 @@ An explicit `POST /notes/<note-id>/convert-to-task` operation accepts `memberId`
 
 ## Review contract
 
-`GET /captures/<capture-id>/review` returns a read-only review contract with `state`, `capture`, `source`, `transcription`, `correction`, `interpretation`, `outcome`, and `failure` fields. The records remain separate and are connected by their stable identifiers; `correction` is `null` when no correction exists, and the runtime leaves its optional lookup seam unconfigured until correction persistence is implemented. The source includes a stable blob identifier without exposing filesystem paths. Missing records are returned as `null`, while a failed transcription is returned as a present record with `state: "failed"` and a populated `failure` object.
+`GET /captures/<capture-id>/review` returns a read-only review contract with `state`, `capture`, `source`, `transcription`, `correction`, `interpretation`, `interpretationProcessing`, `outcome`, and `failure` fields. The records remain separate and are connected by their stable identifiers; `correction` is `null` when no correction exists, and the runtime leaves its optional lookup seam unconfigured until correction persistence is implemented. The source includes a stable blob identifier without exposing filesystem paths. Missing records are returned as `null`. Failed transcription or interpretation work returns `state: "failed"` with a populated `failure`; interpretation failures use `stage: "interpretation"` and expose a client-safe `retryable` flag. `interpretationProcessing` exposes durable status and attempt count without exposing provider response bodies.
 
-The lifecycle state is deterministic: an un-stored Capture or missing/in-progress downstream record is `pending`; a failed transcription is `failed`; an ambiguous or unsupported Note outcome is `needs_review`; and a chain with a durable outcome is `completed`. The source record contains an immutable audio-content descriptor only and never contains corrected or interpreted text.
+The lifecycle state is deterministic: an un-stored Capture or missing/in-progress downstream record is `pending`; a failed transcription or interpretation job is `failed`; an ambiguous or unsupported Note outcome is `needs_review`; and a chain with a durable outcome is `completed`. The source record contains an immutable audio-content descriptor only and never contains corrected or interpreted text.
 
 ## Member item list
 
@@ -93,6 +131,6 @@ The lifecycle state is deterministic: an un-stored Capture or missing/in-progres
 
 - `kind: "task"`, with `state` `open` or `completed`;
 - `kind: "note"`, with `state` `none` or `needs_review`; or
-- `kind: "capture"`, with `state` `pending` or `failed` while processing has not produced a durable item.
+- `kind: "capture"`, with `state` `pending` or `failed` while transcription or interpretation has not produced a durable item.
 
 Every entry includes a `detailUrl` for its provenance/review contract. The optional `nextCursor` is an opaque keyset cursor based on capture creation time and ID. It keeps pagination order stable when an entry changes processing state. The list is single-Member for the MVP; authentication and cross-Member filtering remain outside this contract.

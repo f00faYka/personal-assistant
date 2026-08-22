@@ -5,7 +5,7 @@ import { FileSystemBlobStorage } from "./infrastructure/blob-storage/filesystem-
 import { prepareRuntime } from "./runtime.js";
 import { SqliteCaptureRepository } from "./infrastructure/sqlite/sqlite-capture-repository.js";
 import { SqliteInterpretationRepository } from "./infrastructure/sqlite/sqlite-interpretation-repository.js";
-import { NoteService, TaskService } from "./features/outcomes/outcome.js";
+import { NoteService, OutcomeService, TaskService } from "./features/outcomes/outcome.js";
 import { SqliteOutcomeRepository } from "./infrastructure/sqlite/sqlite-outcome-repository.js";
 import { SqliteTranscriptionRepository } from "./infrastructure/sqlite/sqlite-transcription-repository.js";
 import { ReviewService } from "./features/reviews/review.js";
@@ -16,6 +16,10 @@ import { SqliteOfflineDraftRepository } from "./infrastructure/sqlite/sqlite-off
 import { TranscriptionService } from "./features/transcriptions/transcription.js";
 import { TranscriptionWorker } from "./features/transcriptions/transcription-worker.js";
 import { LocalWhisperProvider } from "./infrastructure/transcription/local-whisper-provider.js";
+import { InterpretationService } from "./features/interpretations/interpretation.js";
+import { InterpretationWorker } from "./features/interpretations/interpretation-worker.js";
+import { LocalOllamaInterpretationProvider } from "./infrastructure/interpretation/local-ollama-interpretation-provider.js";
+import { SqliteInterpretationJobRepository } from "./infrastructure/sqlite/sqlite-interpretation-job-repository.js";
 
 async function start(): Promise<void> {
   loadLocalEnvironment();
@@ -25,10 +29,27 @@ async function start(): Promise<void> {
   const repository = new SqliteCaptureRepository(configuration.databasePath);
   const transcriptionRepository = new SqliteTranscriptionRepository(configuration.databasePath);
   const interpretationRepository = new SqliteInterpretationRepository(configuration.databasePath);
+  const interpretationJobRepository = new SqliteInterpretationJobRepository(configuration.databasePath);
   const outcomeRepository = new SqliteOutcomeRepository(configuration.databasePath);
   const memberItemsRepository = new SqliteMemberItemsRepository(configuration.databasePath);
   const offlineDraftRepository = new SqliteOfflineDraftRepository(configuration.databasePath);
   const captureService = new CaptureService(repository, new FileSystemBlobStorage(configuration.blobRoot));
+  const interpretationWorker = new InterpretationWorker({
+    service: new InterpretationService(interpretationRepository),
+    outcomeService: new OutcomeService(outcomeRepository),
+    provider: new LocalOllamaInterpretationProvider({
+      endpoint: configuration.ollamaEndpoint,
+      model: configuration.ollamaModel,
+      timeoutMilliseconds: configuration.ollamaTimeoutMilliseconds,
+    }),
+    repository: interpretationJobRepository,
+    transcriptionRepository,
+    captureReader: captureService,
+    maxAttempts: configuration.interpretationMaxAttempts,
+    onError: (error, transcriptionId) => {
+      console.error(`Interpretation failed for Transcription ${transcriptionId}`, error);
+    },
+  });
   const transcriptionWorker = new TranscriptionWorker({
     service: new TranscriptionService(
       transcriptionRepository,
@@ -41,6 +62,7 @@ async function start(): Promise<void> {
     ),
     repository: transcriptionRepository,
     maxAttempts: configuration.transcriptionMaxAttempts,
+    succeededHandler: interpretationWorker,
     onError: (error, captureId) => {
       console.error(`Transcription failed for Capture ${captureId}`, error);
     },
@@ -49,6 +71,7 @@ async function start(): Promise<void> {
     captureService,
     transcriptionRepository,
     interpretationRepository,
+    interpretationJobRepository,
     outcomeRepository,
   });
   const application = buildApi({
@@ -68,9 +91,11 @@ async function start(): Promise<void> {
   });
   application.addHook("onClose", async () => {
     await transcriptionWorker.stop();
+    await interpretationWorker.stop();
     repository.close();
     transcriptionRepository.close();
     interpretationRepository.close();
+    interpretationJobRepository.close();
     outcomeRepository.close();
     memberItemsRepository.close();
     offlineDraftRepository.close();
@@ -81,6 +106,7 @@ async function start(): Promise<void> {
     });
   }
 
+  await interpretationWorker.start();
   await transcriptionWorker.start();
   await application.listen({
     host: configuration.host,

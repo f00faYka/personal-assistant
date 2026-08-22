@@ -148,4 +148,21 @@ export const foundationMigrations: readonly Migration[] = [
       ) STRICT
     `,
   },
+  {
+    version: 9,
+    name: "create interpretation processing jobs",
+    sql: `
+      CREATE TABLE interpretation_jobs (
+        transcription_id TEXT PRIMARY KEY,
+        capture_id TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'succeeded', 'failed')),
+        error TEXT,
+        retryable INTEGER NOT NULL CHECK (retryable IN (0, 1)),
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT
+    `,
+  },
 ];
