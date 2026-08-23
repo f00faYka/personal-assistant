@@ -13,17 +13,12 @@ export interface LocalOllamaInterpretationProviderOptions {
 
 const interpretationSchema = {
   type: "object",
-  properties: {
-    action: {
-      type: "string",
-      enum: ["create_task", "complete_task", "none", "unsupported"],
-    },
-    title: { type: "string" },
-    dueAt: { type: "string" },
-    reason: { type: "string", enum: ["ordinary", "ambiguous", "unsupported"] },
-  },
-  required: ["action"],
-  additionalProperties: false,
+  oneOf: [
+    { properties: { action: { const: "create_task" }, title: { type: "string", minLength: 1 }, dueAt: { type: "string" } }, required: ["action", "title"], additionalProperties: false },
+    { properties: { action: { const: "complete_task" }, title: { type: "string", minLength: 1 } }, required: ["action", "title"], additionalProperties: false },
+    { properties: { action: { const: "none" }, reason: { type: "string", enum: ["ordinary", "ambiguous"] } }, required: ["action", "reason"], additionalProperties: false },
+    { properties: { action: { const: "unsupported" }, reason: { type: "string", enum: ["unsupported"] } }, required: ["action", "reason"], additionalProperties: false },
+  ],
 } as const;
 
 export class LocalOllamaInterpretationProvider implements InterpretationProvider {
@@ -47,7 +42,7 @@ export class LocalOllamaInterpretationProvider implements InterpretationProvider
           messages: [
             {
               role: "system",
-              content: systemPrompt(input.catalogVersion),
+              content: systemPrompt(input.catalogVersion, input.capturedAt),
             },
             { role: "user", content: input.transcriptionText },
           ],
@@ -87,8 +82,8 @@ export class LocalOllamaInterpretationProviderError extends Error {
   }
 }
 
-function systemPrompt(catalogVersion: string): string {
-  return `Classify this transcription using ${catalogVersion}. Return only the requested JSON. Use create_task only for a clear explicit request to create a Task, complete_task only for a clear explicit request to complete a named Task, none/ordinary for ordinary content, none/ambiguous for unclear instructions, and unsupported for any other requested action. Preserve the Member's words without inventing broader intent.`;
+function systemPrompt(catalogVersion: string, capturedAt?: string): string {
+  return `Classify this transcription using ${catalogVersion}. Return only JSON matching the schema. For create_task, title must be the concise requested work and dueAt must be an ISO UTC date when a clear date is spoken; use Capture timestamp ${capturedAt ?? "provided by the application"} as the year policy and midnight UTC for date-only requests. Use create_task only for a clear explicit request, complete_task only for a clear request to complete a named Task, none/ordinary for ordinary content, none/ambiguous for unclear instructions, and unsupported for any other action. Never invent a date or title.`;
 }
 
 function isOllamaResponse(value: unknown): value is { readonly message: { readonly content: string } } {
