@@ -15,7 +15,8 @@ describe("InterpretationService", () => {
       sourceId: "source-1",
       transcriptionId: "transcription-1",
       transcriptionStatus: "succeeded",
-      transcriptionText: "buy milk tomorrow",
+      transcriptionText: "buy milk",
+      capturedAt: "2026-08-23T12:00:00.000Z",
       catalogVersion: SUPPORTED_INTERPRETATION_CATALOG_VERSION,
       model: "qwen-test",
       rawOutput: {
@@ -38,6 +39,38 @@ describe("InterpretationService", () => {
         dueAt: "2026-08-15T09:00:00.000Z",
       },
     });
+  });
+
+  test("normalizes the explicit spoken date and removes command filler from the title", () => {
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Task, please remind me to cancel subscription to the Strava series" }, undefined, "strava-transcription"),
+      transcriptionText: "Task, please remind me to cancel subscription to the Strava series on the 1st of September.",
+      capturedAt: "2026-08-23T12:00:00.000Z",
+    });
+    expect(interpretation).toMatchObject({
+      classification: "clear_supported",
+      action: { kind: "create_task", title: "cancel subscription to the Strava series", dueAt: "2026-09-01T00:00:00.000Z" },
+    });
+  });
+
+  test("rejects an explicit date when the model supplies a contradictory date", () => {
+    expect(new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Cancel subscription", dueAt: "2026-09-02T00:00:00.000Z" }),
+      transcriptionText: "Task, cancel subscription on the 1st of September",
+      capturedAt: "2026-08-23T12:00:00.000Z",
+    })).toMatchObject({ classification: "unsupported", rejectionReason: "malformed_model_output" });
+  });
+
+  test("normalizes relative dates and rejects titles that clean to empty", () => {
+    const service = new InterpretationService(new MemoryRepository());
+    expect(service.evaluate({
+      ...input({ action: "create_task", title: "Buy milk" }),
+      transcriptionText: "add task buy milk tomorrow",
+    })).toMatchObject({ action: { dueAt: "2026-08-24T00:00:00.000Z" } });
+    expect(service.evaluate({
+      ...input({ action: "create_task", title: "Task" }, undefined, "blank-title"),
+      transcriptionText: "create a task",
+    })).toMatchObject({ classification: "unsupported", rejectionReason: "malformed_model_output" });
   });
 
   test("classifies ordinary and ambiguous content without an action", () => {
@@ -93,6 +126,7 @@ function input(
     transcriptionId,
     transcriptionStatus: "succeeded" as const,
     transcriptionText: "buy milk tomorrow",
+    capturedAt: "2026-08-23T12:00:00.000Z",
     catalogVersion,
     model: "qwen-test",
     rawOutput,

@@ -88,6 +88,66 @@ describe("production interpretation runtime", () => {
     expect(restartedProvider.calls).toBe(0);
   });
 
+  test("the explicit Strava request produces one Task with normalized due metadata and provenance", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "personal-assistant-interpretation-strava-"));
+    directories.push(directory);
+    const provider = new DeterministicInterpretationProvider({
+      action: "create_task",
+      title: "Task, please remind me to cancel subscription to the Strava series",
+    });
+    const harness = await createHarness(
+      directory,
+      provider,
+      3,
+      "Task, please remind me to cancel subscription to the Strava series on the 1st of September.",
+    );
+    harnesses.push(harness);
+
+    const response = await harness.application.inject({
+      method: "POST",
+      url: "/captures",
+      payload: { ...submission(), capturedAt: "2026-08-23T12:00:00.000Z" },
+    });
+    const captureId = response.json<{ capture: { id: string } }>().capture.id;
+    const item = await waitForItem(harness, captureId);
+    const review = await waitForReviewState(harness, captureId, "completed");
+
+    expect(item).toMatchObject({
+      kind: "task",
+      title: "cancel subscription to the Strava series",
+      dueAt: "2026-09-01T00:00:00.000Z",
+    });
+    expect(review).toMatchObject({
+      capture: { id: captureId, capturedAt: "2026-08-23T12:00:00.000Z" },
+      transcription: { text: "Task, please remind me to cancel subscription to the Strava series on the 1st of September." },
+      interpretation: { classification: "clear_supported" },
+      outcome: { kind: "task", title: "cancel subscription to the Strava series", dueAt: "2026-09-01T00:00:00.000Z" },
+    });
+  });
+
+  test("incomplete Task output remains a Needs review Note without materializing a Task", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "personal-assistant-interpretation-malformed-"));
+    directories.push(directory);
+    const harness = await createHarness(
+      directory,
+      new DeterministicInterpretationProvider({ action: "create_task", reason: "ambiguous" }),
+      3,
+      "Task, please remind me to cancel subscription on the 1st of September.",
+    );
+    harnesses.push(harness);
+
+    const response = await harness.application.inject({ method: "POST", url: "/captures", payload: submission() });
+    const captureId = response.json<{ capture: { id: string } }>().capture.id;
+    const item = await waitForItem(harness, captureId);
+    const review = await waitForReviewState(harness, captureId, "needs_review");
+
+    expect(item).toMatchObject({ kind: "note", captureId, state: "needs_review" });
+    expect(review).toMatchObject({
+      interpretation: { classification: "unsupported", rejectionReason: "malformed_model_output" },
+      outcome: { kind: "note", reviewState: "needs_review" },
+    });
+  });
+
   test("ordinary, ambiguous, and unsupported interpretations each produce one correctly reviewed Note", async () => {
     const cases = [
       {
@@ -279,6 +339,7 @@ async function createHarness(
   directory: string,
   interpretationProvider: InterpretationProvider,
   interpretationMaxAttempts = 3,
+  transcriptionText = "add task buy milk",
 ): Promise<RuntimeHarness> {
   const databasePath = join(directory, "api.sqlite");
   const blobRoot = join(directory, "blobs");
@@ -305,7 +366,7 @@ async function createHarness(
     service: new TranscriptionService(
       transcriptionRepository,
       captureService,
-      new DeterministicTranscriptionProvider(),
+      new DeterministicTranscriptionProvider(transcriptionText),
     ),
     repository: transcriptionRepository,
     maxAttempts: 3,
@@ -362,7 +423,7 @@ async function waitForItem(
 async function waitForReviewState(
   harness: RuntimeHarness,
   captureId: string,
-  state: "failed" | "completed",
+  state: "failed" | "completed" | "needs_review",
 ): Promise<ObservedReview> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const response = await harness.application.inject({
@@ -430,6 +491,7 @@ async function seedInterruptedInterpretation(directory: string): Promise<string>
     transcriptionId: transcription.id,
     transcriptionStatus: "succeeded",
     transcriptionText: transcription.text,
+    capturedAt: "2026-08-15T10:00:00.000Z",
     catalogVersion: "direct-instructions.v1",
     model: "deterministic-qwen",
     rawOutput: { action: "create_task", title: "Buy milk" },
@@ -464,8 +526,10 @@ function submission(): Record<string, string> {
 }
 
 class DeterministicTranscriptionProvider implements TranscriptionProvider {
+  constructor(private readonly text = "add task buy milk") {}
+
   async transcribe(): Promise<TranscriptionResult> {
-    return { text: "add task buy milk", provider: "deterministic-whisper", model: "test-model" };
+    return { text: this.text, provider: "deterministic-whisper", model: "test-model" };
   }
 }
 

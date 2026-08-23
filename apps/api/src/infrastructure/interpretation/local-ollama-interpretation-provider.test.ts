@@ -32,6 +32,7 @@ describe("LocalOllamaInterpretationProvider", () => {
     const result = await provider.interpret({
       transcriptionText: "add task buy milk tomorrow",
       catalogVersion: "direct-instructions.v1",
+      capturedAt: "2026-08-23T12:00:00.000Z",
     });
 
     expect(result).toEqual({
@@ -53,10 +54,10 @@ describe("LocalOllamaInterpretationProvider", () => {
       think: false,
       options: { temperature: 0 },
       messages: [
-        { role: "system" },
+        { role: "system", content: expect.stringContaining("2026-08-23T12:00:00.000Z") },
         { role: "user", content: "add task buy milk tomorrow" },
       ],
-      format: { type: "object", required: ["action"] },
+      format: { type: "object", oneOf: expect.any(Array) },
     });
   });
 
@@ -90,6 +91,7 @@ describe("LocalOllamaInterpretationProvider", () => {
       await expect(provider.interpret({
         transcriptionText: "private transcription",
         catalogVersion: "direct-instructions.v1",
+        capturedAt: "2026-08-23T12:00:00.000Z",
       })).rejects.toEqual(new LocalOllamaInterpretationProviderError(message));
     }
   });
