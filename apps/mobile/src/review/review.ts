@@ -8,7 +8,7 @@ export interface ReviewContract {
   readonly state: "pending" | "failed" | "completed" | "needs_review";
   readonly capture: { readonly id: string; readonly memberId: string };
   readonly source: { readonly id: string };
-  readonly transcription: { readonly status: string; readonly text?: string } | null;
+  readonly transcription: { readonly status: string; readonly text?: string; readonly language?: string } | null;
   readonly correction: { readonly text: string } | null;
   readonly interpretation: { readonly id: string; readonly classification?: string } | null;
   readonly interpretationProcessing?: {

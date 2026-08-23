@@ -46,6 +46,7 @@ export class LocalWhisperProvider implements TranscriptionProvider {
       }
       return {
         text: body.text.trim(),
+        ...(body.language === undefined ? {} : { language: body.language }),
         provider: "whisper.cpp",
         model: this.options.model,
       };
@@ -68,12 +69,13 @@ export class LocalWhisperProviderError extends Error {
   }
 }
 
-function isTranscriptionResponse(value: unknown): value is { readonly text: string } {
+function isTranscriptionResponse(value: unknown): value is { readonly text: string; readonly language?: string } {
   return typeof value === "object"
     && value !== null
     && "text" in value
     && typeof value.text === "string"
-    && value.text.trim().length > 0;
+    && value.text.trim().length > 0
+    && (!("language" in value) || typeof value.language === "string");
 }
 
 function audioFilename(contentType: string): string {

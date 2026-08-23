@@ -15,6 +15,7 @@ export interface Transcription {
   readonly contentType: string;
   readonly status: TranscriptionStatus;
   readonly text?: string;
+  readonly language?: string;
   readonly provider?: string;
   readonly model?: string;
   readonly error?: string;
@@ -25,6 +26,7 @@ export interface Transcription {
 
 export interface TranscriptionResult {
   readonly text: string;
+  readonly language?: string;
   readonly provider: string;
   readonly model: string;
 }

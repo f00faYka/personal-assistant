@@ -14,6 +14,7 @@ interface TranscriptionRow {
   content_type: string;
   status: Transcription["status"];
   text: string | null;
+  language: string | null;
   provider: string | null;
   model: string | null;
   error: string | null;
@@ -127,10 +128,10 @@ export class SqliteTranscriptionRepository implements TranscriptionRepository {
     this.database
       .prepare(
         `UPDATE transcriptions
-         SET status = 'succeeded', text = ?, provider = ?, model = ?, error = NULL, updated_at = ?
+         SET status = 'succeeded', text = ?, language = ?, provider = ?, model = ?, error = NULL, updated_at = ?
          WHERE capture_id = ?`,
       )
-      .run(result.text, result.provider, result.model, updatedAt, captureId);
+      .run(result.text, result.language ?? null, result.provider, result.model, updatedAt, captureId);
     return this.require(captureId);
   }
 
@@ -164,6 +165,7 @@ function toTranscription(row: TranscriptionRow): Transcription {
     contentType: row.content_type,
     status: row.status,
     ...(row.text === null ? {} : { text: row.text }),
+    ...(row.language === null ? {} : { language: row.language }),
     ...(row.provider === null ? {} : { provider: row.provider }),
     ...(row.model === null ? {} : { model: row.model }),
     ...(row.error === null ? {} : { error: row.error }),

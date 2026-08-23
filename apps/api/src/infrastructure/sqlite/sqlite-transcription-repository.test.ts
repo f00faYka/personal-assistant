@@ -38,6 +38,7 @@ describe("SqliteTranscriptionRepository", () => {
     });
     expect(repository.complete("capture-1", {
       text: "buy milk",
+      language: "en",
       provider: "whisper",
       model: "small",
     })).toMatchObject({ status: "succeeded", text: "buy milk" });
@@ -47,6 +48,7 @@ describe("SqliteTranscriptionRepository", () => {
     expect(reopened.findByCaptureId("capture-1")).toMatchObject({
       status: "succeeded",
       provider: "whisper",
+      language: "en",
       attemptCount: 1,
     });
     reopened.close();

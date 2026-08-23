@@ -179,6 +179,26 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
+  test("shows original non-English transcription text and language without translating it", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Позвони врачу", reviewState: "none", version: 2 }, { transcription: { status: "succeeded", text: "Позвони врачу завтра", language: "ru" } }) })));
+    const renderer = await renderScreen(vi.fn());
+
+    expect(textContent(renderer)).toContain("Original transcription");
+    expect(textContent(renderer)).toContain("ru");
+    expect(textContent(renderer)).toContain("Позвони врачу завтра");
+    expect(textContent(renderer)).not.toContain("Call the doctor tomorrow");
+    renderer.unmount();
+  });
+
+  test("shows original transcription before an editable outcome exists", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith(null, { state: "pending", transcription: { status: "succeeded", text: "Привет", language: "ru" } }) })));
+    const renderer = await renderScreen(vi.fn());
+
+    expect(textContent(renderer)).toContain("Привет");
+    expect(textContent(renderer)).toContain("ru");
+    renderer.unmount();
+  });
+
   test("prevents duplicate Note saves while one request is in flight", async () => {
     let resolveSave!: (response: Response) => void;
     const save = new Promise<Response>((resolve) => { resolveSave = resolve; });
