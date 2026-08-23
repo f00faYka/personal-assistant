@@ -158,10 +158,10 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     <Text style={styles.title}>{state.review.outcome?.kind === "task" ? "Task" : state.review.outcome?.kind === "note" ? "Note" : state.review.state === "failed" ? "Processing failed" : "Processing"}</Text>
     <Text style={styles.stateText}>Original source and processing history remain separate from editable result fields.</Text>
     {state.review.outcome ? <ReviewFields outcome={state.review.outcome} draft={draft} editing={editing} onEdit={setEditing} onChange={setDraft} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}
+    <Text style={styles.sectionTitle}>Source and provenance</Text>
+    <Text style={styles.provenance}>Capture {state.review.capture.id} · source {state.review.source.id}</Text>
+    {state.review.transcription ? <><Text style={styles.fieldLabel}>Original transcription{state.review.transcription.language ? ` · ${state.review.transcription.language}` : ""}</Text><Text style={styles.originalText}>{state.review.transcription.text ?? `Status: ${state.review.transcription.status}`}</Text></> : <Text style={styles.provenance}>Original transcription · pending</Text>}
     {state.review.outcome ? <>
-      <Text style={styles.sectionTitle}>Source and provenance</Text>
-      <Text style={styles.provenance}>Capture {state.review.capture.id} · source {state.review.source.id}</Text>
-      {state.review.transcription ? <><Text style={styles.fieldLabel}>Original transcription</Text><Text style={styles.originalText}>{state.review.transcription.text ?? `Status: ${state.review.transcription.status}`}</Text></> : <Text style={styles.provenance}>Original transcription · pending</Text>}
       {state.review.outcome.kind === "task" && state.review.outcome.status === "open" ? <Button label={completing ? "Completing…" : "Complete task"} onPress={() => void complete()} disabled={completing || saving || converting} /> : null}
       {state.review.outcome.kind === "note" || state.review.outcome.status === "open" ? <Button label={saving ? "Saving…" : "Save"} onPress={() => void save()} disabled={saving || completing || converting} /> : null}
       {state.review.outcome.kind === "note" ? <>

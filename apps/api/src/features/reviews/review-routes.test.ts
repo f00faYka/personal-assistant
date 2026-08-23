@@ -62,6 +62,7 @@ describe("Review routes", () => {
       contentType: "audio/mpeg",
       status: "succeeded",
       text: "remember the garden",
+      language: "en",
       provider: "test",
       model: "test-model",
       attemptCount: 1,
@@ -116,6 +117,10 @@ describe("Review routes", () => {
       outcomeRepository: { findByInterpretationId: () => outcomes[0] },
     }));
     applications.push(application);
+
+    const review = await application.inject({ method: "GET", url: "/captures/capture-1/review" });
+    expect(review.statusCode).toBe(200);
+    expect(review.json().review.transcription).toMatchObject({ text: "remember the garden", language: "en" });
 
     const saved = await application.inject({
       method: "POST",

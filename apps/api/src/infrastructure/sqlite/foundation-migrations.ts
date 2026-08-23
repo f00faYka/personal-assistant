@@ -165,4 +165,9 @@ export const foundationMigrations: readonly Migration[] = [
       ) STRICT
     `,
   },
+  {
+    version: 10,
+    name: "preserve transcription language",
+    sql: "ALTER TABLE transcriptions ADD COLUMN language TEXT",
+  },
 ];

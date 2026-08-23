@@ -34,6 +34,23 @@ describe("LocalWhisperProvider", () => {
     expect(new Uint8Array(await (file as File).arrayBuffer())).toEqual(Uint8Array.from([1, 2, 3]));
   });
 
+  test("preserves the provider-reported original language alongside the text", async () => {
+    const provider = new LocalWhisperProvider({
+      endpoint: "http://127.0.0.1:8080/inference",
+      model: "ggml-small",
+      timeoutMilliseconds: 30_000,
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(new Response(
+        JSON.stringify({ text: " Привет, мир. ", language: "ru" }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )),
+    });
+
+    await expect(provider.transcribe({
+      audio: Uint8Array.from([1]),
+      contentType: "audio/wav",
+    })).resolves.toMatchObject({ text: "Привет, мир.", language: "ru" });
+  });
+
   test("reports safe errors without retaining the provider response body", async () => {
     const provider = new LocalWhisperProvider({
       endpoint: "http://127.0.0.1:8080/inference",
