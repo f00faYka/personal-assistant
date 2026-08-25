@@ -14,11 +14,15 @@ vi.mock("react-native", async () => {
     FlatList,
     Pressable: host("Pressable"),
     RefreshControl: host("RefreshControl"),
-    SafeAreaView: host("SafeAreaView"),
     StyleSheet: { create: <T,>(styles: T): T => styles },
     Text: host("Text"),
     View: host("View"),
   };
+});
+
+vi.mock("react-native-safe-area-context", async () => {
+  const React = await import("react");
+  return { SafeAreaView: (props: { readonly children?: React.ReactNode; readonly [key: string]: unknown }) => React.createElement("SafeAreaView", props, props.children) };
 });
 
 import { Pressable, RefreshControl } from "react-native";
