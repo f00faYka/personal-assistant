@@ -55,8 +55,6 @@ A saved ordinary or Needs review Note exposes an explicit `Convert saved Note to
 
 The processing timeout prevents an unconfigured or unavailable provider from appearing as an endless successful load. The Expo config plugin supplies the iOS microphone permission message. Recording is unavailable in the iOS simulator, so the human review gate must use a physical iPhone.
 
-While recording, the mobile client enables `expo-audio` metering and maps the recorder's bounded dB level to bounded waveform bars. Silence stays at the minimum bar height and louder microphone input increases the bars. If metering is unavailable, the client shows a quiet fallback waveform and says that recording continues; recorder interruption is shown explicitly while leaving Finish recording available. The waveform is visual-only and does not change the recorded audio or submission contract.
-
 To inspect the review UI before a local processing provider is configured, start Expo with `EXPO_PUBLIC_REVIEW_FIXTURE=task npm run mobile:start` or `EXPO_PUBLIC_REVIEW_FIXTURE=note npm run mobile:start`. This is an in-memory development fixture only; it does not create API data or change Capture processing.
 
 ## Starting the API and Expo together
