@@ -1,13 +1,13 @@
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
 vi.mock("react-native", async () => {
   const React = await import("react");
-  type HostProps = { readonly children?: React.ReactNode; readonly refreshControl?: React.ReactNode; readonly [key: string]: unknown };
+  type HostProps = { readonly children?: React.ReactNode; readonly refreshControl?: React.ReactNode; readonly ListFooterComponent?: React.ReactNode; readonly [key: string]: unknown };
   const host = (name: string) => function Host(props: HostProps) { return React.createElement(name, props, props.children); };
-  const FlatList = (props: HostProps & { readonly data?: readonly unknown[]; readonly renderItem?: (info: { readonly item: unknown; readonly index: number }) => React.ReactNode }) => React.createElement("FlatList", props, props.refreshControl, React.Children.toArray(props.data?.map((item, index) => props.renderItem?.({ item, index }))));
+  const FlatList = (props: HostProps & { readonly data?: readonly unknown[]; readonly renderItem?: (info: { readonly item: unknown; readonly index: number }) => React.ReactNode }) => React.createElement("FlatList", props, props.refreshControl, React.Children.toArray(props.data?.map((item, index) => props.renderItem?.({ item, index }))), props.ListFooterComponent);
   return {
     AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
     ActivityIndicator: host("ActivityIndicator"),
@@ -134,6 +134,66 @@ describe("MemberListScreen", () => {
     expect(textContent(renderer)).toContain("Buy milk");
     expect(textContent(renderer)).toContain("Refresh failed:");
     expect(textContent(renderer)).toContain("offline");
+    renderer.unmount();
+  });
+
+  test("keeps loaded rows visible and offers a cursor-specific retry after load-more fails", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ items: [task], nextCursor: "cursor-2" }))
+      .mockRejectedValueOnce(new Error("offline"));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen();
+
+    await act(async () => { await findFlatList(renderer).props.onEndReached(); });
+
+    expect(textContent(renderer)).toContain("Buy milk");
+    expect(textContent(renderer)).toContain("Couldn’t load more items");
+    expect(textContent(renderer)).toContain("offline");
+    expect(textContent(renderer)).toContain("Retry loading more items");
+    expect(fetcher).toHaveBeenLastCalledWith("http://api.test/items?memberId=member-1&cursor=cursor-2");
+    renderer.unmount();
+  });
+
+  test("retries the failed cursor and appends each recovered item once", async () => {
+    const recovered = { ...note, id: "note-2", captureId: "capture-2" };
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ items: [task], nextCursor: "cursor-2" }))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(jsonResponse({ items: [task, recovered], nextCursor: null }));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen();
+
+    await act(async () => { await findFlatList(renderer).props.onEndReached(); });
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Retry loading more items" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Call the dentist");
+    expect(renderer.root.findAllByType(Pressable).filter((node) => node.props.accessibilityLabel === "Task: Buy milk")).toHaveLength(1);
+    expect(fetcher).toHaveBeenLastCalledWith("http://api.test/items?memberId=member-1&cursor=cursor-2");
+    renderer.unmount();
+  });
+
+  test("ignores duplicate retries while the failed cursor is in flight", async () => {
+    let resolveRetry!: (response: Response) => void;
+    const retry = new Promise<Response>((resolve) => { resolveRetry = resolve; });
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ items: [task], nextCursor: "cursor-2" }))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockReturnValueOnce(retry);
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen();
+    await act(async () => { await findFlatList(renderer).props.onEndReached(); });
+
+    act(() => {
+      const retryButton = renderer.root.findByProps({ accessibilityLabel: "Retry loading more items" });
+      retryButton.props.onPress();
+      retryButton.props.onPress();
+    });
+    resolveRetry(jsonResponse({ items: [note], nextCursor: null }));
+    await act(async () => { await retry; });
+
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(renderer.root.findAllByType(Pressable).filter((node) => node.props.accessibilityLabel === "Task: Buy milk")).toHaveLength(1);
+    expect(renderer.root.findAllByType(Pressable).filter((node) => node.props.accessibilityLabel === "Note: Call the dentist")).toHaveLength(1);
     renderer.unmount();
   });
 
@@ -370,6 +430,8 @@ function jsonResponse(body: unknown): Response {
 function textContent(renderer: ReactTestRenderer): string {
   return renderer.root.findAll((node) => String(node.type) === "Text").flatMap((node) => node.children).filter((child): child is string => typeof child === "string").join(" ");
 }
+
+function findFlatList(renderer: ReactTestRenderer): ReactTestInstance { return renderer.root.findAll((node) => String(node.type) === "FlatList")[0]!; }
 
 function findButton(renderer: ReactTestRenderer, label: string) {
   const button = renderer.root.findAllByType(Pressable).find((node) => {
