@@ -7,12 +7,7 @@ vi.mock("react-native", async () => {
   const React = await import("react");
   type Props = { readonly children?: React.ReactNode; readonly [key: string]: unknown };
   const host = (name: string) => function Host(props: Props) { return React.createElement(name, props, props.children); };
-  return { ActivityIndicator: host("ActivityIndicator"), Pressable: host("Pressable"), ScrollView: host("ScrollView"), StyleSheet: { create: <T,>(styles: T): T => styles }, Text: host("Text"), TextInput: host("TextInput"), View: host("View") };
-});
-
-vi.mock("react-native-safe-area-context", async () => {
-  const React = await import("react");
-  return { SafeAreaView: (props: { readonly children?: React.ReactNode; readonly [key: string]: unknown }) => React.createElement("SafeAreaView", props, props.children) };
+  return { ActivityIndicator: host("ActivityIndicator"), Pressable: host("Pressable"), SafeAreaView: host("SafeAreaView"), ScrollView: host("ScrollView"), StyleSheet: { create: <T,>(styles: T): T => styles }, Text: host("Text"), TextInput: host("TextInput"), View: host("View") };
 });
 
 import { TextInput } from "react-native";

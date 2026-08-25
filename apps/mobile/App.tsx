@@ -7,7 +7,6 @@ import { createReviewFixtureClient } from "./src/review/review";
 import { createExpoOfflineDraftStore } from "./src/offline/expo-offline-drafts";
 import { createOfflineDraftSyncClient } from "./src/offline/synchronize-offline-drafts";
 import { useMemo, useState } from "react";
-import { SafeAreaProvider } from "react-native-safe-area-context";
 
 export default function App() {
   const [detailUrl, setDetailUrl] = useState<string | null>(null);
@@ -18,5 +17,6 @@ export default function App() {
   const offlineDraftSyncClient = useMemo(() => createOfflineDraftSyncClient(apiBaseUrl, { readBase64: readRecordedAudioAsBase64 }), [apiBaseUrl]);
   const memberId = process.env.EXPO_PUBLIC_MEMBER_ID ?? "member-1";
   const fixtureKind = process.env.EXPO_PUBLIC_REVIEW_FIXTURE === "task" ? "task" : "note";
-  return <SafeAreaProvider>{detailUrl || fixtureMode ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} detailUrl={detailUrl ?? "/captures/demo-capture-1/review"} {...(fixtureMode ? { client: createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => { setDetailUrl(null); setFixtureMode(false); }} /> : <MemberListScreen apiBaseUrl={apiBaseUrl} memberId={memberId} onOpenDetail={setDetailUrl} voiceRecorder={createExpoVoiceRecorder(recorder)} captureSubmitter={createCaptureSubmitter(apiBaseUrl, readRecordedAudioAsBase64)} offlineDraftStore={offlineDraftStore} offlineDraftSyncClient={offlineDraftSyncClient} />}</SafeAreaProvider>;
+  if (detailUrl || fixtureMode) return <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} detailUrl={detailUrl ?? "/captures/demo-capture-1/review"} {...(fixtureMode ? { client: createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => { setDetailUrl(null); setFixtureMode(false); }} />;
+  return <MemberListScreen apiBaseUrl={apiBaseUrl} memberId={memberId} onOpenDetail={setDetailUrl} voiceRecorder={createExpoVoiceRecorder(recorder)} captureSubmitter={createCaptureSubmitter(apiBaseUrl, readRecordedAudioAsBase64)} offlineDraftStore={offlineDraftStore} offlineDraftSyncClient={offlineDraftSyncClient} />;
 }

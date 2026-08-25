@@ -14,18 +14,13 @@ vi.mock("react-native", async () => {
     FlatList,
     Pressable: host("Pressable"),
     RefreshControl: host("RefreshControl"),
+    SafeAreaView: host("SafeAreaView"),
     ScrollView: host("ScrollView"),
     StyleSheet: { create: <T,>(styles: T): T => styles },
     Text: host("Text"),
     TextInput: host("TextInput"),
     View: host("View"),
   };
-});
-
-vi.mock("react-native-safe-area-context", async () => {
-  const React = await import("react");
-  const host = (name: string) => (props: { readonly children?: React.ReactNode; readonly [key: string]: unknown }) => React.createElement(name, props, props.children);
-  return { SafeAreaProvider: host("SafeAreaProvider"), SafeAreaView: host("SafeAreaView") };
 });
 
 vi.mock("expo-audio", () => ({ RecordingPresets: { HIGH_QUALITY: {} }, useAudioRecorder: vi.fn(() => ({})) }));
