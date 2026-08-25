@@ -6,7 +6,7 @@ import { createIdempotencyKey, type CaptureSubmitter, type RecordedAudio, type V
 import { shouldPersistOfflineDraft } from "../http/request-error";
 import type { OfflineDraft, OfflineDraftStore } from "../offline/offline-drafts";
 import type { OfflineDraftSynchronizationResult, OfflineDraftSyncClient } from "../offline/synchronize-offline-drafts";
-import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, type ListState, type MemberListItem } from "./member-items";
+import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, paginationStateFromError, type ListState, type MemberListItem } from "./member-items";
 import { beginPreview, expirePreview, resolvePreview, savePreview, timeOutPreview, type PreviewItem, type PreviewState } from "../preview/result-preview";
 
 interface MemberListScreenProps {
@@ -91,10 +91,10 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       const page = await client.list(memberId, cursor);
       setState((current) => {
         const nextPage = listStateFromPage(page);
-        return { ...nextPage, items: cursor ? [...current.items, ...nextPage.items] : nextPage.items };
+        return { ...nextPage, items: cursor ? appendUniqueItems(current.items, nextPage.items) : nextPage.items };
       });
     } catch (error) {
-      setState((current) => listStateFromError(current.items, error));
+      setState((current) => cursor ? paginationStateFromError(current.items, cursor, error) : listStateFromError(current.items, error));
     } finally {
       setRefreshing(false);
       setLoadingMore(false);
@@ -309,7 +309,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} />}
           onEndReached={state.status === "ready" && state.nextCursor && !loadingMore ? () => void load(false, state.nextCursor ?? undefined) : undefined}
           onEndReachedThreshold={0.5}
-          ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} /> : null}
+          ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} /> : state.status === "pagination_error" ? <PaginationError message={state.message} onRetry={() => void load(false, state.failedCursor)} /> : null}
           contentContainerStyle={styles.list}
           renderItem={({ item: entry }) => entry.kind === "offline_draft"
             ? <OfflineDraftCard draft={entry.draft} sync={offlineDraftSync[entry.draft.draftId]} deleting={deletingDraftId === entry.draft.draftId} onDelete={() => void deleteOfflineDraft(entry.draft.draftId)} onSync={() => retryOfflineDraft(entry.draft.draftId)} />
@@ -378,9 +378,19 @@ function ListCard({ item, onPress }: { readonly item: MemberListItem; readonly o
   );
 }
 
+function appendUniqueItems(existing: readonly MemberListItem[], next: readonly MemberListItem[]): readonly MemberListItem[] {
+  const seen = new Set(existing.map((item) => item.id));
+  return [...existing, ...next.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  })];
+}
+
 function LoadingState() { return <View style={styles.state}><ActivityIndicator accessibilityLabel="Loading items" /><Text style={styles.stateText}>Loading your items…</Text></View>; }
 function EmptyState({ onRefresh }: { readonly onRefresh: () => void }) { return <View style={styles.state}><Text style={styles.stateTitle}>Nothing here yet</Text><Text style={styles.stateText}>Your Tasks and Notes will appear here after your first Capture.</Text><Pressable accessibilityRole="button" onPress={onRefresh} style={styles.retry}><Text style={styles.retryText}>Refresh</Text></Pressable></View>; }
 function ErrorBanner({ message }: { readonly message: string }) { return <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>Refresh failed: {message}</Text></View>; }
+function PaginationError({ message, onRetry }: { readonly message: string; readonly onRetry: () => void }) { return <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>Couldn’t load more items: {message}</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry loading more items" onPress={onRetry} style={styles.retry}><Text style={styles.retryText}>Retry loading more items</Text></Pressable></View>; }
 function OfflineDraftErrorBanner({ message }: { readonly message: string }) { return <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{message}</Text></View>; }
 function ErrorState({ message, onRetry }: { readonly message: string; readonly onRetry: () => void }) { return <View style={styles.state}><Text style={styles.stateTitle}>Couldn’t load your items</Text><Text style={styles.stateText}>{message}</Text><Pressable accessibilityRole="button" onPress={onRetry} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>; }
 function formatDate(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: "short", day: "numeric" }); }

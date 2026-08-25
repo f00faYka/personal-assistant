@@ -56,7 +56,8 @@ export function createMemberItemsClient(apiBaseUrl: string, fetcher: ItemsFetche
 export type ListState =
   | { readonly status: "loading"; readonly items: readonly MemberListItem[] }
   | { readonly status: "ready"; readonly items: readonly MemberListItem[]; readonly nextCursor: string | null }
-  | { readonly status: "error"; readonly items: readonly MemberListItem[]; readonly message: string };
+  | { readonly status: "error"; readonly items: readonly MemberListItem[]; readonly message: string }
+  | { readonly status: "pagination_error"; readonly items: readonly MemberListItem[]; readonly message: string; readonly failedCursor: string };
 
 export const initialListState: ListState = { status: "loading", items: [] };
 
@@ -66,6 +67,10 @@ export function listStateFromPage(page: MemberItemsPage): ListState {
 
 export function listStateFromError(items: readonly MemberListItem[], error: unknown): ListState {
   return { status: "error", items, message: error instanceof Error ? error.message : "Unable to load items" };
+}
+
+export function paginationStateFromError(items: readonly MemberListItem[], failedCursor: string, error: unknown): ListState {
+  return { status: "pagination_error", items, failedCursor, message: error instanceof Error ? error.message : "Unable to load more items" };
 }
 
 export function parseMemberItemsPage(value: unknown): MemberItemsPage {
