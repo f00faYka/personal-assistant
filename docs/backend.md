@@ -30,7 +30,7 @@ The process optionally loads `.env` and then validates these values:
 | `API_DATABASE_PATH` | `local-data/api.sqlite` | SQLite database file |
 | `API_BLOB_ROOT` | `local-data/blobs` | Filesystem blob root |
 | `WHISPER_ENDPOINT` | `http://127.0.0.1:8080/inference` | Local `whisper.cpp` inference endpoint |
-| `WHISPER_MODEL` | `ggml-base.en` | Model identifier recorded with successful transcriptions |
+| `WHISPER_MODEL` | `ggml-small` | Multilingual model identifier recorded with successful transcriptions; use a model without the `.en` suffix |
 | `WHISPER_TIMEOUT_MS` | `120000` | Per-attempt local Whisper timeout, from 1 second to 10 minutes |
 | `TRANSCRIPTION_MAX_ATTEMPTS` | `3` | Durable attempt cap, from 1 to 10 |
 | `OLLAMA_ENDPOINT` | `http://127.0.0.1:11434/api/chat` | Local Ollama chat endpoint |
@@ -45,10 +45,10 @@ Copy `.env.example` to `.env` to override the defaults. `.env`, SQLite files, `l
 The production API expects the owner-operated [`whisper.cpp` HTTP server](https://github.com/ggml-org/whisper.cpp/tree/master/examples/server) to be running before a voice Capture is submitted. Build `whisper-server`, download a compatible model, install `ffmpeg`, and start the server with conversion enabled so iPhone formats such as M4A are accepted. A default-compatible command from the `whisper.cpp` checkout is:
 
 ```sh
-./build/bin/whisper-server -m models/ggml-base.en.bin --host 127.0.0.1 --port 8080 --convert
+./build/bin/whisper-server -m models/ggml-small.bin --language auto --host 127.0.0.1 --port 8080 --convert
 ```
 
-Keep the server bound to localhost and do not run it with administrative privileges. Set `WHISPER_ENDPOINT` if its host, port, request prefix, or inference path differs. Set `WHISPER_MODEL` to the identifier operators should see in transcription provenance; the API records this configured value and does not load or replace the server's model.
+Use a multilingual Whisper model without the `.en` suffix; English-only models can force non-English speech into an English transcription path. `--language auto` enables language detection, and the server must not be started with `--translate`, because the product preserves the speaker's original language. Keep the server bound to localhost and do not run it with administrative privileges. Set `WHISPER_ENDPOINT` if its host, port, request prefix, or inference path differs. Set `WHISPER_MODEL` to the identifier operators should see in transcription provenance; the API records this configured value and does not load or replace the server's model.
 
 API startup creates one serial transcription worker before accepting requests. It first discovers any stored Captures that predate this runtime wiring and creates their missing transcription records. After new immutable Capture audio is stored, both direct Capture submission and audio Offline-draft synchronization create or discover the Capture's one durable transcription record, then queue it without waiting for inference to finish. The worker sends the original bytes as multipart field `file`, requests `response_format=json`, and stores the returned text separately with `provider: whisper.cpp` and the configured model identifier.
 
