@@ -221,6 +221,28 @@ describe("MemberListScreen", () => {
     renderer.unmount();
   });
 
+  test("explains unavailable metering while keeping the recording controls available", async () => {
+    const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn(), cancel: vi.fn().mockResolvedValue(undefined) };
+    const renderer = await renderScreen({ voiceRecorder: recorder });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Microphone level unavailable; recording continues.");
+    expect(findButton(renderer, "Finish recording")).toBeDefined();
+    renderer.unmount();
+  });
+
+  test("explains a recorder interruption without hiding the finish action", async () => {
+    const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn(), cancel: vi.fn().mockResolvedValue(undefined) };
+    const renderer = await renderScreen({ voiceRecorder: recorder, recordingInterrupted: true, recordingMetering: -18 });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Microphone input was interrupted. You can still finish this recording.");
+    expect(findButton(renderer, "Finish recording")).toBeDefined();
+    renderer.unmount();
+  });
+
   test("submits once and retries a failed upload without losing the recording", async () => {
     const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn().mockResolvedValue({ uri: "file:///capture.m4a", contentType: "audio/m4a" }), cancel: vi.fn() };
     const submit = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ captureId: "capture-1" });
