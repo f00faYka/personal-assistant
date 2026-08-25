@@ -18,7 +18,7 @@ export function createExpoVoiceRecorder(recorder: ExpoRecorder): VoiceRecorder {
     },
     async start() {
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      await recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+      await recorder.prepareToRecordAsync({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
       recorder.record();
     },
     async stop(): Promise<RecordedAudio | null> {

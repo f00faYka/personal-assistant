@@ -28,7 +28,7 @@ vi.mock("react-native-safe-area-context", async () => {
   return { SafeAreaProvider: host("SafeAreaProvider"), SafeAreaView: host("SafeAreaView") };
 });
 
-vi.mock("expo-audio", () => ({ RecordingPresets: { HIGH_QUALITY: {} }, useAudioRecorder: vi.fn(() => ({})) }));
+vi.mock("expo-audio", () => ({ RecordingPresets: { HIGH_QUALITY: {} }, useAudioRecorder: vi.fn(() => ({})), useAudioRecorderState: vi.fn(() => ({ metering: undefined, mediaServicesDidReset: false })) }));
 vi.mock("./src/capture/expo-voice-recorder", () => ({ createExpoVoiceRecorder: vi.fn(() => undefined), readRecordedAudioAsBase64: vi.fn() }));
 vi.mock("./src/offline/expo-offline-drafts", () => ({
   createExpoOfflineDraftStore: vi.fn(() => ({ list: vi.fn().mockResolvedValue([]), save: vi.fn(), remove: vi.fn() })),
