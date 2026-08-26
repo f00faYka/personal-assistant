@@ -53,6 +53,18 @@ If the server does not produce a result within 30 seconds, polling stops and the
 
 A saved ordinary or Needs review Note exposes an explicit `Convert saved Note to Task` action. The server-confirmed `POST /notes/<note-id>/convert-to-task` mutation replaces the displayed Note with an open Task while retaining the same durable item identity and provenance; returning to the list performs a fresh read, so no Note/Task duplicate is displayed. Conversion requires a backend connection and is never queued as an Offline draft. Duplicate taps are ignored while conversion is in flight. A confirmed failure keeps the Note, review state, and provenance visible and refreshes the optimistic-concurrency version before retry.
 
+The Stage 2 state-to-surface mapping is consistent across the list, result preview, and detailed review:
+
+| State | List | Preview/review | Recovery action |
+| --- | --- | --- | --- |
+| Pending or processing | Processing your Capture | Processing; no result is implied | Refresh or wait for the server |
+| Confirmed Task | Task or Completed task | Task fields and provenance | Edit or complete when the Task is open |
+| Confirmed Note | Note or Needs review | Note fields and provenance | Review, save, or explicitly convert a saved Note |
+| Retryable synchronization failure | Offline draft, not confirmed | Original draft remains available | Retry synchronization |
+| Failed processing | Capture failed | Failure and original Capture remain visible | Inspect review and retry when processing is available |
+
+When a stale Note review receives a concurrency failure, the client refreshes the review before offering another action. If the server has converted that Note to a Task, the client switches to Task fields and labels the refresh; it never reports the stale Note edit as saved.
+
 The processing timeout prevents an unconfigured or unavailable provider from appearing as an endless successful load. The Expo config plugin supplies the iOS microphone permission message. Recording is unavailable in the iOS simulator, so the human review gate must use a physical iPhone.
 
 While recording, the mobile client enables `expo-audio` metering and maps the recorder's bounded dB level to bounded waveform bars. Silence stays at the minimum bar height and louder microphone input increases the bars. If metering is unavailable, the client shows a quiet fallback waveform and says that recording continues; recorder interruption is shown explicitly while leaving Finish recording available. The waveform is visual-only and does not change the recorded audio or submission contract.
