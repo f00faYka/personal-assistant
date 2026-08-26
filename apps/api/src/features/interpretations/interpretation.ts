@@ -141,10 +141,11 @@ function classify(input: InterpretationInput): Pick<Interpretation, "classificat
     if (input.rawOutput.dueAt !== undefined && !isIsoDate(input.rawOutput.dueAt)) {
       return { classification: "unsupported", rejectionReason: "malformed_model_output" };
     }
-    if (hasExplicitDate(input.transcriptionText) && extractedDueAt === undefined && input.rawOutput.dueAt === undefined) {
+    if (hasExplicitSchedule(input.transcriptionText) && extractedDueAt === undefined) {
       return { classification: "unsupported", rejectionReason: "malformed_model_output" };
     }
-    if (extractedDueAt !== undefined && input.rawOutput.dueAt !== undefined && input.rawOutput.dueAt !== extractedDueAt) {
+    if (extractedDueAt !== undefined && input.rawOutput.dueAt !== undefined
+      && normalizeIsoDate(input.rawOutput.dueAt) !== extractedDueAt) {
       return { classification: "unsupported", rejectionReason: "malformed_model_output" };
     }
     const title = normalizeTaskTitle(input.rawOutput.title, input.transcriptionText);
@@ -206,29 +207,85 @@ const MONTHS = new Map([
 function extractExplicitDueAt(text: string, capturedAt: string): string | undefined {
   const normalized = text.toLowerCase();
   const captured = new Date(capturedAt);
-  if (/\btoday\b/.test(normalized)) return startOfUtcDay(captured).toISOString();
-  if (/\btomorrow\b/.test(normalized)) return addUtcDays(startOfUtcDay(captured), 1).toISOString();
-  const weekday = normalized.match(/\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/)?.[1];
+  if (Number.isNaN(captured.getTime())) return undefined;
+  const date = extractDate(normalized, captured);
+  const time = extractTime(normalized);
+  if (hasExplicitTime(normalized) && time === undefined) return undefined;
+  if (date === undefined && time === undefined) return undefined;
+  const base = date ?? { year: captured.getUTCFullYear(), month: captured.getUTCMonth(), day: captured.getUTCDate() };
+  return new Date(Date.UTC(base.year, base.month, base.day, time?.hour ?? 0, time?.minute ?? 0)).toISOString();
+}
+
+interface CalendarDate { readonly year: number; readonly month: number; readonly day: number }
+interface ClockTime { readonly hour: number; readonly minute: number }
+
+function extractDate(text: string, captured: Date): CalendarDate | undefined {
+  if (/\b(?:today)\b|сегодня/.test(text)) {
+    return { year: captured.getUTCFullYear(), month: captured.getUTCMonth(), day: captured.getUTCDate() };
+  }
+  if (/послезавтра|\bthe day after tomorrow\b/.test(text)) {
+    const next = addUtcDays(startOfUtcDay(captured), 2);
+    return { year: next.getUTCFullYear(), month: next.getUTCMonth(), day: next.getUTCDate() };
+  }
+  if (/\b(?:tomorrow)\b|завтра/.test(text)) {
+    const next = addUtcDays(startOfUtcDay(captured), 1);
+    return { year: next.getUTCFullYear(), month: next.getUTCMonth(), day: next.getUTCDate() };
+  }
+  const thisWeekday = text.match(/\bthis week\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/)?.[1];
+  if (thisWeekday) {
+    const target = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].indexOf(thisWeekday);
+    const monday = addUtcDays(startOfUtcDay(captured), 1 - (captured.getUTCDay() || 7));
+    let result = addUtcDays(monday, target);
+    if (result < startOfUtcDay(captured)) result = addUtcDays(result, 7);
+    return { year: result.getUTCFullYear(), month: result.getUTCMonth(), day: result.getUTCDate() };
+  }
+  const weekday = text.match(/\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/)?.[1];
   if (weekday) {
     const target = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].indexOf(weekday);
-    const days = (target - captured.getUTCDay() + 7) % 7 || 7;
-    return addUtcDays(startOfUtcDay(captured), days).toISOString();
+    const next = addUtcDays(startOfUtcDay(captured), (target - captured.getUTCDay() + 7) % 7 || 7);
+    return { year: next.getUTCFullYear(), month: next.getUTCMonth(), day: next.getUTCDate() };
   }
-  const match = normalized.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+of\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/)
-    ?? normalized.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?\b/);
+  const match = text.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+of\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/)
+    ?? text.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?\b/);
   if (!match) return undefined;
-  const day = Number(match[1] && /^\d/.test(match[1]) ? match[1] : match[2]);
+  const day = Number(/^\d/.test(match[1] ?? "") ? match[1] : match[2]);
   const monthName = MONTHS.has(match[1] ?? "") ? match[1] : match[2];
   const month = MONTHS.get(monthName ?? "");
   if (month === undefined || day < 1 || day > 31) return undefined;
   let year = captured.getUTCFullYear();
-  let date = new Date(Date.UTC(year, month, day));
-  if (date.getUTCMonth() !== month || date.getUTCDate() !== day) return undefined;
-  if (date < new Date(Date.UTC(captured.getUTCFullYear(), captured.getUTCMonth(), captured.getUTCDate()))) {
+  let result = new Date(Date.UTC(year, month, day));
+  if (result.getUTCMonth() !== month || result.getUTCDate() !== day) return undefined;
+  if (result < startOfUtcDay(captured)) {
     year += 1;
-    date = new Date(Date.UTC(year, month, day));
+    result = new Date(Date.UTC(year, month, day));
   }
-  return date.toISOString();
+  return { year, month, day: result.getUTCDate() };
+}
+
+function extractTime(text: string): ClockTime | undefined {
+  if (/\bnoon\b|полдень/.test(text)) return { hour: 12, minute: 0 };
+  if (/\bmidnight\b|полночь/.test(text)) return { hour: 0, minute: 0 };
+  const twelveHour = text.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/)
+    ?? text.match(/в\s*(\d{1,2})(?::(\d{2}))?\s*(утра|дня|вечера|ночи)/);
+  if (twelveHour) {
+    const hour = Number(twelveHour[1]);
+    const minute = Number(twelveHour[2] ?? 0);
+    if (hour < 1 || hour > 12 || minute > 59) return undefined;
+    const period = twelveHour[3];
+    const isPm = period === "pm" || period === "вечера" || period === "дня";
+    return { hour: (hour % 12) + (isPm ? 12 : 0), minute };
+  }
+  const twentyFourHour = text.match(/\bat\s+(\d{1,2}):(\d{2})\b/)
+    ?? text.match(/в\s*(\d{1,2}):(\d{2})/);
+  if (!twentyFourHour) return undefined;
+  const hour = Number(twentyFourHour[1]);
+  const minute = Number(twentyFourHour[2]);
+  return hour > 23 || minute > 59 ? undefined : { hour, minute };
+}
+
+function hasExplicitTime(text: string): boolean {
+  return /\b(?:noon|midnight|at\s+\d{1,2}(?::\d{2})?|morning|afternoon|evening|night)\b/i.test(text)
+    || /полдень|полночь|в\s+\d{1,2}(?::\d{2})?|утром|днём|днем|вечером|ночью/i.test(text);
 }
 
 function startOfUtcDay(value: Date): Date {
@@ -241,16 +298,30 @@ function addUtcDays(value: Date, days: number): Date {
   return result;
 }
 
-function hasExplicitDate(text: string): boolean {
-  return /\b(?:\d{1,2}(?:st|nd|rd|th)?\s+of\s+|(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2})/i.test(text)
-    || /\b(?:tomorrow|today|next\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i.test(text);
+function hasExplicitSchedule(text: string): boolean {
+  return /\b(?:today|tomorrow|the day after tomorrow|this week\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|next\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|\d{1,2}(?:st|nd|rd|th)?\s+of\s+|(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2})\b/i.test(text)
+    || /послезавтра|сегодня|завтра/.test(text)
+    || /\b(?:noon|midnight|at\s+\d{1,2}(?::\d{2})?|morning|afternoon|evening|night)\b/i.test(text)
+    || /полдень|полночь|в\s+\d{1,2}(?::\d{2})?|утром|днём|днем|вечером|ночью/i.test(text);
 }
 
 function normalizeTaskTitle(title: string, transcription: string): string {
   const source = title.trim();
   const cleaned = source.replace(/^task[,:]?\s*/i, "").replace(/^please\s+/i, "");
   const extracted = cleaned.match(/^(?:remind me to|add (?:a )?task to|create (?:a )?task to)\s+(.+)$/i)?.[1];
-  if (extracted) return extracted.trim().replace(/[.!?]+$/, "");
+  if (extracted) return removeSchedule(extracted);
   const transcriptionTitle = transcription.match(/(?:remind me to|add (?:a )?task to|create (?:a )?task to)\s+(.+)$/i)?.[1];
-  return (transcriptionTitle ?? cleaned).trim().replace(/[.!?]+$/, "");
+  return removeSchedule(transcriptionTitle ?? cleaned);
+}
+
+function removeSchedule(value: string): string {
+  return value.trim()
+    .replace(/\s+(?:today|tomorrow|the day after tomorrow|this week\s+\w+|послезавтра|сегодня|завтра)(?:\s+(?:at|в)\s+[^.!?]+)?[.!?]*$/i, "")
+    .replace(/\s+(?:on\s+\d{1,2}(?:st|nd|rd|th)?\s+of\s+\w+|\w+\s+\d{1,2}(?:st|nd|rd|th)?)[.!?]*$/i, "")
+    .replace(/\s+(?:at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?|в\s+\d{1,2}(?::\d{2})?(?:\s+(?:утра|дня|вечера|ночи))?)[.!?]*$/i, "")
+    .trim().replace(/[.!?]+$/, "");
+}
+
+function normalizeIsoDate(value: string): string {
+  return new Date(value).toISOString();
 }

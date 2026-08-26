@@ -83,7 +83,7 @@ export class LocalOllamaInterpretationProviderError extends Error {
 }
 
 function systemPrompt(catalogVersion: string, capturedAt?: string): string {
-  return `Classify this transcription using ${catalogVersion}. Return only JSON matching the schema. For create_task, title must be the concise requested work and dueAt must be an ISO UTC date when a clear date is spoken; use Capture timestamp ${capturedAt ?? "provided by the application"} as the year policy and midnight UTC for date-only requests. Use create_task only for a clear explicit request, complete_task only for a clear request to complete a named Task, none/ordinary for ordinary content, none/ambiguous for unclear instructions, and unsupported for any other action. Never invent a date or title.`;
+  return `Classify this transcription using ${catalogVersion}. Return only JSON matching the schema. For create_task, title must be only the concise requested work, without command words or scheduling phrases. If a clear date or time is spoken, dueAt may contain an ISO UTC value, using Capture timestamp ${capturedAt ?? "provided by the application"} as the year policy and UTC as the capture timezone; date-only requests use midnight UTC. Never invent or guess a date, time, timezone, or title; omit dueAt when the spoken schedule is unclear. Use create_task only for a clear explicit request, complete_task only for a clear request to complete a named Task, none/ordinary for ordinary content, none/ambiguous for unclear instructions, and unsupported for any other action.`;
 }
 
 function isOllamaResponse(value: unknown): value is { readonly message: { readonly content: string } } {

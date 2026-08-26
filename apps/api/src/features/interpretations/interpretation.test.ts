@@ -73,6 +73,67 @@ describe("InterpretationService", () => {
     })).toMatchObject({ classification: "unsupported", rejectionReason: "malformed_model_output" });
   });
 
+  test("combines relative dates with explicit English and Russian times", () => {
+    const service = new InterpretationService(new MemoryRepository());
+
+    expect(service.evaluate({
+      ...input({ action: "create_task", title: "Buy milk" }, undefined, "transcription-noon"),
+      transcriptionText: "add task buy milk tomorrow at noon",
+    })).toMatchObject({ action: { dueAt: "2026-08-24T12:00:00.000Z" } });
+
+    expect(service.evaluate({
+      ...input({ action: "create_task", title: "Call Anna" }, undefined, "transcription-minutes"),
+      transcriptionText: "remind me to call Anna tomorrow at 17:30",
+    })).toMatchObject({ action: { dueAt: "2026-08-24T17:30:00.000Z" } });
+
+    expect(service.evaluate({
+      ...input({ action: "create_task", title: "Позвонить Анне" }, undefined, "transcription-russian"),
+      transcriptionText: "завтра в 5 вечера позвонить Анне",
+    })).toMatchObject({ action: { dueAt: "2026-08-24T17:00:00.000Z" } });
+  });
+
+  test("rejects an explicit but ambiguous spoken time and a contradictory model time", () => {
+    const service = new InterpretationService(new MemoryRepository());
+
+    expect(service.evaluate({
+      ...input({ action: "create_task", title: "Go running", dueAt: "2026-08-24T09:00:00.000Z" }, undefined, "transcription-ambiguous-time"),
+      transcriptionText: "add task go running tomorrow morning",
+    })).toMatchObject({ classification: "unsupported", rejectionReason: "malformed_model_output" });
+
+    expect(service.evaluate({
+      ...input({ action: "create_task", title: "Call Anna", dueAt: "2026-08-24T16:00:00.000Z" }, undefined, "transcription-wrong-time"),
+      transcriptionText: "remind me to call Anna tomorrow at 5 PM",
+    })).toMatchObject({ classification: "unsupported", rejectionReason: "malformed_model_output" });
+
+    expect(service.evaluate({
+      ...input({ action: "create_task", title: "Buy milk" }, undefined, "transcription-invalid-time"),
+      transcriptionText: "add task buy milk tomorrow morning",
+    })).toMatchObject({ classification: "unsupported", rejectionReason: "malformed_model_output" });
+  });
+
+  test("supports day-after-tomorrow and this-week weekday dates", () => {
+    const service = new InterpretationService(new MemoryRepository());
+
+    expect(service.evaluate({
+      ...input({ action: "create_task", title: "Buy milk" }, undefined, "transcription-day-after"),
+      transcriptionText: "add task buy milk the day after tomorrow",
+    })).toMatchObject({ action: { dueAt: "2026-08-25T00:00:00.000Z" } });
+
+    expect(service.evaluate({
+      ...input({ action: "create_task", title: "Call Anna" }, undefined, "transcription-this-week"),
+      transcriptionText: "remind me to call Anna this week Saturday",
+    })).toMatchObject({ action: { dueAt: "2026-08-29T00:00:00.000Z" } });
+  });
+
+  test("removes scheduling phrases when the provider includes them in the title", () => {
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Add a task to buy milk tomorrow at 5 PM" }),
+      transcriptionText: "add task buy milk tomorrow at 5 PM",
+    });
+
+    expect(interpretation.action).toMatchObject({ title: "buy milk" });
+  });
+
   test("classifies ordinary and ambiguous content without an action", () => {
     const service = new InterpretationService(new MemoryRepository());
 
