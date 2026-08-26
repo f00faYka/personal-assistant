@@ -97,7 +97,12 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
       } else {
         setSaveError(saveMessage);
       }
-      await refreshReviewVersion();
+      const refreshed = await refreshReviewVersion();
+      if (outcome.kind === "note" && refreshed?.outcome?.kind === "task" && refreshed.outcome.id === outcome.id) {
+        setDraft({ title: refreshed.outcome.title, dueAt: refreshed.outcome.dueAt ?? null });
+        setEditing(null);
+        setSaveError("This Note was converted to a Task elsewhere. The review was refreshed.");
+      }
     } finally {
       savingInFlight.current = false;
       setSaving(false);
@@ -156,6 +161,7 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
   return <ReviewShell onBack={onBack}>
     <Text style={styles.eyebrow}>DETAILED REVIEW</Text>
     <ReviewStateBanner review={state.review} />
+    {state.review.state === "failed" ? <Button label="Refresh processing status" onPress={() => void load()} /> : null}
     <Text style={styles.title}>{state.review.outcome?.kind === "task" ? "Task" : state.review.outcome?.kind === "note" ? "Note" : state.review.state === "failed" ? "Processing failed" : "Processing"}</Text>
     <Text style={styles.stateText}>Original source and processing history remain separate from editable result fields.</Text>
     {state.review.outcome ? <ReviewFields outcome={state.review.outcome} draft={draft} editing={editing} onEdit={setEditing} onChange={setDraft} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}

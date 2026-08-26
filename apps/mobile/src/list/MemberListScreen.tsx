@@ -299,7 +299,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
         {voiceRecorder && capture.status === "idle" ? <Pressable accessibilityRole="button" accessibilityLabel="Record a voice Capture" onPress={() => void startCapture()} style={styles.captureButton}><Text style={styles.captureButtonText}>Record a Capture</Text></Pressable> : null}
       </View>
       {voiceRecorder && capture.status !== "idle" ? <CapturePanel state={capture} recordingElapsedSeconds={recordingElapsedSeconds} recordingMetering={recordingMetering} recordingInterrupted={recordingInterrupted} onStop={() => void stopCapture()} onCancel={() => void cancelCapture()} onSubmit={(audio) => void submitCapture(audio)} /> : null}
-      {preview ? <ResultPreview state={preview} onSave={saveResultPreview} /> : null}
+      {preview ? <ResultPreview state={preview} onSave={saveResultPreview} onOpenReview={onOpenDetail} /> : null}
       {offlineDraftError ? <OfflineDraftErrorBanner message={offlineDraftError} /> : null}
       {state.status === "loading" && timelineItems.length === 0 ? <LoadingState /> : null}
       {state.status === "error" && timelineItems.length === 0 ? <ErrorState message={state.message} onRetry={() => void load()} /> : null}
@@ -323,12 +323,16 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
   );
 }
 
-function ResultPreview({ state, onSave }: { readonly state: PreviewState; readonly onSave: () => void }) {
+function ResultPreview({ state, onSave, onOpenReview }: { readonly state: PreviewState; readonly onSave: () => void; readonly onOpenReview: ((detailUrl: string) => void) | undefined }) {
   if (state.status === "processing") return <View accessibilityRole="alert" style={styles.previewPanel}><ActivityIndicator /><Text style={styles.captureTitle}>Processing your Capture…</Text><Text style={styles.captureText}>Your result will appear here when the server confirms it.</Text></View>;
-  if (state.status === "failed") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Capture processing failed</Text><Text style={styles.captureText}>Your original Capture remains stored on the server.</Text></View>;
-  if (state.status === "timed_out") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Processing is taking longer than expected</Text><Text style={styles.captureText}>The server has not confirmed a result. Your original Capture remains stored on the server.</Text></View>;
+  if (state.status === "failed") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Capture processing failed</Text><Text style={styles.captureText}>Your original Capture remains stored on the server.</Text><PreviewReviewButton captureId={state.captureId} onOpenReview={onOpenReview} /></View>;
+  if (state.status === "timed_out") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Processing is taking longer than expected</Text><Text style={styles.captureText}>The server has not confirmed a result. Your original Capture remains stored on the server.</Text><PreviewReviewButton captureId={state.captureId} onOpenReview={onOpenReview} /></View>;
   if (state.status === "saved") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Saved</Text><Text style={styles.captureText}>{previewTitle(state.item)}</Text></View>;
   return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.previewEyebrow}>RESULT</Text><Text style={styles.captureTitle}>{previewTitle(state.item)}</Text>{state.item.kind === "note" ? <Text style={styles.captureText}>{state.item.content}</Text> : state.item.dueAt ? <Text style={styles.captureText}>Due {formatDate(state.item.dueAt)}</Text> : null}<Pressable accessibilityRole="button" accessibilityLabel="Save result" onPress={onSave} style={styles.retry}><Text style={styles.retryText}>Save</Text></Pressable></View>;
+}
+
+function PreviewReviewButton({ captureId, onOpenReview }: { readonly captureId: string; readonly onOpenReview: ((detailUrl: string) => void) | undefined }) {
+  return onOpenReview ? <Pressable accessibilityRole="button" accessibilityLabel="Open Capture review" onPress={() => onOpenReview(`/captures/${captureId}/review`)} style={styles.retry}><Text style={styles.retryText}>Open review</Text></Pressable> : null;
 }
 
 function previewTitle(item: PreviewItem): string {

@@ -291,6 +291,26 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
+  test("resolves a stale Note review when the Note was converted before saving", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 0 }) }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "Note changed elsewhere" }), { status: 409 }))
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "note-1", title: "Call the dentist", status: "open", version: 1 }) }));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen(vi.fn());
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Note" }).props.onPress(); });
+    await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Call the dentist tomorrow"); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("This Note was converted to a Task elsewhere. The review was refreshed.");
+    expect(renderer.root.findByProps({ accessibilityRole: "alert" })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Title" })).toBeDefined();
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Edit Note" })).toHaveLength(0);
+    expect(textContent(renderer)).not.toContain("Call the dentist tomorrow");
+    renderer.unmount();
+  });
+
   test("recognizes a converted Task when the mutation response is lost and detail refresh succeeds", async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 0 }) }))
@@ -374,6 +394,21 @@ describe("ReviewScreen", () => {
     expect(textContent(renderer)).toContain("provider offline");
     expect(textContent(renderer)).toContain("Review the original Capture and try again when processing is available.");
     expect(textContent(renderer)).not.toContain("Task");
+    renderer.unmount();
+  });
+
+  test("offers a refresh action for failed processing", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith(null, { state: "failed", failure: { stage: "transcription", message: "provider offline" } }) }))
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 0 }) }));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen(vi.fn());
+
+    expect(renderer.root.findByProps({ accessibilityLabel: "Refresh processing status" })).toBeDefined();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Refresh processing status" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Note");
+    expect(textContent(renderer)).not.toContain("Processing failed");
     renderer.unmount();
   });
 
