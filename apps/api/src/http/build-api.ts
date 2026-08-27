@@ -11,6 +11,8 @@ import type { MemberItemsService } from "../features/items/items.js";
 import { registerItemRoutes } from "../features/items/item-routes.js";
 import type { OfflineDraftService } from "../features/offline-drafts/offline-draft.js";
 import { registerOfflineDraftRoutes } from "../features/offline-drafts/offline-draft-routes.js";
+import type { SpaceService } from "../features/spaces/space.js";
+import { registerSpaceRoutes } from "../features/spaces/space-routes.js";
 
 export interface BuildApiOptions extends FastifyServerOptions {
   readonly captureService?: CaptureService;
@@ -20,6 +22,7 @@ export interface BuildApiOptions extends FastifyServerOptions {
   readonly taskService?: TaskService;
   readonly memberItemsService?: MemberItemsService;
   readonly offlineDraftService?: OfflineDraftService;
+  readonly spaceService?: SpaceService;
 }
 
 export function buildApi(options: BuildApiOptions = {}): FastifyInstance {
@@ -37,6 +40,7 @@ export function buildApi(options: BuildApiOptions = {}): FastifyInstance {
   if (options.taskService) registerTaskRoutes(application, options.taskService);
   if (options.memberItemsService) registerItemRoutes(application, options.memberItemsService);
   if (options.offlineDraftService) registerOfflineDraftRoutes(application, options.offlineDraftService);
+  if (options.spaceService) registerSpaceRoutes(application, options.spaceService);
 
   return application;
 }

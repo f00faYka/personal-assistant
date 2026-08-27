@@ -7,6 +7,7 @@ export interface TaskListItem {
   readonly state: "open" | "completed";
   readonly createdAt: string;
   readonly detailUrl: string;
+  readonly spaceId?: string;
 }
 
 export interface NoteListItem {
@@ -17,6 +18,7 @@ export interface NoteListItem {
   readonly state: "none" | "needs_review";
   readonly createdAt: string;
   readonly detailUrl: string;
+  readonly spaceId?: string;
 }
 
 export interface CaptureListItem {
@@ -56,6 +58,7 @@ export interface ListRow {
   readonly taskStatus: "open" | "completed" | null;
   readonly content: string | null;
   readonly noteState: "none" | "needs_review" | null;
+  readonly primarySpaceId: string | null;
 }
 
 export interface MemberItemsRepository {
@@ -103,12 +106,14 @@ function toListItem(row: ListRow): MemberListItem {
     if (row.outcomeId === null || row.title === null || row.taskStatus === null) throw new Error(`Invalid Task list row: ${row.captureId}`);
     return {
       kind: "task", id: row.outcomeId, captureId: row.captureId, title: row.title,
-      ...(row.dueAt === null ? {} : { dueAt: row.dueAt }), state: row.taskStatus, createdAt: row.createdAt, detailUrl,
+      ...(row.dueAt === null ? {} : { dueAt: row.dueAt }), ...(row.primarySpaceId === null ? {} : { spaceId: row.primarySpaceId }),
+      state: row.taskStatus, createdAt: row.createdAt, detailUrl,
     };
   }
   if (row.outcomeKind === "note") {
     if (row.outcomeId === null || row.content === null || row.noteState === null) throw new Error(`Invalid Note list row: ${row.captureId}`);
-    return { kind: "note", id: row.outcomeId, captureId: row.captureId, content: row.content, state: row.noteState, createdAt: row.createdAt, detailUrl };
+    return { kind: "note", id: row.outcomeId, captureId: row.captureId, content: row.content, state: row.noteState,
+      ...(row.primarySpaceId === null ? {} : { spaceId: row.primarySpaceId }), createdAt: row.createdAt, detailUrl };
   }
   const state = row.transcriptionStatus === "failed" || row.interpretationStatus === "failed"
     ? "failed"
