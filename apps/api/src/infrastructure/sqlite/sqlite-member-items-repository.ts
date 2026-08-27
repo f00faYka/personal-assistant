@@ -14,7 +14,7 @@ export class SqliteMemberItemsRepository implements MemberItemsRepository {
       tr.status AS transcriptionStatus, tr.error AS transcriptionError,
       ij.status AS interpretationStatus,
       o.kind AS outcomeKind, o.id AS outcomeId, o.title, o.due_at AS dueAt,
-      o.status AS taskStatus, o.content, o.review_state AS noteState
+      o.status AS taskStatus, o.content, o.review_state AS noteState, o.primary_space_id AS primarySpaceId
       FROM captures c LEFT JOIN transcriptions tr ON tr.capture_id = c.id
       LEFT JOIN interpretation_jobs ij ON ij.transcription_id = tr.id
       LEFT JOIN interpretations i ON i.transcription_id = tr.id

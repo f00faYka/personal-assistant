@@ -5,7 +5,7 @@ import { MemberItemsService, type ListRow } from "./items.js";
 const base = (captureId: string, createdAt: string): ListRow => ({
   captureId, memberId: "member-1", createdAt, captureState: "stored",
   transcriptionStatus: "succeeded", transcriptionError: null,
-  outcomeKind: null, outcomeId: null, title: null, dueAt: null, taskStatus: null, content: null, noteState: null,
+  outcomeKind: null, outcomeId: null, title: null, dueAt: null, taskStatus: null, content: null, noteState: null, primarySpaceId: null,
 });
 
 describe("MemberItemsService", () => {

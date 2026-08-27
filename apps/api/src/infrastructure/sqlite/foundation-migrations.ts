@@ -170,4 +170,22 @@ export const foundationMigrations: readonly Migration[] = [
     name: "preserve transcription language",
     sql: "ALTER TABLE transcriptions ADD COLUMN language TEXT",
   },
+  {
+    version: 11,
+    name: "create Spaces and primary item assignments",
+    sql: `
+      CREATE TABLE spaces (
+        id TEXT PRIMARY KEY,
+        member_id TEXT NOT NULL,
+        name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+        parent_space_id TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE (member_id, id),
+        FOREIGN KEY (member_id, parent_space_id) REFERENCES spaces(member_id, id)
+      ) STRICT;
+      ALTER TABLE outcomes ADD COLUMN primary_space_id TEXT
+        REFERENCES spaces(id);
+      CREATE INDEX outcomes_primary_space_index ON outcomes(primary_space_id);
+    `,
+  },
 ];
