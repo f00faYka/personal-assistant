@@ -35,11 +35,36 @@ A durable human-readable item derived from a Capture or its provenance lineage. 
 
 AI may add editable tags and a caption to a Note, but ordinary Note content does not become a Task or Reminder without a Direct instruction or explicit Member action.
 
+In later collaboration phases, a Note may be explicitly shared or exposed through a shared shortcut. Sharing the Note does not automatically expose its Capture, audio, transcription, Correction, or AI interpretation.
+
 **Task**:
 An actionable commitment created by a Direct instruction or explicit Member action from a Capture or Note. A Task may have an owner, due information, and private or explicitly shared visibility. Its core information includes its title, details, status, source connection, Plan connection, and optional Reminder. In the first MVP, similar Task-creating Direct instructions or explicit Member actions create separate Tasks; AI does not detect, suggest, merge, or deduplicate them. A Member may explicitly combine Tasks. Later phases may add AI duplicate assistance. A later change to a completed Task creates new follow-up work rather than reopening the completed Task automatically.
 _Avoid_: Todo
 
-For the current product scope, Tasks are the first durable item type that may be explicitly shared. A Task's creator is immutable provenance; its owner is the Member responsible for it and may be explicitly reassigned. A newly created Task is owned by its creator by default. The owner may share the Task with the Private Group or withdraw that sharing. Other Active Members may view a Shared Task and edit its practical details, progress, status, and due information, but only the current owner may change its owner or sharing state. A Shared Task's due date and task-level Reminder are group-visible, while each Member's notification preferences and acknowledgment state remain private. Sharing a Task does not expose its private Capture, Source content, Correction, AI interpretation, or other provenance unless those items are shared separately.
+For the current product scope, Tasks and Notes are private unless explicitly shared in a later collaboration phase. A Task's creator is immutable provenance; its owner is the Member responsible for it and may be explicitly reassigned. A newly created Task is owned by its creator by default. The owner may share the Task with the Private Group or withdraw that sharing. Other Active Members may view a Shared Task and mark it complete or add common information, but they may not rewrite its original data; only the current owner may change its owner or sharing state. Sharing a Task does not expose its private Capture, Source content, Correction, AI interpretation, or other provenance unless those items are shared separately.
+
+**Space**:
+A user-defined category in a strict tree that provides the primary organizational place for a Task or Note. A Space may contain direct Tasks and Notes and child Spaces; it is a user-facing context, not a real-world entity or physical storage container.
+_Avoid_: Folder, Group, Project when referring to the category tree
+
+**Entity**:
+An optional named object that a Member links to Tasks or Notes for later search and alternate views; it is not a node in the Space tree. Initial semantic hints are Person, Place, Organization, and Object, without user-defined schemas in the MVP.
+_Avoid_: Project when the intended meaning is a category in the Space tree
+
+**Tag**:
+A global, flat, optional marker on a Task or Note used for lightweight cross-cutting classification. A Tag is not a Space or Entity, and Task importance is a separate user-controlled property.
+
+**SuggestedTag / SuggestedEntity**:
+A temporary AI proposal that is not a permanent Tag or Entity until the Member accepts it. It appears in `Требует решения`, never blocks creation, and rejection dismisses that proposal without becoming a permanent negative preference.
+
+**Importance**:
+A user-controlled Task property describing significance independently of its due time. Importance is not urgency and is not represented as a Tag.
+
+**Shared shortcut**:
+An explicit shared reference to a private Task or Note in the system shared Space `Общее`. It points to the original object without exposing its private Space or private organizational metadata.
+
+**Unassigned object**:
+A Task or Note whose primary Space is absent. It is shown in a root-level unassigned section, not stored in a deletable system Space.
 
 **Reminder**:
 A scheduled notification or trigger attached to a Task or Note. A Reminder is scheduling metadata, not a separate source-content item; it requires a Direct instruction or explicit Member action, and an actionable reminder request produces a Task with a Reminder attached. A Reminder can be fired while its Task remains open.
