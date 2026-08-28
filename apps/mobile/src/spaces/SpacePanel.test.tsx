@@ -1,4 +1,4 @@
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, test, vi } from "vitest";
 
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -69,8 +69,24 @@ describe("SpacePanel", () => {
     expect(renderer.root.findAllByType(Pressable).filter((node) => node.props.accessibilityLabel === "Restore Space Kitchen")).toHaveLength(0);
     renderer.unmount();
   });
+
+  test("flat mode excludes an unrelated top-level Space from selected content", async () => {
+    const homeFlat = { ...flat, items: [{ ...flat.items[0], path: "Home", content: "Home note" }] };
+    const client = makeClient({ list: vi.fn().mockResolvedValue([home, work]), read: vi.fn().mockResolvedValueOnce(hierarchical).mockResolvedValueOnce(homeFlat) });
+    const renderer = render(client);
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Organize Spaces" }).props.onPress(); });
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Select Space Home" }).props.onPress(); });
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Flat Space view" }).props.onPress(); });
+    const contents = renderer.root.findByProps({ accessibilityLabel: "Selected Space contents" });
+    expect(textContent(contents)).toContain("Home note");
+    expect(textContent(contents)).not.toContain("Work");
+    renderer.unmount();
+  });
 });
 
 function makeClient(overrides: Partial<SpacesClient> = {}): SpacesClient { return { list: vi.fn(), create: vi.fn(), read: vi.fn(), update: vi.fn(), archive: vi.fn(), restore: vi.fn(), remove: vi.fn(), assign: vi.fn(), ...overrides }; }
 function render(client: SpacesClient, onSelect = vi.fn()): ReactTestRenderer { let renderer!: ReactTestRenderer; act(() => { renderer = create(<SpacePanel client={client} memberId="member-1" selectedSpaceId={null} onSelect={onSelect} onSpacesChanged={vi.fn()} />); }); return renderer; }
-function textContent(renderer: ReactTestRenderer): string { return renderer.root.findAllByType(Text).map((node) => String(node.props.children ?? "")).join(" "); }
+function textContent(renderer: ReactTestRenderer | ReactTestInstance): string {
+  const root = "root" in renderer ? renderer.root : renderer;
+  return root.findAllByType(Text).map((node) => String(node.props.children ?? "")).join(" ");
+}

@@ -26,6 +26,12 @@ export function SpacePanel({ client, memberId, selectedSpaceId, onSelect, onSpac
   const [activeSpaceId, setActiveSpaceId] = useState<string | null>(selectedSpaceId);
 
   const tree = useMemo(() => buildTree(spaces), [spaces]);
+  const flatSpaces = useMemo(
+    () => activeSpaceId === null
+      ? spaces.filter((space) => !space.archivedAt)
+      : spaces.filter((space) => !space.archivedAt && (space.id === activeSpaceId || isDescendant(space, activeSpaceId, spaces))),
+    [activeSpaceId, spaces],
+  );
   const archivedRoots = spaces.filter((space) => space.archivedAt && !isArchivedDescendant(space, spaces));
 
   const publish = (next: readonly Space[]) => {
@@ -198,7 +204,7 @@ export function SpacePanel({ client, memberId, selectedSpaceId, onSelect, onSpac
           </Pressable>
           {mode === "hierarchical"
             ? tree.map((node) => <SpaceRow key={node.space.id} node={node} depth={0} {...rowProps} />)
-            : spaces.filter((space) => !space.archivedAt).map((space) => <SpaceRow key={space.id} node={{ space, children: [] }} depth={0} path={spacePath(space, spaces)} {...rowProps} />)}
+            : flatSpaces.map((space) => <SpaceRow key={space.id} node={{ space, children: [] }} depth={0} path={spacePath(space, spaces)} {...rowProps} />)}
           {selectedView ? <SpaceContents view={selectedView} mode={mode} /> : null}
           {archivedRoots.length > 0 ? <View>
             <Text style={{ fontWeight: "700", marginTop: 12 }}>Archived Spaces</Text>
