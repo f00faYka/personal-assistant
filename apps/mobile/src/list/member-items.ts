@@ -7,6 +7,7 @@ export interface TaskListItem {
   readonly state: "open" | "completed";
   readonly createdAt: string;
   readonly detailUrl: string;
+  readonly spaceId?: string;
 }
 
 export interface NoteListItem {
@@ -17,6 +18,7 @@ export interface NoteListItem {
   readonly state: "none" | "needs_review";
   readonly createdAt: string;
   readonly detailUrl: string;
+  readonly spaceId?: string;
 }
 
 export interface CaptureListItem {

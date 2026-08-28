@@ -9,6 +9,8 @@ import type { OfflineDraft, OfflineDraftStore } from "../offline/offline-drafts"
 import type { OfflineDraftSynchronizationResult, OfflineDraftSyncClient } from "../offline/synchronize-offline-drafts";
 import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, paginationStateFromError, type ListState, type MemberListItem } from "./member-items";
 import { beginPreview, expirePreview, resolvePreview, savePreview, timeOutPreview, type PreviewItem, type PreviewState } from "../preview/result-preview";
+import { SpacePanel } from "../spaces/SpacePanel";
+import { createSpacesClient, type Space } from "../spaces/spaces";
 
 interface MemberListScreenProps {
   readonly apiBaseUrl: string;
@@ -31,9 +33,11 @@ type CaptureState =
 type TimelineItem =
   | { readonly kind: "offline_draft"; readonly draft: OfflineDraft }
   | { readonly kind: "server_item"; readonly item: MemberListItem };
+type AssignableItem = Extract<MemberListItem, { kind: "task" | "note" }>;
 
 export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceRecorder, recordingMetering, recordingInterrupted = false, captureSubmitter, offlineDraftStore, offlineDraftSyncClient }: MemberListScreenProps) {
   const client = useMemo(() => createMemberItemsClient(apiBaseUrl), [apiBaseUrl]);
+  const spacesClient = useMemo(() => createSpacesClient(apiBaseUrl), [apiBaseUrl]);
   const [state, setState] = useState<ListState>(initialListState);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -44,6 +48,12 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0);
+  const [spaces, setSpaces] = useState<readonly Space[]>([]);
+  const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
+  const [assigningItemId, setAssigningItemId] = useState<string | null>(null);
+  const [spaceError, setSpaceError] = useState<string | null>(null);
+  const [failedAssignment, setFailedAssignment] = useState<{ readonly item: AssignableItem; readonly spaceId: string | null } | null>(null);
+  const assignedCaptures = useRef(new Set<string>());
   const submissionInFlight = useRef(false);
   const captureKey = useRef<string | null>(null);
   const captureCreatedAt = useRef<string | null>(null);
@@ -247,7 +257,14 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
         const page = await client.list(memberId);
         if (cancelled) return;
         setState(listStateFromPage(page));
-        setPreview((current) => current ? resolvePreview(current, page.items, Date.now()) : current);
+        setPreview((current) => {
+          const next = current ? resolvePreview(current, page.items, Date.now()) : current;
+          if (next?.status === "preview" && selectedSpaceId !== null && !assignedCaptures.current.has(next.item.captureId)) {
+            assignedCaptures.current.add(next.item.captureId);
+            void spacesClient.assign(next.item.id, next.item.kind, memberId, selectedSpaceId).then(() => void load(true)).catch(() => { assignedCaptures.current.delete(next.item.captureId); });
+          }
+          return next;
+        });
       } catch {
         // Keep the processing state honest; the next poll can recover a transient read failure.
       }
@@ -255,7 +272,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     };
     void poll();
     return () => { cancelled = true; };
-  }, [client, memberId, preview]);
+  }, [client, load, memberId, preview, selectedSpaceId, spacesClient]);
 
   useEffect(() => {
     if (!preview || preview.status !== "preview") return;
@@ -273,6 +290,13 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     setPreview((current) => current ? savePreview(current) : current);
     void load(true);
   }, [load]);
+
+  const assignItem = useCallback(async (item: AssignableItem, spaceId: string | null) => {
+    setAssigningItemId(item.id); setSpaceError(null); setFailedAssignment(null);
+    try { await spacesClient.assign(item.id, item.kind, memberId, spaceId); await load(true); }
+    catch (cause) { setSpaceError(cause instanceof Error ? cause.message : "Unable to update Space assignment"); setFailedAssignment({ item, spaceId }); }
+    finally { setAssigningItemId(null); }
+  }, [load, memberId, spacesClient]);
 
   useEffect(() => {
     if (capture.status !== "recording") {
@@ -298,6 +322,8 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
         <Text style={styles.title}>Your items</Text>
         {voiceRecorder && capture.status === "idle" ? <Pressable accessibilityRole="button" accessibilityLabel="Record a voice Capture" onPress={() => void startCapture()} style={styles.captureButton}><Text style={styles.captureButtonText}>Record a Capture</Text></Pressable> : null}
       </View>
+      <SpacePanel client={spacesClient} memberId={memberId} selectedSpaceId={selectedSpaceId} onSelect={setSelectedSpaceId} onSpacesChanged={setSpaces} />
+      {spaceError && failedAssignment ? <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{spaceError}</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry Space assignment" onPress={() => void assignItem(failedAssignment.item, failedAssignment.spaceId)}><Text style={styles.retryText}>Retry assignment</Text></Pressable></View> : null}
       {voiceRecorder && capture.status !== "idle" ? <CapturePanel state={capture} recordingElapsedSeconds={recordingElapsedSeconds} recordingMetering={recordingMetering} recordingInterrupted={recordingInterrupted} onStop={() => void stopCapture()} onCancel={() => void cancelCapture()} onSubmit={(audio) => void submitCapture(audio)} /> : null}
       {preview ? <ResultPreview state={preview} onSave={saveResultPreview} onOpenReview={onOpenDetail} /> : null}
       {offlineDraftError ? <OfflineDraftErrorBanner message={offlineDraftError} /> : null}
@@ -316,7 +342,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
           contentContainerStyle={styles.list}
           renderItem={({ item: entry }) => entry.kind === "offline_draft"
             ? <OfflineDraftCard draft={entry.draft} sync={offlineDraftSync[entry.draft.draftId]} deleting={deletingDraftId === entry.draft.draftId} onDelete={() => void deleteOfflineDraft(entry.draft.draftId)} onSync={() => retryOfflineDraft(entry.draft.draftId)} />
-            : <ListCard item={entry.item} onPress={onOpenDetail} />}
+            : <ListCard item={entry.item} spaces={spaces} assigning={assigningItemId === entry.item.id} onAssign={(item, spaceId) => void assignItem(item, spaceId)} onPress={onOpenDetail} />}
         />
       ) : null}
     </SafeAreaView>
@@ -371,7 +397,7 @@ function OfflineDraftCard({ draft, sync, deleting, onDelete, onSync }: { readonl
   </View>;
 }
 
-function ListCard({ item, onPress }: { readonly item: MemberListItem; readonly onPress: ((detailUrl: string) => void) | undefined }) {
+function ListCard({ item, spaces, assigning, onAssign, onPress }: { readonly item: MemberListItem; readonly spaces: readonly Space[]; readonly assigning: boolean; readonly onAssign: (item: AssignableItem, spaceId: string | null) => void; readonly onPress: ((detailUrl: string) => void) | undefined }) {
   const label = listItemLabel(item);
   const title = item.kind === "task" ? item.title : item.kind === "note" ? item.content : item.state === "failed" ? "Capture processing failed" : "Processing your Capture";
   return (
@@ -381,6 +407,7 @@ function ListCard({ item, onPress }: { readonly item: MemberListItem; readonly o
       {item.kind === "task" && item.dueAt ? <Text style={styles.detail}>Due {formatDate(item.dueAt)}</Text> : null}
       {item.kind === "note" && item.state === "needs_review" ? <Text style={styles.reviewHint}>Review this item to confirm what it means.</Text> : null}
       {item.kind === "capture" && item.state === "failed" ? <Text style={styles.reviewHint}>Open review to inspect the failure.</Text> : null}
+      {item.kind !== "capture" ? <View><Text style={styles.spaceLabel}>{assigning ? "Updating Space…" : item.spaceId ? `Space: ${spaces.find((space) => space.id === item.spaceId)?.name ?? "Assigned"}` : "Unassigned"}</Text><Pressable accessibilityRole="button" accessibilityLabel={`Assign ${label} to Unassigned`} disabled={assigning} onPress={() => onAssign(item, null)}><Text style={styles.spaceAction}>Move to Unassigned</Text></Pressable>{spaces.map((space) => <Pressable key={space.id} accessibilityRole="button" accessibilityLabel={`Assign ${label} to ${space.name}`} disabled={assigning} onPress={() => onAssign(item, space.id)}><Text style={styles.spaceAction}>Move to {space.name}</Text></Pressable>)}</View> : null}
     </Pressable>
   );
 }
@@ -406,5 +433,6 @@ function formatDuration(totalSeconds: number): string { const minutes = Math.flo
 const cardTitleStyle = { color: "#24221F", fontSize: 18, fontWeight: "600" as const, lineHeight: 24 };
 
 const styles = StyleSheet.create({
+  spaceLabel: { color: "#716B64", fontSize: 13, marginTop: 12 }, spaceAction: { color: "#7A5C36", fontSize: 13, fontWeight: "600", marginTop: 8 },
   safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, header: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 34, fontWeight: "700", marginTop: 6 }, captureButton: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 12, paddingHorizontal: 16, paddingVertical: 11, alignSelf: "flex-start" }, captureButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, actionButton: { alignItems: "center", flex: 1, height: 48, justifyContent: "center", paddingHorizontal: 12 }, actionPrimaryButton: { alignSelf: "stretch", marginTop: 0 }, actionButtonContent: { alignItems: "center", flexDirection: "row", gap: 6 }, actionIcon: { fontSize: 16, fontWeight: "700", lineHeight: 18 }, capturePanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewPanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewEyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, recordingPanel: { backgroundColor: "#FCE8E5", borderColor: "#E5A49B", borderWidth: 1 }, captureTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, recordingTitle: { color: "#B43C32", fontSize: 17, fontWeight: "700" }, recordingText: { color: "#8C3D25", fontSize: 15, lineHeight: 21, marginTop: 6 }, meteringStatus: { color: "#8C3D25", fontSize: 12, lineHeight: 18, marginTop: 6 }, recordingHeader: { alignItems: "center", flexDirection: "row", gap: 8 }, recordingDot: { backgroundColor: "#C44739", borderRadius: 5, height: 10, width: 10 }, recordingTimer: { color: "#B43C32", fontSize: 16, fontVariant: ["tabular-nums"], marginLeft: "auto" }, waveform: { alignItems: "center", flexDirection: "row", gap: 3, height: 44, justifyContent: "center", marginTop: 14 }, recordingWaveform: { backgroundColor: "#F8D5D0", borderRadius: 14 }, waveformBar: { backgroundColor: "#D9A88A", borderRadius: 2, minHeight: 6, width: 4 }, recordingWaveformBar: { backgroundColor: "#E08B80" }, recordingWaveformBarActive: { backgroundColor: "#B43C32" }, captureText: { color: "#716B64", fontSize: 15, lineHeight: 21, marginTop: 6 }, captureActions: { alignItems: "stretch", flexDirection: "row", gap: 10, marginTop: 14 }, secondaryButton: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10 }, secondaryButtonText: { color: "#5D5146", fontSize: 15, fontWeight: "600" }, recordingButton: { backgroundColor: "#B43C32" }, recordingButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, recordingSecondaryButton: { borderColor: "#B43C32" }, recordingSecondaryButtonText: { color: "#B43C32", fontSize: 15, fontWeight: "600" }, recordingIcon: { color: "#B43C32", fontSize: 16, fontWeight: "700", lineHeight: 18 }, list: { padding: 16, paddingTop: 4, gap: 12 }, card: { backgroundColor: "#FFFFFF", borderColor: "#E5E0D8", borderRadius: 16, borderWidth: 1, padding: 18 }, offlineDraftCard: { backgroundColor: "#FFF8E8", borderColor: "#CFAE70", borderStyle: "dashed" }, offlineDraftLabel: { color: "#8C641F", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, offlineDraftStatus: { color: "#8C641F", fontSize: 14, fontWeight: "600", marginTop: 8 }, retryDraft: { color: "#8C641F", fontSize: 14, fontWeight: "700", marginTop: 14 }, deleteDraft: { color: "#8C3D25", fontSize: 14, fontWeight: "600", marginTop: 14 }, cardPressed: { opacity: 0.7 }, cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }, label: { color: "#7A5C36", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, date: { color: "#908A82", fontSize: 12 }, detail: { color: "#716B64", fontSize: 14, marginTop: 8 }, reviewHint: { color: "#A15B2A", fontSize: 14, marginTop: 8 }, errorBanner: { backgroundColor: "#FCE8DF", marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 10 }, errorText: { color: "#8C3D25", fontSize: 14 }, state: { alignItems: "center", flex: 1, justifyContent: "center", padding: 32 }, stateTitle: { color: "#24221F", fontSize: 20, fontWeight: "700", textAlign: "center" }, stateText: { color: "#716B64", fontSize: 16, lineHeight: 23, marginTop: 8, maxWidth: 300, textAlign: "center" }, retry: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 20, paddingHorizontal: 20, paddingVertical: 12 }, retryText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" }, footer: { padding: 16 },
 });
