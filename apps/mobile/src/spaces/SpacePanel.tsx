@@ -70,12 +70,13 @@ export function SpacePanel({ client, memberId, selectedSpaceId, onSelect, onSpac
       setSelectedView(null);
       return;
     }
+    setSelectedView(null);
     setLoading(true);
     setError(null);
     try {
       setSelectedView(await client.read(memberId, spaceId, mode));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to load Space contents");
+      setError(`Unable to load Space contents: ${cause instanceof Error ? cause.message : "unknown error"}`);
     } finally {
       setLoading(false);
     }
@@ -84,11 +85,12 @@ export function SpacePanel({ client, memberId, selectedSpaceId, onSelect, onSpac
   const changeMode = async (nextMode: SpaceMode) => {
     setMode(nextMode);
     if (activeSpaceId === null) return;
+    setSelectedView(null);
     setLoading(true);
     try {
       setSelectedView(await client.read(memberId, activeSpaceId, nextMode));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to load Space contents");
+      setError(`Unable to load Space contents: ${cause instanceof Error ? cause.message : "unknown error"}`);
     } finally {
       setLoading(false);
     }
@@ -100,11 +102,12 @@ export function SpacePanel({ client, memberId, selectedSpaceId, onSelect, onSpac
     try {
       const updated = await action();
       if (updated) {
-        publish(updateLocalSpaces(spaces, updated));
-        if (updated.archivedAt && activeSpaceId === updated.id) {
+        const activeSpace = activeSpaceId === null ? undefined : spaces.find((space) => space.id === activeSpaceId);
+        if (updated.archivedAt && activeSpace && (activeSpace.id === updated.id || isDescendant(activeSpace, updated.id, spaces))) {
           setActiveSpaceId(null);
           onSelect(null);
         }
+        publish(updateLocalSpaces(spaces, updated));
       } else {
         await load();
       }

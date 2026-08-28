@@ -100,6 +100,52 @@ describe("SpacePanel", () => {
     expect(textContent(renderer)).toContain("Unable to refresh Space contents: offline");
     renderer.unmount();
   });
+
+  test("clears old content before a failed Space selection read", async () => {
+    const client = makeClient({
+      list: vi.fn().mockResolvedValue([home, work]),
+      read: vi.fn().mockResolvedValueOnce(hierarchical).mockRejectedValueOnce(new Error("offline")),
+    });
+    const renderer = render(client);
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Organize Spaces" }).props.onPress(); });
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Select Space Home" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("Buy milk");
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Select Space Work" }).props.onPress(); });
+    expect(textContent(renderer)).not.toContain("Buy milk");
+    expect(textContent(renderer)).toContain("Unable to load Space contents: offline");
+    renderer.unmount();
+  });
+
+  test("clears old content before a failed mode-change read", async () => {
+    const client = makeClient({
+      list: vi.fn().mockResolvedValue([home]),
+      read: vi.fn().mockResolvedValueOnce(hierarchical).mockRejectedValueOnce(new Error("offline")),
+    });
+    const renderer = render(client);
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Organize Spaces" }).props.onPress(); });
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Select Space Home" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("Buy milk");
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Flat Space view" }).props.onPress(); });
+    expect(textContent(renderer)).not.toContain("Buy milk");
+    expect(textContent(renderer)).toContain("Unable to load Space contents: offline");
+    renderer.unmount();
+  });
+
+  test("clears an active descendant selection when its ancestor is archived", async () => {
+    const onSelect = vi.fn();
+    const client = makeClient({
+      list: vi.fn().mockResolvedValue([home, child]),
+      read: vi.fn().mockResolvedValueOnce({ ...hierarchical, space: child, path: "Home / Kitchen" }),
+      archive: vi.fn().mockResolvedValue({ ...home, archivedAt: "later" }),
+    });
+    const renderer = render(client, onSelect);
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Organize Spaces" }).props.onPress(); });
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Select Space Kitchen" }).props.onPress(); });
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Archive Space Home" }).props.onPress(); });
+    expect(onSelect).toHaveBeenLastCalledWith(null);
+    expect(textContent(renderer)).not.toContain("Home / Kitchen");
+    renderer.unmount();
+  });
 });
 
 function makeClient(overrides: Partial<SpacesClient> = {}): SpacesClient { return { list: vi.fn(), create: vi.fn(), read: vi.fn(), update: vi.fn(), archive: vi.fn(), restore: vi.fn(), remove: vi.fn(), assign: vi.fn(), ...overrides }; }
