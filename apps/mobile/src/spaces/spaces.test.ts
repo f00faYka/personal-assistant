@@ -28,7 +28,7 @@ describe("Spaces client", () => {
   test("reads a view and sends Space lifecycle operations", async () => {
     const tree = { space: { ...space, archivedAt: undefined }, path: "Home", children: [], items: [] };
     const fetcher = vi.fn<SpacesFetcher>()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ space: tree, mode: "flat" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...tree, mode: "flat" }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ space: { ...space, name: "House" } }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ space: { ...space, archivedAt: "later" } }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ space }), { status: 200 }))

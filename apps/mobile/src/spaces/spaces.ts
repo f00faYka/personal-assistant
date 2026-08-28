@@ -48,8 +48,8 @@ export function createSpacesClient(apiBaseUrl: string, fetcher: SpacesFetcher = 
       const response = await fetcher(`${apiBaseUrl}/spaces/${encodeURIComponent(spaceId)}?${query}`);
       if (!response.ok) throw new Error(`Unable to load Space (${response.status})`);
       const body: unknown = await response.json();
-      if (!isRecord(body) || !isTree(body.space)) throw new Error("Invalid Space response");
-      return body.space;
+      if (!isTree(body)) throw new Error("Invalid Space response");
+      return body;
     },
     async update(memberId, spaceId, changes) {
       const response = await fetcher(`${apiBaseUrl}/spaces/${encodeURIComponent(spaceId)}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ memberId, ...changes }) });

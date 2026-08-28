@@ -20,6 +20,7 @@ describe("SpacePanel", () => {
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Organize Spaces" }).props.onPress(); });
     await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Office"); }); await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Create top-level Space" }).props.onPress(); });
     expect(client.create).toHaveBeenCalledWith("member-1", "Office", undefined); expect(onSelect).toHaveBeenCalledWith("space-4");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Select Space Office" })).toBeDefined();
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Unassigned root" }).props.onPress(); }); expect(onSelect).toHaveBeenLastCalledWith(null); renderer.unmount();
   });
 
@@ -31,13 +32,14 @@ describe("SpacePanel", () => {
       .mockResolvedValueOnce({ ...hierarchical, children: [], items: [] })
       .mockResolvedValueOnce(hierarchical)
       .mockResolvedValue(hierarchical);
-    const client = makeClient({ list: vi.fn().mockResolvedValue([home, work, child]), read, update: vi.fn().mockResolvedValue({ ...home, parentId: work.id }), archive: vi.fn().mockResolvedValue({ ...home, archivedAt: "later" }), restore: vi.fn().mockResolvedValue(home), remove: vi.fn().mockResolvedValue(undefined) }); const renderer = render(client);
+    const onSelect = vi.fn();
+    const client = makeClient({ list: vi.fn().mockResolvedValue([home, work, child]), read, update: vi.fn().mockResolvedValue({ ...home, parentId: work.id }), archive: vi.fn().mockResolvedValue({ ...home, archivedAt: "later" }), restore: vi.fn().mockResolvedValue(home), remove: vi.fn().mockResolvedValue(undefined) }); const renderer = render(client, onSelect);
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Organize Spaces" }).props.onPress(); });
     await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Select Space Home" }).props.onPress(); }); expect(read).toHaveBeenLastCalledWith("member-1", "space-1", "hierarchical"); expect(textContent(renderer)).toContain("Child Space:"); expect(textContent(renderer)).toContain("Kitchen"); expect(textContent(renderer)).toContain("Buy milk");
     await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Flat Space view" }).props.onPress(); }); expect(read).toHaveBeenLastCalledWith("member-1", "space-1", "flat"); expect(textContent(renderer)).toContain("Home / Kitchen:"); expect(textContent(renderer)).toContain("Call dentist");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Move Space Home" }).props.onPress(); }); await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Move Space Home to Work" }).props.onPress(); }); expect(client.update).toHaveBeenCalledWith("member-1", "space-1", { parentId: "space-2" });
     await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Delete Space Kitchen" }).props.onPress(); }); expect(client.remove).toHaveBeenCalledWith("member-1", "space-3");
-    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Delete Space Home" }).props.onPress(); }); expect(client.archive).toHaveBeenCalledWith("member-1", "space-1");
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Delete Space Home" }).props.onPress(); }); expect(client.archive).toHaveBeenCalledWith("member-1", "space-1"); expect(onSelect).toHaveBeenLastCalledWith(null);
     expect(renderer.root.findByProps({ accessibilityLabel: "Restore Space Home" })).toBeDefined(); await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Restore Space Home" }).props.onPress(); }); expect(client.restore).toHaveBeenCalledWith("member-1", "space-1"); renderer.unmount();
   });
 

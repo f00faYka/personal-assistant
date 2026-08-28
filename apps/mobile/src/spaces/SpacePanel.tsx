@@ -95,6 +95,10 @@ export function SpacePanel({ client, memberId, selectedSpaceId, onSelect, onSpac
       const updated = await action();
       if (updated) {
         publish(updateLocalSpaces(spaces, updated));
+        if (updated.archivedAt && activeSpaceId === updated.id) {
+          setActiveSpaceId(null);
+          onSelect(null);
+        }
       } else {
         await load();
       }
@@ -145,7 +149,10 @@ export function SpacePanel({ client, memberId, selectedSpaceId, onSelect, onSpac
         return client.archive(memberId, space.id);
       }
       await client.remove(memberId, space.id);
-      if (activeSpaceId === space.id) setActiveSpaceId(null);
+      if (activeSpaceId === space.id) {
+        setActiveSpaceId(null);
+        onSelect(null);
+      }
       return undefined;
     });
   };
@@ -361,6 +368,7 @@ function isArchivedDescendant(space: Space, spaces: readonly Space[]): boolean {
 }
 
 function updateLocalSpaces(spaces: readonly Space[], updated: Space): readonly Space[] {
+  if (!spaces.some((space) => space.id === updated.id)) return [...spaces, updated];
   return spaces.map((space) => {
     if (space.id === updated.id) return updated;
     if (!isDescendant(space, updated.id, spaces)) return space;
