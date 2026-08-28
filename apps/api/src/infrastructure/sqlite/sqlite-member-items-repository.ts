@@ -7,6 +7,7 @@ export class SqliteMemberItemsRepository implements MemberItemsRepository, Searc
 
   constructor(databasePath: string) {
     this.database = new Database(databasePath);
+    this.database.function("search_fold", { deterministic: true }, foldSearchText);
   }
 
   list(memberId: string, cursor: ListCursor | undefined, limit: number): readonly ListRow[] {
@@ -50,25 +51,20 @@ export class SqliteMemberItemsRepository implements MemberItemsRepository, Searc
       conditions.push("EXISTS (SELECT 1 FROM item_entities l JOIN entities e ON e.id = l.entity_id AND e.member_id = l.member_id WHERE l.member_id = o.member_id AND l.item_id = o.id AND l.item_kind = o.kind AND l.entity_id = ?)");
       parameters.push(filters.entityId);
     }
-    if (filters.text === undefined && cursor !== undefined) {
+    if (filters.text !== undefined) {
+      conditions.push("instr(search_fold(COALESCE(o.title, o.content)), search_fold(?)) > 0");
+      parameters.push(filters.text);
+    }
+    if (cursor !== undefined) {
       conditions.push("(o.created_at < ? OR (o.created_at = ? AND o.id < ?))");
       parameters.push(cursor.createdAt, cursor.createdAt, cursor.itemId);
     }
     const sql = `SELECT o.id AS itemId, o.kind AS itemKind, o.capture_id AS captureId, o.created_at AS createdAt,
       o.title, o.content, o.due_at AS dueAt, o.status AS taskStatus, o.review_state AS noteState,
       o.primary_space_id AS primarySpaceId FROM outcomes o WHERE ${conditions.join(" AND ")}
-      ORDER BY o.created_at DESC, o.id DESC${filters.text === undefined ? " LIMIT ?" : ""}`;
-    if (filters.text === undefined) {
-      parameters.push(limit);
-      return this.database.prepare<Array<string | number>, SearchRow>(sql).all(...parameters);
-    }
-
-    const rows = this.database.prepare<Array<string | number>, SearchRow>(sql).all(...parameters);
-    const searchText = foldSearchText(filters.text);
-    return rows
-      .filter((row) => foldSearchText(row.itemKind === "task" ? row.title ?? "" : row.content ?? "").includes(searchText))
-      .filter((row) => cursor === undefined || row.createdAt < cursor.createdAt || (row.createdAt === cursor.createdAt && row.itemId < cursor.itemId))
-      .slice(0, limit);
+      ORDER BY o.created_at DESC, o.id DESC LIMIT ?`;
+    parameters.push(limit);
+    return this.database.prepare<Array<string | number>, SearchRow>(sql).all(...parameters);
   }
 
   close(): void {
@@ -77,5 +73,9 @@ export class SqliteMemberItemsRepository implements MemberItemsRepository, Searc
 }
 
 function foldSearchText(value: string): string {
-  return value.normalize("NFKC").toLocaleLowerCase("und");
+  // Project policy: Unicode NFKC plus locale-independent lowercase, with the
+  // German sharp-s case fold needed for Straße/STRASSE equivalence. This is
+  // intentionally a deterministic search policy, not a claim of full Unicode
+  // case folding.
+  return value.normalize("NFKC").toLocaleLowerCase("und").replaceAll("ß", "ss");
 }

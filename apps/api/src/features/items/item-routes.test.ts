@@ -40,4 +40,32 @@ describe("item routes", () => {
     expect(received).toEqual({ text: "milk", spaceId: "space-1", unassigned: false, tagId: "tag-1", entityId: "entity-1" });
     expect(response.json().items[0]).toMatchObject({ kind: "task", id: "task-1" });
   });
+
+  test("rejects malformed search cursors at the endpoint", async () => {
+    const search = new ItemSearchService({ search: () => [] });
+    const application = buildApi({ logger: false, memberItemsService: new MemberItemsService({ list: () => [] }), itemSearchService: search });
+    applications.push(application);
+
+    const response = await application.inject({ method: "GET", url: "/items/search?memberId=member-1&cursor=not-a-cursor" });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "cursor is invalid" });
+  });
+
+  test("keeps text-search pagination cursor opaque across endpoint requests", async () => {
+    const rows: SearchRow[] = [
+      { itemId: "task-1", itemKind: "task", captureId: "capture-1", createdAt: "2026-08-14T12:00:00.000Z", title: "Milk one", content: null, dueAt: null, taskStatus: "open", noteState: null, primarySpaceId: null },
+      { itemId: "task-2", itemKind: "task", captureId: "capture-2", createdAt: "2026-08-14T11:00:00.000Z", title: "Milk two", content: null, dueAt: null, taskStatus: "open", noteState: null, primarySpaceId: null },
+    ];
+    const search = new ItemSearchService({ search: (_memberId, _filters, cursor, limit) => rows.filter((row) => cursor === undefined || row.createdAt < cursor.createdAt || (row.createdAt === cursor.createdAt && row.itemId < cursor.itemId)).slice(0, limit) });
+    const application = buildApi({ logger: false, memberItemsService: new MemberItemsService({ list: () => [] }), itemSearchService: search });
+    applications.push(application);
+
+    const first = await application.inject({ method: "GET", url: "/items/search?memberId=member-1&q=milk&limit=1" });
+    const cursor = first.json().nextCursor as string;
+    const second = await application.inject({ method: "GET", url: `/items/search?memberId=member-1&q=milk&limit=1&cursor=${encodeURIComponent(cursor)}` });
+
+    expect(first.json().items.map((item: { id: string }) => item.id)).toEqual(["task-1"]);
+    expect(second.json().items.map((item: { id: string }) => item.id)).toEqual(["task-2"]);
+  });
 });

@@ -92,8 +92,8 @@ describe("ItemSearchService", () => {
   test("uses a member-bound keyset cursor", () => {
     let cursor: unknown;
     const service = new ItemSearchService({ search: (_memberId, _filters, receivedCursor) => { cursor = receivedCursor; return [row("task-2", "task", "2026-08-14T10:00:00.000Z")]; } });
-    const first = new ItemSearchService({ search: () => [row("task-1", "task", "2026-08-14T12:00:00.000Z"), row("task-2", "task", "2026-08-14T11:00:00.000Z")] }).search({ memberId: "member-1", limit: 1 });
-    service.search({ memberId: "member-1", cursor: first.nextCursor! });
+    const first = new ItemSearchService({ search: () => [row("task-1", "task", "2026-08-14T12:00:00.000Z"), row("task-2", "task", "2026-08-14T11:00:00.000Z")] }).search({ memberId: "member-1", text: "milk", limit: 1 });
+    service.search({ memberId: "member-1", text: "milk", cursor: first.nextCursor! });
     expect(cursor).toEqual({ memberId: "member-1", createdAt: "2026-08-14T12:00:00.000Z", itemId: "task-1" });
   });
 });
