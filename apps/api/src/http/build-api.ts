@@ -13,6 +13,8 @@ import type { OfflineDraftService } from "../features/offline-drafts/offline-dra
 import { registerOfflineDraftRoutes } from "../features/offline-drafts/offline-draft-routes.js";
 import type { SpaceService } from "../features/spaces/space.js";
 import { registerSpaceRoutes } from "../features/spaces/space-routes.js";
+import type { MetadataService } from "../features/metadata/metadata.js";
+import { registerMetadataRoutes } from "../features/metadata/metadata-routes.js";
 
 export interface BuildApiOptions extends FastifyServerOptions {
   readonly captureService?: CaptureService;
@@ -23,6 +25,7 @@ export interface BuildApiOptions extends FastifyServerOptions {
   readonly memberItemsService?: MemberItemsService;
   readonly offlineDraftService?: OfflineDraftService;
   readonly spaceService?: SpaceService;
+  readonly metadataService?: MetadataService;
 }
 
 export function buildApi(options: BuildApiOptions = {}): FastifyInstance {
@@ -41,6 +44,7 @@ export function buildApi(options: BuildApiOptions = {}): FastifyInstance {
   if (options.memberItemsService) registerItemRoutes(application, options.memberItemsService);
   if (options.offlineDraftService) registerOfflineDraftRoutes(application, options.offlineDraftService);
   if (options.spaceService) registerSpaceRoutes(application, options.spaceService);
+  if (options.metadataService) registerMetadataRoutes(application, options.metadataService);
 
   return application;
 }
