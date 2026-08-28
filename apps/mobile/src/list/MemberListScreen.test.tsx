@@ -14,6 +14,7 @@ vi.mock("react-native", async () => {
     FlatList,
     Pressable: host("Pressable"),
     RefreshControl: host("RefreshControl"),
+    TextInput: host("TextInput"),
     StyleSheet: { create: <T,>(styles: T): T => styles },
     Text: host("Text"),
     View: host("View"),
@@ -120,6 +121,22 @@ describe("MemberListScreen", () => {
 
     expect(textContent(renderer)).toContain("Couldn’t load your items");
     expect(textContent(renderer)).not.toContain("Task");
+    renderer.unmount();
+  });
+
+  test("assigns an existing Task to a loaded Space", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ items: [task], nextCursor: null }))
+      .mockResolvedValueOnce(jsonResponse({ spaces: [{ id: "space-1", memberId: "member-1", name: "Home", createdAt: "now" }] }))
+      .mockResolvedValueOnce(jsonResponse({ assignment: { itemId: "task-1", itemKind: "task", spaceId: "space-1" } }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ ...task, spaceId: "space-1" }], nextCursor: null }));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Organize Spaces" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Assign Task to Home" }).props.onPress(); });
+    expect(fetcher.mock.calls[2]?.[1]?.method).toBe("PUT");
+    expect(fetcher.mock.calls[2]?.[1]?.body).toBe(JSON.stringify({ memberId: "member-1", spaceId: "space-1" }));
+    expect(textContent(renderer)).toContain("Space: Home");
     renderer.unmount();
   });
 
