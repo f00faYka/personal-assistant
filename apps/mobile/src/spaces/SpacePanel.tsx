@@ -59,6 +59,7 @@ export function SpacePanel({ client, memberId, selectedSpaceId, onSelect, onSpac
     try {
       setSelectedView(await client.read(memberId, activeSpaceId, mode));
     } catch (cause) {
+      setSelectedView(null);
       setError(`Unable to refresh Space contents: ${cause instanceof Error ? cause.message : "unknown error"}`);
     }
   };
