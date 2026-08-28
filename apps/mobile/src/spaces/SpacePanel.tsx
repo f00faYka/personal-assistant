@@ -1,47 +1,41 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-native";
 import type { Space, SpacesClient } from "./spaces";
 
-interface SpacePanelProps {
-  readonly client: SpacesClient;
-  readonly memberId: string;
-  readonly selectedSpaceId: string | null;
-  readonly onSelect: (spaceId: string | null) => void;
-  readonly onSpacesChanged: (spaces: readonly Space[]) => void;
-}
+interface SpacePanelProps { readonly client: SpacesClient; readonly memberId: string; readonly selectedSpaceId: string | null; readonly onSelect: (spaceId: string | null) => void; readonly onSpacesChanged: (spaces: readonly Space[]) => void; }
 
 export function SpacePanel({ client, memberId, selectedSpaceId, onSelect, onSpacesChanged }: SpacePanelProps) {
-  const [open, setOpen] = useState(false);
-  const [spaces, setSpaces] = useState<readonly Space[]>([]);
-  const [name, setName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [parentId, setParentId] = useState<string | undefined>();
-
-  const load = async () => {
-    setLoading(true); setError(null);
-    try { const next = await client.list(memberId); setSpaces(next); onSpacesChanged(next); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load Spaces"); }
-    finally { setLoading(false); }
-  };
+  const [open, setOpen] = useState(false); const [spaces, setSpaces] = useState<readonly Space[]>([]); const [name, setName] = useState(""); const [editingId, setEditingId] = useState<string | null>(null); const [movingId, setMovingId] = useState<string | null>(null); const [error, setError] = useState<string | null>(null); const [loading, setLoading] = useState(false); const [parentId, setParentId] = useState<string | undefined>(); const [mode, setMode] = useState<"hierarchical" | "flat">("hierarchical");
+  const tree = useMemo(() => buildTree(spaces), [spaces]); const archived = spaces.filter((space) => space.archivedAt);
+  const publish = (next: readonly Space[]) => { setSpaces(next); onSpacesChanged(next); };
+  const load = async () => { setLoading(true); setError(null); try { const next = await client.list(memberId); publish(next); } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load Spaces"); } finally { setLoading(false); } };
   const toggle = () => { setOpen((current) => !current); if (!open && spaces.length === 0) void load(); };
-  const create = async () => {
-    if (!name.trim()) { setError("Space name is required"); return; }
-    setLoading(true); setError(null);
-    try { const created = await client.create(memberId, name, parentId); const next = [...spaces, created]; setSpaces(next); onSpacesChanged(next); setName(""); setParentId(undefined); onSelect(created.id); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to create Space"); }
-    finally { setLoading(false); }
-  };
+  const run = async (action: () => Promise<Space | void>) => { setLoading(true); setError(null); try { const updated = await action(); if (updated) publish(spaces.map((space) => { if (space.id === updated.id) return updated; if (!isDescendant(space, updated.id, spaces)) return space; if (updated.archivedAt) return { ...space, archivedAt: updated.archivedAt }; const { archivedAt: _archivedAt, ...active } = space; return active; })); else await load(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to update Space"); } finally { setLoading(false); } };
+  const create = async () => { if (!name.trim()) { setError("Space name is required"); return; } await run(async () => { const created = await client.create(memberId, name, parentId); setName(""); setParentId(undefined); onSelect(created.id); return created; }); };
+  const rename = async (space: Space) => { if (!name.trim()) { setError("Space name is required"); return; } await run(async () => { const updated = await client.update(memberId, space.id, { name }); setName(""); setEditingId(null); return updated; }); };
+  const move = async (space: Space, nextParentId: string | null) => { await run(() => client.update(memberId, space.id, { parentId: nextParentId })); setMovingId(null); };
   return <View accessibilityLabel="Space organization" style={{ marginHorizontal: 16, marginBottom: 12 }}>
     <Pressable accessibilityRole="button" accessibilityLabel="Organize Spaces" onPress={toggle}><Text style={{ color: "#24221F", fontSize: 16, fontWeight: "700", paddingVertical: 10 }}>Spaces {open ? "⌃" : "⌄"}</Text></Pressable>
     {open ? <View style={{ backgroundColor: "#EFEAE2", borderRadius: 14, padding: 14 }}>
       {loading ? <ActivityIndicator accessibilityLabel="Loading Spaces" /> : null}
-      <Pressable accessibilityRole="button" accessibilityLabel="Unassigned root" onPress={() => onSelect(null)}><Text style={{ paddingVertical: 7, fontWeight: selectedSpaceId === null ? "700" : "400" }}>Unassigned (root)</Text></Pressable>
-      {spaces.map((space) => <View key={space.id} style={{ paddingLeft: space.parentId ? 18 : 0 }}><Pressable accessibilityRole="button" accessibilityLabel={`Select Space ${space.name}`} onPress={() => onSelect(space.id)}><Text style={{ paddingVertical: 7, fontWeight: selectedSpaceId === space.id ? "700" : "400" }}>{space.name}</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Create child Space under ${space.name}`} onPress={() => setParentId(space.id)}><Text style={{ color: "#7A5C36", paddingBottom: 7 }}>Add child</Text></Pressable></View>)}
-      <TextInput accessibilityLabel="New Space name" value={name} onChangeText={setName} placeholder={parentId ? "Child Space name" : "New top-level Space"} style={{ borderBottomColor: "#B9A895", borderBottomWidth: 1, paddingVertical: 8 }} />
+      <View style={{ flexDirection: "row", gap: 12 }}><Pressable accessibilityRole="button" accessibilityLabel="Hierarchical Space view" onPress={() => setMode("hierarchical")}><Text style={{ fontWeight: mode === "hierarchical" ? "700" : "400" }}>Tree</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Flat Space view" onPress={() => setMode("flat")}><Text style={{ fontWeight: mode === "flat" ? "700" : "400" }}>All paths</Text></Pressable></View>
+      <Pressable accessibilityRole="button" accessibilityLabel="Unassigned root" onPress={() => onSelect(null)}><Text style={{ paddingVertical: 9, fontWeight: selectedSpaceId === null ? "700" : "400" }}>Unassigned (root)</Text></Pressable>
+      {mode === "hierarchical" ? tree.map((node) => <SpaceRow key={node.space.id} node={node} depth={0} selectedSpaceId={selectedSpaceId} editingId={editingId} movingId={movingId} name={name} onNameChange={setName} onSelect={onSelect} onEdit={(space) => { setEditingId(space.id); setName(space.name); }} onRename={rename} onMove={move} onStartMove={setMovingId} onAddChild={(id) => setParentId(id)} onArchive={(space) => void run(() => client.archive(memberId, space.id))} onDelete={(space) => void run(async () => { await client.remove(memberId, space.id); return undefined; })} />) : spaces.filter((space) => !space.archivedAt).map((space) => <SpaceRow key={space.id} node={{ space, children: [] }} depth={0} path={spacePath(space, spaces)} selectedSpaceId={selectedSpaceId} editingId={editingId} movingId={movingId} name={name} onNameChange={setName} onSelect={onSelect} onEdit={(item) => { setEditingId(item.id); setName(item.name); }} onRename={rename} onMove={move} onStartMove={setMovingId} onAddChild={(id) => setParentId(id)} onArchive={(item) => void run(() => client.archive(memberId, item.id))} onDelete={(item) => void run(async () => { await client.remove(memberId, item.id); return undefined; })} />)}
+      {archived.length ? <View><Text style={{ fontWeight: "700", marginTop: 12 }}>Archived Spaces</Text>{archived.map((space) => <View key={space.id} style={{ paddingVertical: 6 }}><Text>{spacePath(space, spaces)}</Text><Pressable accessibilityRole="button" accessibilityLabel={`Restore Space ${space.name}`} onPress={() => void run(() => client.restore(memberId, space.id))}><Text style={{ color: "#7A5C36", marginTop: 4 }}>Restore subtree</Text></Pressable></View>)}</View> : null}
+      <TextInput accessibilityLabel="New Space name" value={editingId ? "" : name} onChangeText={setName} placeholder={parentId ? "Child Space name" : "New top-level Space"} style={{ borderBottomColor: "#B9A895", borderBottomWidth: 1, paddingVertical: 8 }} />
       <Pressable accessibilityRole="button" accessibilityLabel={parentId ? "Create child Space" : "Create top-level Space"} onPress={() => void create()}><Text style={{ color: "#24221F", fontWeight: "700", paddingVertical: 10 }}>{parentId ? "Create child Space" : "Create top-level Space"}</Text></Pressable>
       {parentId ? <Pressable accessibilityRole="button" accessibilityLabel="Create top-level Space instead" onPress={() => setParentId(undefined)}><Text style={{ color: "#7A5C36" }}>Create at root instead</Text></Pressable> : null}
       {error ? <Text accessibilityRole="alert" style={{ color: "#8C3D25", paddingTop: 8 }}>{error}</Text> : null}
     </View> : null}
   </View>;
 }
+
+interface SpaceNode { readonly space: Space; readonly children: readonly SpaceNode[]; }
+function SpaceRow({ node, depth, path, selectedSpaceId, editingId, movingId, name, onNameChange, onSelect, onEdit, onRename, onMove, onStartMove, onAddChild, onArchive, onDelete }: { readonly node: SpaceNode; readonly depth: number; readonly path?: string; readonly selectedSpaceId: string | null; readonly editingId: string | null; readonly movingId: string | null; readonly name: string; readonly onNameChange: (value: string) => void; readonly onSelect: (id: string) => void; readonly onEdit: (space: Space) => void; readonly onRename: (space: Space) => Promise<void>; readonly onMove: (space: Space, parentId: string | null) => Promise<void>; readonly onStartMove: (id: string) => void; readonly onAddChild: (id: string) => void; readonly onArchive: (space: Space) => void; readonly onDelete: (space: Space) => void }) {
+  const { space } = node; const isEditing = editingId === space.id;
+  return <View style={{ paddingLeft: depth * 18, paddingVertical: 4 }}><Pressable accessibilityRole="button" accessibilityLabel={`Select Space ${space.name}`} onPress={() => onSelect(space.id)}><Text style={{ fontWeight: selectedSpaceId === space.id ? "700" : "400" }}>{path ?? space.name}</Text></Pressable>{isEditing ? <View><TextInput accessibilityLabel={`Rename Space ${space.name}`} value={name} onChangeText={onNameChange} /><Pressable accessibilityRole="button" accessibilityLabel={`Save Space ${space.name}`} onPress={() => void onRename(space)}><Text>Save name</Text></Pressable></View> : <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}><Pressable accessibilityRole="button" accessibilityLabel={`Rename Space ${space.name}`} onPress={() => onEdit(space)}><Text style={{ color: "#7A5C36" }}>Rename</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Create child Space under ${space.name}`} onPress={() => onAddChild(space.id)}><Text style={{ color: "#7A5C36" }}>Add child</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Move Space ${space.name}`} onPress={() => onStartMove(space.id)}><Text style={{ color: "#7A5C36" }}>Move</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Archive Space ${space.name}`} onPress={() => onArchive(space)}><Text style={{ color: "#8C3D25" }}>Archive</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Delete Space ${space.name}`} onPress={() => onDelete(space)}><Text style={{ color: "#8C3D25" }}>Delete</Text></Pressable></View>}{movingId === space.id ? <View><Text>Move this Space to:</Text><Pressable accessibilityRole="button" accessibilityLabel={`Move Space ${space.name} to root`} onPress={() => void onMove(space, null)}><Text>Root</Text></Pressable></View> : null}{node.children.map((child) => <SpaceRow key={child.space.id} node={child} depth={depth + 1} selectedSpaceId={selectedSpaceId} editingId={editingId} movingId={movingId} name={name} onNameChange={onNameChange} onSelect={onSelect} onEdit={onEdit} onRename={onRename} onMove={onMove} onStartMove={onStartMove} onAddChild={onAddChild} onArchive={onArchive} onDelete={onDelete} />)}</View>;
+}
+
+function buildTree(spaces: readonly Space[]): readonly SpaceNode[] { const nodes = new Map(spaces.filter((space) => !space.archivedAt).map((space) => [space.id, { space, children: [] as SpaceNode[] }])); const roots: SpaceNode[] = []; for (const node of nodes.values()) { const parent = node.space.parentId ? nodes.get(node.space.parentId) : undefined; if (parent) parent.children.push(node); else roots.push(node); } return roots; }
+function spacePath(space: Space, spaces: readonly Space[]): string { const names: string[] = []; let current: Space | undefined = space; while (current) { names.unshift(current.name); current = current.parentId ? spaces.find((candidate) => candidate.id === current?.parentId) : undefined; } return names.join(" / "); }
+function isDescendant(space: Space, ancestorId: string, spaces: readonly Space[]): boolean { let parentId = space.parentId; while (parentId) { if (parentId === ancestorId) return true; parentId = spaces.find((candidate) => candidate.id === parentId)?.parentId; } return false; }
