@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { OrganizationProposalService, type CandidateState, type OrganizationProposal, type OrganizationProposalRepository } from "./organization-proposal.js";
 
+const unusedAssignments = { metadataService: { listTags: () => [], listEntities: () => [], createTag: () => ({ id: "unused", memberId: "unused", name: "unused", createdAt: "now" }), createEntity: () => ({ id: "unused", memberId: "unused", name: "unused", type: "Object" as const, createdAt: "now" }), linkTag: () => ({ tags: [], entities: [] }), linkEntity: () => ({ tags: [], entities: [] }) }, spaceService: { assign: () => ({ itemId: "unused", itemKind: "note" as const, spaceId: null }) } };
+
 function repository(): OrganizationProposalRepository & { values: OrganizationProposal[] } {
   const values: OrganizationProposal[] = [];
   return {
@@ -16,13 +18,13 @@ function repository(): OrganizationProposalRepository & { values: OrganizationPr
 
 describe("OrganizationProposalService", () => {
   test("bands candidates, preserves context input, and is idempotent", () => {
-    const repo = repository(); const service = new OrganizationProposalService(repo);
+    const repo = repository(); const service = new OrganizationProposalService(repo, unusedAssignments);
     const input = { memberId: "member-1", itemId: "note-1", itemKind: "note" as const, idempotencyKey: "capture-1:v1", modelVersion: "qwen", rulesVersion: "organization.v1", context: { spaces: [{ id: "space-1", name: "Home", path: "Home", description: "home", examples: ["keys"] }], tags: [{ id: "tag-1", name: "garden" }], entities: [{ id: "entity-1", name: "Alice", aliases: ["Al"] }] }, candidates: [{ kind: "space" as const, targetId: "space-1", confidence: 0.9, provenance: ["transcription"] }, { kind: "tag" as const, suggestedName: "plants", confidence: 0.6, provenance: ["transcription", "rules"] }, { kind: "entity" as const, suggestedName: "Unknown", confidence: 0.2, provenance: ["model"] }] };
     const first = service.create(input); const second = service.create(input);
     expect(second).toBe(first); expect(first.state).toBe("pending"); expect(first.candidates.map((candidate) => candidate.confidenceBand)).toEqual(["high", "medium", "low"]);
   });
   test("does not create actionable work for empty or only low-confidence results", () => {
-    const repo = repository(); const service = new OrganizationProposalService(repo);
+    const repo = repository(); const service = new OrganizationProposalService(repo, unusedAssignments);
     const result = service.create({ memberId: "m", itemId: "n", itemKind: "note", idempotencyKey: "k", modelVersion: "m", rulesVersion: "r", context: { spaces: [], tags: [], entities: [] }, candidates: [] });
     expect(result.state).toBe("dismissed");
   });

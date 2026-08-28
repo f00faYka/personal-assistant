@@ -52,6 +52,11 @@ export interface OrganizationProposalRepository {
   deleteSuggested(proposalId: string): void;
 }
 
+export interface OrganizationProposalAssignments {
+  readonly metadataService: Pick<MetadataService, "listTags" | "listEntities" | "createTag" | "createEntity" | "linkTag" | "linkEntity">;
+  readonly spaceService: Pick<SpaceService, "assign">;
+}
+
 export class OrganizationProposalNotFoundError extends Error {
   constructor(id: string) { super(`Organization proposal not found: ${id}`); this.name = "OrganizationProposalNotFoundError"; }
 }
@@ -60,7 +65,7 @@ export class InvalidOrganizationProposalError extends Error {
 }
 
 export class OrganizationProposalService {
-  constructor(private readonly repository: OrganizationProposalRepository, private readonly assignments?: { readonly metadataService: Pick<MetadataService, "listTags" | "listEntities" | "createTag" | "createEntity" | "linkTag" | "linkEntity">; readonly spaceService: Pick<SpaceService, "assign"> }) {}
+  constructor(private readonly repository: OrganizationProposalRepository, private readonly assignments: OrganizationProposalAssignments) {}
 
   create(input: {
     readonly memberId: string; readonly itemId: string; readonly itemKind: OrganizationItemKind;

@@ -42,6 +42,8 @@ async function start(): Promise<void> {
   const spaceRepository = new SqliteSpaceRepository(configuration.databasePath);
   const metadataRepository = new SqliteMetadataRepository(configuration.databasePath);
   const organizationProposalRepository = new SqliteOrganizationProposalRepository(configuration.databasePath);
+  const spaceService = new SpaceService(spaceRepository);
+  const metadataService = new MetadataService(metadataRepository);
   const captureService = new CaptureService(repository, new FileSystemBlobStorage(configuration.blobRoot));
   const interpretationWorker = new InterpretationWorker({
     service: new InterpretationService(interpretationRepository),
@@ -98,9 +100,9 @@ async function start(): Promise<void> {
       reviewService,
       transcriptionWorker,
     ),
-    spaceService: new SpaceService(spaceRepository),
-    metadataService: new MetadataService(metadataRepository),
-    organizationProposalService: new OrganizationProposalService(organizationProposalRepository),
+    spaceService,
+    metadataService,
+    organizationProposalService: new OrganizationProposalService(organizationProposalRepository, { metadataService, spaceService }),
   });
   application.addHook("onClose", async () => {
     await transcriptionWorker.stop();
