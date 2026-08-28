@@ -102,6 +102,23 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
+  test("ignores duplicate taps while a metadata link is in flight", async () => {
+    const tag = metadataTag("tag-1", "urgent");
+    let releaseLink!: (links: MetadataLinks) => void;
+    const linkTag = vi.fn().mockReturnValue(new Promise<MetadataLinks>((resolve) => { releaseLink = resolve; }));
+    const metadataClient = metadataFixture({ listTags: vi.fn().mockResolvedValue([tag]), linkTag });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient });
+    const addButton = renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" });
+
+    act(() => { addButton.props.onPress(); addButton.props.onPress(); });
+    expect(linkTag).toHaveBeenCalledOnce();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" }).props.disabled).toBe(true);
+    await act(async () => { releaseLink({ tags: [tag], entities: [] }); });
+    expect(textContent(renderer)).not.toContain("Unable to update metadata");
+    renderer.unmount();
+  });
+
   test("links and unlinks an Entity", async () => {
     const entity = metadataEntity("entity-1", "Office", "Place");
     const metadataClient = metadataFixture({ listEntities: vi.fn().mockResolvedValue([entity]), linkEntity: vi.fn().mockResolvedValue({ tags: [], entities: [entity] }), unlinkEntity: vi.fn().mockResolvedValue({ tags: [], entities: [] }) });
