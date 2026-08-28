@@ -4,7 +4,7 @@ import { describe, expect, test, vi } from "vitest";
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 vi.mock("react-native", async () => { const React = await import("react"); const host = (name: string) => function Host(props: { readonly children?: React.ReactNode; readonly [key: string]: unknown }) { return React.createElement(name, props, props.children); }; return { ActivityIndicator: host("ActivityIndicator"), Pressable: host("Pressable"), Text: host("Text"), TextInput: host("TextInput"), View: host("View") }; });
 
-import { Text, TextInput } from "react-native";
+import { Pressable, Text, TextInput } from "react-native";
 import { SpacePanel } from "./SpacePanel";
 import type { SpaceTreeView, SpacesClient } from "./spaces";
 
@@ -24,7 +24,13 @@ describe("SpacePanel", () => {
   });
 
   test("shows hierarchical and flat content, move destinations, and lifecycle safeguards", async () => {
-    const read = vi.fn().mockResolvedValueOnce(hierarchical).mockResolvedValueOnce(flat).mockResolvedValueOnce({ ...hierarchical, children: [], items: [] }).mockResolvedValueOnce(hierarchical);
+    const read = vi.fn()
+      .mockResolvedValueOnce(hierarchical)
+      .mockResolvedValueOnce(flat)
+      .mockResolvedValueOnce(flat)
+      .mockResolvedValueOnce({ ...hierarchical, children: [], items: [] })
+      .mockResolvedValueOnce(hierarchical)
+      .mockResolvedValue(hierarchical);
     const client = makeClient({ list: vi.fn().mockResolvedValue([home, work, child]), read, update: vi.fn().mockResolvedValue({ ...home, parentId: work.id }), archive: vi.fn().mockResolvedValue({ ...home, archivedAt: "later" }), restore: vi.fn().mockResolvedValue(home), remove: vi.fn().mockResolvedValue(undefined) }); const renderer = render(client);
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Organize Spaces" }).props.onPress(); });
     await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Select Space Home" }).props.onPress(); }); expect(read).toHaveBeenLastCalledWith("member-1", "space-1", "hierarchical"); expect(textContent(renderer)).toContain("Child Space:"); expect(textContent(renderer)).toContain("Kitchen"); expect(textContent(renderer)).toContain("Buy milk");
@@ -33,6 +39,33 @@ describe("SpacePanel", () => {
     await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Delete Space Kitchen" }).props.onPress(); }); expect(client.remove).toHaveBeenCalledWith("member-1", "space-3");
     await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Delete Space Home" }).props.onPress(); }); expect(client.archive).toHaveBeenCalledWith("member-1", "space-1");
     expect(renderer.root.findByProps({ accessibilityLabel: "Restore Space Home" })).toBeDefined(); await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Restore Space Home" }).props.onPress(); }); expect(client.restore).toHaveBeenCalledWith("member-1", "space-1"); renderer.unmount();
+  });
+
+  test("refreshes selected content after a Space rename", async () => {
+    const fresh = { ...hierarchical, space: { ...home, name: "House" }, path: "House", items: [{ ...hierarchical.items[0], title: "Fresh content" }] };
+    const client = makeClient({ list: vi.fn().mockResolvedValue([home]), read: vi.fn().mockResolvedValueOnce(hierarchical).mockResolvedValueOnce(fresh), update: vi.fn().mockResolvedValue({ ...home, name: "House" }) });
+    const renderer = render(client);
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Organize Spaces" }).props.onPress(); });
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Select Space Home" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("Buy milk");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Rename Space Home" }).props.onPress(); });
+    const renameInput = renderer.root.findAllByType(TextInput).find((node) => node.props.accessibilityLabel === "Rename Space Home")!;
+    await act(async () => { renameInput.props.onChangeText("House"); });
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Save Space Home" }).props.onPress(); });
+    expect(client.read).toHaveBeenLastCalledWith("member-1", "space-1", "hierarchical");
+    expect(textContent(renderer)).toContain("Fresh content");
+    expect(textContent(renderer)).not.toContain("Buy milk");
+    renderer.unmount();
+  });
+
+  test("shows one restore action for an archived subtree root", async () => {
+    const client = makeClient({ list: vi.fn().mockResolvedValue([home, child]), archive: vi.fn().mockResolvedValue({ ...home, archivedAt: "later" }) });
+    const renderer = render(client);
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Organize Spaces" }).props.onPress(); });
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Archive Space Home" }).props.onPress(); });
+    expect(renderer.root.findAllByType(Pressable).filter((node) => node.props.accessibilityLabel === "Restore Space Home")).toHaveLength(1);
+    expect(renderer.root.findAllByType(Pressable).filter((node) => node.props.accessibilityLabel === "Restore Space Kitchen")).toHaveLength(0);
+    renderer.unmount();
   });
 });
 
