@@ -82,6 +82,24 @@ describe("SpacePanel", () => {
     expect(textContent(contents)).not.toContain("Work");
     renderer.unmount();
   });
+
+  test("keeps selected content visible and reports a refresh failure after mutation", async () => {
+    const client = makeClient({
+      list: vi.fn().mockResolvedValue([home]),
+      read: vi.fn().mockResolvedValueOnce(hierarchical).mockRejectedValueOnce(new Error("offline")),
+      update: vi.fn().mockResolvedValue({ ...home, name: "House" }),
+    });
+    const renderer = render(client);
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Organize Spaces" }).props.onPress(); });
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Select Space Home" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Rename Space Home" }).props.onPress(); });
+    const input = renderer.root.findAllByType(TextInput).find((node) => node.props.accessibilityLabel === "Rename Space Home")!;
+    await act(async () => { input.props.onChangeText("House"); });
+    await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Save Space Home" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("Buy milk");
+    expect(textContent(renderer)).toContain("Unable to refresh Space contents: offline");
+    renderer.unmount();
+  });
 });
 
 function makeClient(overrides: Partial<SpacesClient> = {}): SpacesClient { return { list: vi.fn(), create: vi.fn(), read: vi.fn(), update: vi.fn(), archive: vi.fn(), restore: vi.fn(), remove: vi.fn(), assign: vi.fn(), ...overrides }; }
