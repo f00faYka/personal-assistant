@@ -188,4 +188,9 @@ export const foundationMigrations: readonly Migration[] = [
       CREATE INDEX outcomes_primary_space_index ON outcomes(primary_space_id);
     `,
   },
+  {
+    version: 12,
+    name: "support Space lifecycle",
+    sql: "ALTER TABLE spaces ADD COLUMN archived_at TEXT",
+  },
 ];

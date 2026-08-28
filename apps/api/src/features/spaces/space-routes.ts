@@ -5,6 +5,7 @@ import { InvalidSpaceOperationError, SpaceItemNotFoundError, SpaceService } from
 const memberSchema = z.object({ memberId: z.string().min(1) });
 const createSchema = memberSchema.extend({ name: z.string(), parentId: z.string().optional() });
 const assignSchema = memberSchema.extend({ spaceId: z.string().nullable() });
+const updateSchema = memberSchema.extend({ name: z.string().optional(), parentId: z.string().nullable().optional() }).refine((body) => body.name !== undefined || body.parentId !== undefined, "a Space name or parentId is required");
 
 export function registerSpaceRoutes(application: FastifyInstance, service: SpaceService): void {
   application.post<{ Body: unknown }>("/spaces", async (request, reply) => {
@@ -14,6 +15,31 @@ export function registerSpaceRoutes(application: FastifyInstance, service: Space
   application.get<{ Querystring: { memberId?: string } }>("/spaces", async (request, reply) => {
     try { if (!request.query.memberId) return reply.code(400).send({ error: "memberId is required" }); return { spaces: service.list(request.query.memberId) }; }
     catch (error) { return handleError(reply, error, "invalid Space query"); }
+  });
+  application.get<{ Params: { id: string }; Querystring: { memberId?: string; view?: string } }>("/spaces/:id", async (request, reply) => {
+    try {
+      if (!request.query.memberId) return reply.code(400).send({ error: "memberId is required" });
+      if (request.query.view !== undefined && request.query.view !== "flat" && request.query.view !== "hierarchical") return reply.code(400).send({ error: "view must be flat or hierarchical" });
+      return { ...service.read(request.query.memberId, request.params.id, request.query.view === "flat"), mode: request.query.view === "flat" ? "flat" : "hierarchical" };
+    } catch (error) { return handleError(reply, error, "invalid Space view"); }
+  });
+  application.patch<{ Params: { id: string }; Body: unknown }>("/spaces/:id", async (request, reply) => {
+    try {
+      const body = updateSchema.parse(request.body);
+      let space = body.name === undefined ? service.read(body.memberId, request.params.id).space : service.rename(request.params.id, body.memberId, body.name);
+      if (body.parentId !== undefined) space = service.move(space.id, body.memberId, body.parentId);
+      return { space };
+    } catch (error) { return handleError(reply, error, "invalid Space update"); }
+  });
+  for (const action of ["archive", "restore"] as const) {
+    application.post<{ Params: { id: string }; Body: unknown }>(`/spaces/:id/${action}`, async (request, reply) => {
+      try { const body = memberSchema.parse(request.body); return { space: action === "archive" ? service.archive(request.params.id, body.memberId) : service.restore(request.params.id, body.memberId) }; }
+      catch (error) { return handleError(reply, error, `invalid Space ${action}`); }
+    });
+  }
+  application.delete<{ Params: { id: string }; Querystring: { memberId?: string } }>("/spaces/:id", async (request, reply) => {
+    try { if (!request.query.memberId) return reply.code(400).send({ error: "memberId is required" }); service.remove(request.params.id, request.query.memberId); return reply.code(204).send(); }
+    catch (error) { return handleError(reply, error, "invalid Space deletion"); }
   });
   for (const kind of ["tasks", "notes"] as const) {
     application.put<{ Params: { id: string }; Body: unknown }>(`/${kind}/:id/space`, async (request, reply) => {
