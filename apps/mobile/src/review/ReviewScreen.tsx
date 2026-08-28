@@ -19,6 +19,7 @@ interface ReviewScreenProps {
 
 type ReviewStatus = { readonly status: "loading" } | { readonly status: "error"; readonly message: string } | { readonly status: "ready"; readonly review: ReviewContract };
 type Draft = { readonly title?: string; readonly dueAt?: string | null; readonly content?: string };
+type PendingMetadataMutation = { readonly label: string; readonly operation: () => Promise<void> };
 
 export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: providedClient, offlineDraftStore, metadataClient: providedMetadataClient }: ReviewScreenProps) {
   const client = useMemo(() => providedClient ?? createReviewClient(apiBaseUrl), [apiBaseUrl, providedClient]);
@@ -202,6 +203,7 @@ function MetadataControls({ client, memberId, itemId, itemKind }: { readonly cli
   const [tagEditDraft, setTagEditDraft] = useState("");
   const [entityEditDraft, setEntityEditDraft] = useState("");
   const [entityEditType, setEntityEditType] = useState<EntityType>(entityTypes[0]);
+  const [pendingMutation, setPendingMutation] = useState<PendingMetadataMutation | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -215,34 +217,56 @@ function MetadataControls({ client, memberId, itemId, itemKind }: { readonly cli
 
   useEffect(() => { void load(); }, [load]);
 
-  const mutate = async (operation: () => Promise<MetadataLinks>) => {
+  const runMutation = async (label: string, operation: () => Promise<void>) => {
     setMutationError(null);
-    try { setLinks(await operation()); }
-    catch (cause) { setMutationError(cause instanceof Error ? cause.message : "Unable to update metadata"); }
+    try { await operation(); setPendingMutation(null); }
+    catch (cause) { setMutationError(cause instanceof Error ? cause.message : "Unable to update metadata"); setPendingMutation({ label, operation }); }
   };
-  const addTag = async () => {
+  const addTag = () => {
     const name = tagDraft.trim();
     if (!name) { setMutationError("Tag name must not be empty"); return; }
-    try { const tag = await client.createTag(memberId, name); setTags((current) => [...current, tag].sort((a, b) => a.name.localeCompare(b.name))); setTagDraft(""); await mutate(() => client.linkTag(itemId, itemKind, tag.id, memberId)); }
-    catch (cause) { setMutationError(cause instanceof Error ? cause.message : "Unable to create Tag"); }
+    let createdTag: Tag | null = null;
+    void runMutation(`creating and adding Tag ${name}`, async () => {
+      createdTag ??= await client.createTag(memberId, name);
+      const tag = createdTag;
+      setTags((current) => current.some((item) => item.id === tag.id) ? current : [...current, tag].sort((a, b) => a.name.localeCompare(b.name)));
+      setTagDraft("");
+      setLinks(await client.linkTag(itemId, itemKind, tag.id, memberId));
+    });
   };
-  const addEntity = async () => {
+  const addEntity = () => {
     const name = entityDraft.trim();
     if (!name) { setMutationError("Entity name must not be empty"); return; }
-    try { const entity = await client.createEntity(memberId, name, entityType); setEntities((current) => [...current, entity].sort((a, b) => a.name.localeCompare(b.name))); setEntityDraft(""); await mutate(() => client.linkEntity(itemId, itemKind, entity.id, memberId)); }
-    catch (cause) { setMutationError(cause instanceof Error ? cause.message : "Unable to create Entity"); }
+    const type = entityType;
+    let createdEntity: Entity | null = null;
+    void runMutation(`creating and adding Entity ${name}`, async () => {
+      createdEntity ??= await client.createEntity(memberId, name, type);
+      const entity = createdEntity;
+      setEntities((current) => current.some((item) => item.id === entity.id) ? current : [...current, entity].sort((a, b) => a.name.localeCompare(b.name)));
+      setEntityDraft("");
+      setLinks(await client.linkEntity(itemId, itemKind, entity.id, memberId));
+    });
   };
-  const editTag = async (tag: Tag) => {
+  const editTag = (tag: Tag) => {
     const name = tagEditDraft.trim();
     if (!name) { setMutationError("Tag name must not be empty"); return; }
-    try { const updated = await client.updateTag(tag.id, memberId, name); setTags((current) => current.map((item) => item.id === updated.id ? updated : item)); setLinks((current) => ({ ...current, tags: current.tags.map((item) => item.id === updated.id ? updated : item) })); setEditingTagId(null); }
-    catch (cause) { setMutationError(cause instanceof Error ? cause.message : "Unable to edit Tag"); }
+    void runMutation(`editing Tag ${tag.name}`, async () => {
+      const updated = await client.updateTag(tag.id, memberId, name);
+      setTags((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setLinks((current) => ({ ...current, tags: current.tags.map((item) => item.id === updated.id ? updated : item) }));
+      setEditingTagId(null);
+    });
   };
-  const editEntity = async (entity: Entity) => {
+  const editEntity = (entity: Entity) => {
     const name = entityEditDraft.trim();
     if (!name) { setMutationError("Entity name must not be empty"); return; }
-    try { const updated = await client.updateEntity(entity.id, memberId, name, entityEditType); setEntities((current) => current.map((item) => item.id === updated.id ? updated : item)); setLinks((current) => ({ ...current, entities: current.entities.map((item) => item.id === updated.id ? updated : item) })); setEditingEntityId(null); }
-    catch (cause) { setMutationError(cause instanceof Error ? cause.message : "Unable to edit Entity"); }
+    const type = entityEditType;
+    void runMutation(`editing Entity ${entity.name}`, async () => {
+      const updated = await client.updateEntity(entity.id, memberId, name, type);
+      setEntities((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setLinks((current) => ({ ...current, entities: current.entities.map((item) => item.id === updated.id ? updated : item) }));
+      setEditingEntityId(null);
+    });
   };
   if (loading) return <View style={styles.metadata}><Text style={styles.sectionTitle}>Tags and Entities</Text><Text style={styles.stateText}>Loading metadata…</Text></View>;
   return <View style={styles.metadata}>
@@ -251,16 +275,16 @@ function MetadataControls({ client, memberId, itemId, itemKind }: { readonly cli
     {!error ? <Button label="Refresh Tags and Entities" onPress={() => void load()} /> : null}
     <Text style={styles.stateText}>Tags are flat markers. Entities are named {entityTypes.join(", ")}. Spaces and Task importance are separate controls.</Text>
     <Text style={styles.fieldLabel}>Tags</Text>
-    {links.tags.map((tag) => <View key={tag.id} style={styles.metadataRow}>{editingTagId === tag.id ? <><TextInput accessibilityLabel={`Edit Tag ${tag.name}`} value={tagEditDraft} onChangeText={setTagEditDraft} style={styles.editInput} /><Button label={`Save Tag ${tag.name}`} onPress={() => void editTag(tag)} /></> : <><Text style={styles.metadataValue}>Tag · {tag.name}</Text><Button label={`Edit Tag ${tag.name}`} onPress={() => { setEditingTagId(tag.id); setTagEditDraft(tag.name); }} /><Button label={`Remove Tag ${tag.name}`} onPress={() => void mutate(() => client.unlinkTag(itemId, itemKind, tag.id, memberId))} /></>}</View>)}
+    {links.tags.map((tag) => <View key={tag.id} style={styles.metadataRow}>{editingTagId === tag.id ? <><TextInput accessibilityLabel={`Edit Tag ${tag.name}`} value={tagEditDraft} onChangeText={setTagEditDraft} style={styles.editInput} /><Button label={`Save Tag ${tag.name}`} onPress={() => editTag(tag)} /></> : <><Text style={styles.metadataValue}>Tag · {tag.name}</Text><Button label={`Edit Tag ${tag.name}`} onPress={() => { setEditingTagId(tag.id); setTagEditDraft(tag.name); }} /><Button label={`Remove Tag ${tag.name}`} onPress={() => void runMutation(`removing Tag ${tag.name}`, async () => setLinks(await client.unlinkTag(itemId, itemKind, tag.id, memberId)))} /></>}</View>)}
     <TextInput accessibilityLabel="New Tag name" placeholder="New Tag" value={tagDraft} onChangeText={setTagDraft} style={styles.input} /><Button label="Create and add Tag" onPress={() => void addTag()} />
-    {tags.filter((tag) => !links.tags.some((linked) => linked.id === tag.id)).map((tag) => <View key={tag.id} style={styles.metadataRow}><Button label={`Add existing Tag ${tag.name}`} onPress={() => void mutate(() => client.linkTag(itemId, itemKind, tag.id, memberId))} />{editingTagId === tag.id ? <><TextInput accessibilityLabel={`Edit Tag ${tag.name}`} value={tagEditDraft} onChangeText={setTagEditDraft} style={styles.editInput} /><Button label={`Save Tag ${tag.name}`} onPress={() => void editTag(tag)} /></> : <Button label={`Edit Tag ${tag.name}`} onPress={() => { setEditingTagId(tag.id); setTagEditDraft(tag.name); }} />}</View>)}
+    {tags.filter((tag) => !links.tags.some((linked) => linked.id === tag.id)).map((tag) => <View key={tag.id} style={styles.metadataRow}><Button label={`Add existing Tag ${tag.name}`} onPress={() => void runMutation(`adding Tag ${tag.name}`, async () => setLinks(await client.linkTag(itemId, itemKind, tag.id, memberId)))} />{editingTagId === tag.id ? <><TextInput accessibilityLabel={`Edit Tag ${tag.name}`} value={tagEditDraft} onChangeText={setTagEditDraft} style={styles.editInput} /><Button label={`Save Tag ${tag.name}`} onPress={() => editTag(tag)} /></> : <Button label={`Edit Tag ${tag.name}`} onPress={() => { setEditingTagId(tag.id); setTagEditDraft(tag.name); }} />}</View>)}
     <Text style={styles.fieldLabel}>Entities</Text>
-    {links.entities.map((entity) => <View key={entity.id} style={styles.metadataRow}>{editingEntityId === entity.id ? <><TextInput accessibilityLabel={`Edit Entity ${entity.name}`} value={entityEditDraft} onChangeText={setEntityEditDraft} style={styles.editInput} /><View style={styles.typeRow}>{entityTypes.map((type) => <Pressable key={type} accessibilityRole="button" accessibilityLabel={`Edit Entity type ${type}`} onPress={() => setEntityEditType(type)} style={type === entityEditType ? styles.typeSelected : styles.typeOption}><Text>{type}</Text></Pressable>)}</View><Button label={`Save Entity ${entity.name}`} onPress={() => void editEntity(entity)} /></> : <><Text style={styles.metadataValue}>{entity.type} · {entity.name}</Text><Button label={`Edit Entity ${entity.name}`} onPress={() => { setEditingEntityId(entity.id); setEntityEditDraft(entity.name); setEntityEditType(entity.type); }} /><Button label={`Remove Entity ${entity.name}`} onPress={() => void mutate(() => client.unlinkEntity(itemId, itemKind, entity.id, memberId))} /></>}</View>)}
+    {links.entities.map((entity) => <View key={entity.id} style={styles.metadataRow}>{editingEntityId === entity.id ? <><TextInput accessibilityLabel={`Edit Entity ${entity.name}`} value={entityEditDraft} onChangeText={setEntityEditDraft} style={styles.editInput} /><View style={styles.typeRow}>{entityTypes.map((type) => <Pressable key={type} accessibilityRole="button" accessibilityLabel={`Edit Entity type ${type}`} onPress={() => setEntityEditType(type)} style={type === entityEditType ? styles.typeSelected : styles.typeOption}><Text>{type}</Text></Pressable>)}</View><Button label={`Save Entity ${entity.name}`} onPress={() => editEntity(entity)} /></> : <><Text style={styles.metadataValue}>{entity.type} · {entity.name}</Text><Button label={`Edit Entity ${entity.name}`} onPress={() => { setEditingEntityId(entity.id); setEntityEditDraft(entity.name); setEntityEditType(entity.type); }} /><Button label={`Remove Entity ${entity.name}`} onPress={() => void runMutation(`removing Entity ${entity.name}`, async () => setLinks(await client.unlinkEntity(itemId, itemKind, entity.id, memberId)))} /></>}</View>)}
     <TextInput accessibilityLabel="New Entity name" placeholder="New Entity" value={entityDraft} onChangeText={setEntityDraft} style={styles.input} />
     <View style={styles.typeRow}>{entityTypes.map((type) => <Pressable key={type} accessibilityRole="button" accessibilityLabel={`Entity type ${type}`} onPress={() => setEntityType(type)} style={type === entityType ? styles.typeSelected : styles.typeOption}><Text>{type}</Text></Pressable>)}</View>
     <Button label="Create and add Entity" onPress={() => void addEntity()} />
-    {entities.filter((entity) => !links.entities.some((linked) => linked.id === entity.id)).map((entity) => <View key={entity.id} style={styles.metadataRow}><Button label={`Add existing Entity ${entity.name}`} onPress={() => void mutate(() => client.linkEntity(itemId, itemKind, entity.id, memberId))} />{editingEntityId === entity.id ? <><TextInput accessibilityLabel={`Edit Entity ${entity.name}`} value={entityEditDraft} onChangeText={setEntityEditDraft} style={styles.editInput} /><View style={styles.typeRow}>{entityTypes.map((type) => <Pressable key={type} accessibilityRole="button" accessibilityLabel={`Edit Entity type ${type}`} onPress={() => setEntityEditType(type)} style={type === entityEditType ? styles.typeSelected : styles.typeOption}><Text>{type}</Text></Pressable>)}</View><Button label={`Save Entity ${entity.name}`} onPress={() => void editEntity(entity)} /></> : <Button label={`Edit Entity ${entity.name}`} onPress={() => { setEditingEntityId(entity.id); setEntityEditDraft(entity.name); setEntityEditType(entity.type); }} />}</View>)}
-    {mutationError ? <Text accessibilityRole="alert" style={styles.error}>{mutationError}</Text> : null}
+    {entities.filter((entity) => !links.entities.some((linked) => linked.id === entity.id)).map((entity) => <View key={entity.id} style={styles.metadataRow}><Button label={`Add existing Entity ${entity.name}`} onPress={() => void runMutation(`adding Entity ${entity.name}`, async () => setLinks(await client.linkEntity(itemId, itemKind, entity.id, memberId)))} />{editingEntityId === entity.id ? <><TextInput accessibilityLabel={`Edit Entity ${entity.name}`} value={entityEditDraft} onChangeText={setEntityEditDraft} style={styles.editInput} /><View style={styles.typeRow}>{entityTypes.map((type) => <Pressable key={type} accessibilityRole="button" accessibilityLabel={`Edit Entity type ${type}`} onPress={() => setEntityEditType(type)} style={type === entityEditType ? styles.typeSelected : styles.typeOption}><Text>{type}</Text></Pressable>)}</View><Button label={`Save Entity ${entity.name}`} onPress={() => editEntity(entity)} /></> : <Button label={`Edit Entity ${entity.name}`} onPress={() => { setEditingEntityId(entity.id); setEntityEditDraft(entity.name); setEntityEditType(entity.type); }} />}</View>)}
+    {mutationError ? <><Text accessibilityRole="alert" style={styles.error}>{mutationError}</Text>{pendingMutation ? <Button label={`Retry ${pendingMutation.label}`} onPress={() => void runMutation(pendingMutation.label, pendingMutation.operation)} /> : null}</> : null}
   </View>;
 }
 

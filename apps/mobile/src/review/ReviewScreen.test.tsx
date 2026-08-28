@@ -73,12 +73,31 @@ describe("ReviewScreen", () => {
 
   test("keeps links visible and reports a recoverable mutation failure", async () => {
     const tag = metadataTag("tag-1", "urgent");
-    const metadataClient = metadataFixture({ listTags: vi.fn().mockResolvedValue([tag]), listLinks: vi.fn().mockResolvedValue({ tags: [tag], entities: [] }), unlinkTag: vi.fn().mockRejectedValue(new Error("network unavailable")) });
+    const metadataClient = metadataFixture({ listTags: vi.fn().mockResolvedValue([tag]), listLinks: vi.fn().mockResolvedValue({ tags: [tag], entities: [] }), unlinkTag: vi.fn().mockRejectedValueOnce(new Error("network unavailable")).mockResolvedValueOnce({ tags: [], entities: [] }) });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
 
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Remove Tag urgent" }).props.onPress(); });
     expect(textContent(renderer)).toContain("network unavailable");
+    expect(textContent(renderer)).toContain("urgent");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry removing Tag urgent" }).props.onPress(); });
+    expect(metadataClient.unlinkTag).toHaveBeenCalledTimes(2);
+    expect(textContent(renderer)).not.toContain("network unavailable");
+    renderer.unmount();
+  });
+
+  test("retries a failed create-and-link operation without recreating the Tag", async () => {
+    const tag = metadataTag("tag-new", "urgent");
+    const metadataClient = metadataFixture({ createTag: vi.fn().mockResolvedValue(tag), linkTag: vi.fn().mockRejectedValueOnce(new Error("link unavailable")).mockResolvedValueOnce({ tags: [tag], entities: [] }) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "New Tag name" }).props.onChangeText("urgent"); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Create and add Tag" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("link unavailable");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Retry creating and adding Tag urgent" })).toBeTruthy();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry creating and adding Tag urgent" }).props.onPress(); });
+    expect(metadataClient.createTag).toHaveBeenCalledOnce();
+    expect(metadataClient.linkTag).toHaveBeenCalledTimes(2);
     expect(textContent(renderer)).toContain("urgent");
     renderer.unmount();
   });
