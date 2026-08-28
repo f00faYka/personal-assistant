@@ -83,6 +83,12 @@ describe("ItemSearchService", () => {
     expect(() => service.search({ memberId: "member-1", spaceId: "space-1", unassigned: true })).toThrow("cannot be combined");
   });
 
+  test("returns an explicit empty page when no item matches", () => {
+    const service = new ItemSearchService({ search: () => [] });
+
+    expect(service.search({ memberId: "member-1", text: "missing" })).toEqual({ items: [], nextCursor: null });
+  });
+
   test("uses a member-bound keyset cursor", () => {
     let cursor: unknown;
     const service = new ItemSearchService({ search: (_memberId, _filters, receivedCursor) => { cursor = receivedCursor; return [row("task-2", "task", "2026-08-14T10:00:00.000Z")]; } });

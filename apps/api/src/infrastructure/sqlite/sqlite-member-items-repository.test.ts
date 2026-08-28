@@ -51,6 +51,8 @@ describe("SqliteMemberItemsRepository", () => {
       INSERT INTO entities (id, member_id, name, type, created_at) VALUES ('entity-acme', 'member-1', 'Acme', 'Organization', '2026-08-14T09:00:00.000Z');
       INSERT INTO outcomes (id, kind, member_id, interpretation_id, capture_id, source_id, title, status, created_at, primary_space_id)
         VALUES ('task-match', 'task', 'member-1', 'i-1', 'capture-match', 'source-1', 'Plan Acme work', 'open', '2026-08-14T12:00:00.000Z', 'space-child');
+      INSERT INTO outcomes (id, kind, member_id, interpretation_id, capture_id, source_id, title, status, created_at, primary_space_id)
+        VALUES ('task-russian', 'task', 'member-1', 'i-5', 'capture-russian', 'source-5', 'Купить МОЛОКО', 'open', '2026-08-14T11:30:00.000Z', 'space-root');
       INSERT INTO outcomes (id, kind, member_id, interpretation_id, capture_id, source_id, title, status, created_at)
         VALUES ('task-unassigned', 'task', 'member-1', 'i-2', 'capture-unassigned', 'source-2', 'Plan Acme work', 'open', '2026-08-14T11:00:00.000Z');
       INSERT INTO outcomes (id, kind, member_id, interpretation_id, capture_id, source_id, title, status, created_at)
@@ -64,6 +66,7 @@ describe("SqliteMemberItemsRepository", () => {
     const repository = new SqliteMemberItemsRepository(databasePath);
 
     const matched = repository.search("member-1", { text: "acme", spaceId: "space-root", unassigned: false, tagId: "tag-work", entityId: "entity-acme" }, undefined, 10);
+    const russian = repository.search("member-1", { text: "молоко", unassigned: false }, undefined, 10);
     const unassigned = repository.search("member-1", { unassigned: true }, undefined, 10);
     const firstPage = repository.search("member-1", { unassigned: true }, undefined, 1);
     const secondPage = repository.search("member-1", { unassigned: true }, {
@@ -72,6 +75,7 @@ describe("SqliteMemberItemsRepository", () => {
     repository.close();
 
     expect(matched.map((row) => row.itemId)).toEqual(["task-match"]);
+    expect(russian.map((row) => row.itemId)).toEqual(["task-russian"]);
     expect(unassigned.map((row) => row.itemId)).toEqual(["task-unassigned", "note-unassigned"]);
     expect(firstPage.map((row) => [row.itemId, row.itemKind])).toEqual([["task-unassigned", "task"]]);
     expect(secondPage.map((row) => [row.itemId, row.itemKind])).toEqual([["note-unassigned", "note"]]);
