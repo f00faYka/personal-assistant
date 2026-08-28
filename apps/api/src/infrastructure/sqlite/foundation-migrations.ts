@@ -230,4 +230,32 @@ export const foundationMigrations: readonly Migration[] = [
       CREATE INDEX item_entities_item_index ON item_entities(member_id, item_id, item_kind);
     `,
   },
+  {
+    version: 14,
+    name: "create organization proposals",
+    sql: `
+      CREATE TABLE organization_proposals (
+        id TEXT PRIMARY KEY, member_id TEXT NOT NULL, item_id TEXT NOT NULL,
+        item_kind TEXT NOT NULL CHECK (item_kind IN ('task', 'note')),
+        idempotency_key TEXT NOT NULL, model_version TEXT NOT NULL, rules_version TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('pending', 'accepted', 'dismissed')),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        UNIQUE (member_id, idempotency_key)
+      ) STRICT;
+      CREATE TABLE organization_proposal_candidates (
+        id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL REFERENCES organization_proposals(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('space', 'tag', 'entity')), confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+        confidence_band TEXT NOT NULL CHECK (confidence_band IN ('high', 'medium', 'low')),
+        target_id TEXT, suggested_name TEXT, entity_type TEXT, provenance_json TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('pending', 'accepted', 'dismissed')),
+        CHECK (target_id IS NOT NULL OR suggested_name IS NOT NULL)
+      ) STRICT;
+      CREATE TABLE suggested_organization_metadata (
+        id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL REFERENCES organization_proposals(id) ON DELETE CASCADE,
+        candidate_id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL CHECK (kind IN ('tag', 'entity')),
+        name TEXT NOT NULL, entity_type TEXT, created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX organization_proposals_item_index ON organization_proposals(member_id, item_id, item_kind);
+    `,
+  },
 ];
