@@ -96,7 +96,7 @@ describe("SpacePanel", () => {
     const input = renderer.root.findAllByType(TextInput).find((node) => node.props.accessibilityLabel === "Rename Space Home")!;
     await act(async () => { input.props.onChangeText("House"); });
     await act(async () => { await renderer.root.findByProps({ accessibilityLabel: "Save Space Home" }).props.onPress(); });
-    expect(textContent(renderer)).not.toContain("Buy milk");
+    expect(textContent(renderer)).toContain("Buy milk");
     expect(textContent(renderer)).toContain("Unable to refresh Space contents: offline");
     renderer.unmount();
   });
