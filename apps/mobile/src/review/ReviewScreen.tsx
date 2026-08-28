@@ -4,6 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { createOfflineDraftId, type OfflineDraftStore } from "../offline/offline-drafts";
 import { shouldPersistOfflineDraft } from "../http/request-error";
+import { entityTypes, type EntityType, type MetadataClient, type MetadataItemKind, type MetadataLinks } from "./metadata";
 import { createReviewClient, type ReviewClient, type ReviewContract, type ReviewOutcome } from "./review";
 
 interface ReviewScreenProps {
@@ -13,13 +14,15 @@ interface ReviewScreenProps {
   readonly onBack: () => void;
   readonly client?: ReviewClient;
   readonly offlineDraftStore?: OfflineDraftStore;
+  readonly metadataClient?: MetadataClient;
 }
 
 type ReviewStatus = { readonly status: "loading" } | { readonly status: "error"; readonly message: string } | { readonly status: "ready"; readonly review: ReviewContract };
 type Draft = { readonly title?: string; readonly dueAt?: string | null; readonly content?: string };
 
-export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: providedClient, offlineDraftStore }: ReviewScreenProps) {
+export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: providedClient, offlineDraftStore, metadataClient: providedMetadataClient }: ReviewScreenProps) {
   const client = useMemo(() => providedClient ?? createReviewClient(apiBaseUrl), [apiBaseUrl, providedClient]);
+  const metadataClient = useMemo(() => providedMetadataClient ?? null, [providedMetadataClient]);
   const [state, setState] = useState<ReviewStatus>({ status: "loading" });
   const [draft, setDraft] = useState<Draft>({});
   const [editing, setEditing] = useState<"title" | "dueAt" | "content" | null>(null);
@@ -165,6 +168,7 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     <Text style={styles.title}>{state.review.outcome?.kind === "task" ? "Task" : state.review.outcome?.kind === "note" ? "Note" : state.review.state === "failed" ? "Processing failed" : "Processing"}</Text>
     <Text style={styles.stateText}>Original source and processing history remain separate from editable result fields.</Text>
     {state.review.outcome ? <ReviewFields outcome={state.review.outcome} draft={draft} editing={editing} onEdit={setEditing} onChange={setDraft} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}
+    {state.review.outcome && metadataClient ? <MetadataControls client={metadataClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> : null}
     <Text style={styles.sectionTitle}>Source and provenance</Text>
     <Text style={styles.provenance}>Capture {state.review.capture.id} · source {state.review.source.id}</Text>
     {state.review.transcription ? <><Text style={styles.fieldLabel}>Original transcription{state.review.transcription.language ? ` · ${state.review.transcription.language}` : ""}</Text><Text style={styles.originalText}>{state.review.transcription.text ?? `Status: ${state.review.transcription.status}`}</Text></> : <Text style={styles.provenance}>Original transcription · pending</Text>}
@@ -181,6 +185,65 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     {conversionError ? <Text accessibilityRole="alert" style={styles.error}>{conversionError}</Text> : null}
     {conversionNotice ? <Text accessibilityRole="alert" style={styles.success}>{conversionNotice}</Text> : null}
   </ReviewShell>;
+}
+
+function MetadataControls({ client, memberId, itemId, itemKind }: { readonly client: MetadataClient; readonly memberId: string; readonly itemId: string; readonly itemKind: MetadataItemKind }) {
+  const [links, setLinks] = useState<MetadataLinks>({ tags: [], entities: [] });
+  const [tags, setTags] = useState<readonly import("./metadata").Tag[]>([]);
+  const [entities, setEntities] = useState<readonly import("./metadata").Entity[]>([]);
+  const [tagDraft, setTagDraft] = useState("");
+  const [entityDraft, setEntityDraft] = useState("");
+  const [entityType, setEntityType] = useState<EntityType>(entityTypes[0]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [nextLinks, nextTags, nextEntities] = await Promise.all([client.listLinks(itemId, itemKind, memberId), client.listTags(memberId), client.listEntities(memberId)]);
+      setLinks(nextLinks); setTags(nextTags); setEntities(nextEntities);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load Tags and Entities"); }
+    finally { setLoading(false); }
+  }, [client, itemId, itemKind, memberId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const mutate = async (operation: () => Promise<MetadataLinks>) => {
+    setMutationError(null);
+    try { setLinks(await operation()); }
+    catch (cause) { setMutationError(cause instanceof Error ? cause.message : "Unable to update metadata"); }
+  };
+  const addTag = async () => {
+    const name = tagDraft.trim();
+    if (!name) { setMutationError("Tag name must not be empty"); return; }
+    try { const tag = await client.createTag(memberId, name); setTags((current) => [...current, tag].sort((a, b) => a.name.localeCompare(b.name))); setTagDraft(""); await mutate(() => client.linkTag(itemId, itemKind, tag.id, memberId)); }
+    catch (cause) { setMutationError(cause instanceof Error ? cause.message : "Unable to create Tag"); }
+  };
+  const addEntity = async () => {
+    const name = entityDraft.trim();
+    if (!name) { setMutationError("Entity name must not be empty"); return; }
+    try { const entity = await client.createEntity(memberId, name, entityType); setEntities((current) => [...current, entity].sort((a, b) => a.name.localeCompare(b.name))); setEntityDraft(""); await mutate(() => client.linkEntity(itemId, itemKind, entity.id, memberId)); }
+    catch (cause) { setMutationError(cause instanceof Error ? cause.message : "Unable to create Entity"); }
+  };
+  if (loading) return <View style={styles.metadata}><Text style={styles.sectionTitle}>Tags and Entities</Text><Text style={styles.stateText}>Loading metadata…</Text></View>;
+  if (error) return <View style={styles.metadata}><Text style={styles.sectionTitle}>Tags and Entities</Text><Text accessibilityRole="alert" style={styles.error}>{error}</Text><Button label="Retry Tags and Entities" onPress={() => void load()} /></View>;
+  return <View style={styles.metadata}>
+    <Text style={styles.sectionTitle}>Tags and Entities</Text>
+    <Text style={styles.stateText}>Tags are flat markers. Entities are named {entityTypes.join(", ")}. Spaces and Task importance are separate controls.</Text>
+    <Text style={styles.fieldLabel}>Tags</Text>
+    {links.tags.map((tag) => <View key={tag.id} style={styles.metadataRow}><Text style={styles.metadataValue}>Tag · {tag.name}</Text><Button label={`Remove Tag ${tag.name}`} onPress={() => void mutate(() => client.unlinkTag(itemId, itemKind, tag.id, memberId))} /></View>)}
+    <TextInput accessibilityLabel="New Tag name" placeholder="New Tag" value={tagDraft} onChangeText={setTagDraft} style={styles.input} /><Button label="Create and add Tag" onPress={() => void addTag()} />
+    {tags.filter((tag) => !links.tags.some((linked) => linked.id === tag.id)).map((tag) => <Button key={tag.id} label={`Add existing Tag ${tag.name}`} onPress={() => void mutate(() => client.linkTag(itemId, itemKind, tag.id, memberId))} />)}
+    <Text style={styles.fieldLabel}>Entities</Text>
+    {links.entities.map((entity) => <View key={entity.id} style={styles.metadataRow}><Text style={styles.metadataValue}>{entity.type} · {entity.name}</Text><Button label={`Remove Entity ${entity.name}`} onPress={() => void mutate(() => client.unlinkEntity(itemId, itemKind, entity.id, memberId))} /></View>)}
+    <TextInput accessibilityLabel="New Entity name" placeholder="New Entity" value={entityDraft} onChangeText={setEntityDraft} style={styles.input} />
+    <View style={styles.typeRow}>{entityTypes.map((type) => <Pressable key={type} accessibilityRole="button" accessibilityLabel={`Entity type ${type}`} onPress={() => setEntityType(type)} style={type === entityType ? styles.typeSelected : styles.typeOption}><Text>{type}</Text></Pressable>)}</View>
+    <Button label="Create and add Entity" onPress={() => void addEntity()} />
+    {entities.filter((entity) => !links.entities.some((linked) => linked.id === entity.id)).map((entity) => <Button key={entity.id} label={`Add existing Entity ${entity.name}`} onPress={() => void mutate(() => client.linkEntity(itemId, itemKind, entity.id, memberId))} />)}
+    {mutationError ? <Text accessibilityRole="alert" style={styles.error}>{mutationError}</Text> : null}
+  </View>;
 }
 
 function ReviewStateBanner({ review }: { readonly review: ReviewContract }) {
@@ -281,4 +344,4 @@ function pad(value: number): string { return String(value).padStart(2, "0"); }
 function ReviewShell({ children, onBack }: { readonly children: ReactNode; readonly onBack: () => void }) { return <SafeAreaView style={styles.safeArea}><Pressable accessibilityRole="button" accessibilityLabel="Back to items" onPress={onBack}><Text style={styles.back}>‹ Items</Text></Pressable><ScrollView contentContainerStyle={styles.content}>{children}</ScrollView></SafeAreaView>; }
 function Button({ label, onPress, disabled = false }: { readonly label: string; readonly onPress: () => void; readonly disabled?: boolean }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress} style={styles.button}><Text style={styles.buttonText}>{label}</Text></Pressable>; }
 
-const styles = StyleSheet.create({ safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, content: { padding: 24 }, back: { color: "#7A5C36", fontSize: 16, paddingHorizontal: 24, paddingTop: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 32, fontWeight: "700", marginTop: 6 }, stateText: { color: "#716B64", fontSize: 15, lineHeight: 22, marginTop: 8 }, reviewState: { color: "#8C3D25", fontSize: 15, fontWeight: "600", lineHeight: 22, marginTop: 18 }, field: { marginTop: 24 }, fieldLabel: { color: "#8B7355", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, value: { color: "#24221F", fontSize: 19, lineHeight: 27, marginTop: 5 }, originalText: { color: "#716B64", fontSize: 16, lineHeight: 24, marginTop: 5 }, input: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", fontSize: 19, lineHeight: 27, paddingVertical: 5 }, sectionTitle: { color: "#24221F", fontSize: 17, fontWeight: "700", marginTop: 32 }, provenance: { color: "#716B64", fontSize: 14, lineHeight: 21, marginTop: 6 }, button: { alignSelf: "flex-start", backgroundColor: "#24221F", borderRadius: 12, marginTop: 24, paddingHorizontal: 20, paddingVertical: 12 }, buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, error: { color: "#A33B31", fontSize: 14, marginTop: 12 }, success: { color: "#356445", fontSize: 14, marginTop: 12 }, dueBubbles: { flexDirection: "row", gap: 8, marginTop: 10 }, dueBubble: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 }, dueBubbleText: { color: "#24221F", fontSize: 16 }, clearDue: { color: "#8C3D25", fontSize: 14, marginTop: 12 }, pickerPanel: { backgroundColor: "#EFEAE2", borderRadius: 16, marginTop: 14, padding: 16 }, pickerHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" }, pickerTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, pickerHint: { color: "#716B64", fontSize: 13, marginTop: 8 }, monthRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginVertical: 18 }, calendarGrid: { flexDirection: "row", flexWrap: "wrap" }, calendarDay: { alignItems: "center", justifyContent: "center", minHeight: 38, width: "14.285%" }, calendarDaySelected: { backgroundColor: "#D5B98D", borderRadius: 19 } });
+const styles = StyleSheet.create({ safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, content: { padding: 24 }, back: { color: "#7A5C36", fontSize: 16, paddingHorizontal: 24, paddingTop: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 32, fontWeight: "700", marginTop: 6 }, stateText: { color: "#716B64", fontSize: 15, lineHeight: 22, marginTop: 8 }, reviewState: { color: "#8C3D25", fontSize: 15, fontWeight: "600", lineHeight: 22, marginTop: 18 }, field: { marginTop: 24 }, fieldLabel: { color: "#8B7355", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, value: { color: "#24221F", fontSize: 19, lineHeight: 27, marginTop: 5 }, originalText: { color: "#716B64", fontSize: 16, lineHeight: 24, marginTop: 5 }, input: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", fontSize: 19, lineHeight: 27, paddingVertical: 5 }, sectionTitle: { color: "#24221F", fontSize: 17, fontWeight: "700", marginTop: 32 }, provenance: { color: "#716B64", fontSize: 14, lineHeight: 21, marginTop: 6 }, metadata: { borderTopColor: "#D8CFC2", borderTopWidth: 1, marginTop: 30, paddingTop: 4 }, metadataRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" }, metadataValue: { color: "#24221F", flex: 1, fontSize: 16, marginTop: 18 }, typeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 }, typeOption: { borderColor: "#B9A895", borderRadius: 10, borderWidth: 1, padding: 8 }, typeSelected: { backgroundColor: "#D5B98D", borderColor: "#8B7355", borderRadius: 10, borderWidth: 1, padding: 8 }, button: { alignSelf: "flex-start", backgroundColor: "#24221F", borderRadius: 12, marginTop: 24, paddingHorizontal: 20, paddingVertical: 12 }, buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, error: { color: "#A33B31", fontSize: 14, marginTop: 12 }, success: { color: "#356445", fontSize: 14, marginTop: 12 }, dueBubbles: { flexDirection: "row", gap: 8, marginTop: 10 }, dueBubble: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 }, dueBubbleText: { color: "#24221F", fontSize: 16 }, clearDue: { color: "#8C3D25", fontSize: 14, marginTop: 12 }, pickerPanel: { backgroundColor: "#EFEAE2", borderRadius: 16, marginTop: 14, padding: 16 }, pickerHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" }, pickerTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, pickerHint: { color: "#716B64", fontSize: 13, marginTop: 8 }, monthRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginVertical: 18 }, calendarGrid: { flexDirection: "row", flexWrap: "wrap" }, calendarDay: { alignItems: "center", justifyContent: "center", minHeight: 38, width: "14.285%" }, calendarDaySelected: { backgroundColor: "#D5B98D", borderRadius: 19 } });
