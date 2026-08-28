@@ -63,6 +63,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
   const captureKey = useRef<string | null>(null);
   const captureCreatedAt = useRef<string | null>(null);
   const loadingCursor = useRef<string | null>(null);
+  const requestGeneration = useRef(0);
   const deletedOfflineDraftIds = useRef(new Set<string>());
   const metadataClient = useMemo(() => createMetadataClient(apiBaseUrl), [apiBaseUrl]);
 
@@ -100,7 +101,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     setOfflineDraftSync((current) => ({ ...current, [draft.draftId]: result }));
   }, [client, memberId, offlineDraftStore, offlineDraftSyncClient]);
 
-  const load = useCallback(async (isRefresh = false, cursor?: string) => {
+  const load = useCallback(async (isRefresh = false, cursor?: string, generation = requestGeneration.current) => {
     if (isRefresh) setRefreshing(true);
     else if (cursor) {
       if (loadingCursor.current === cursor) return;
@@ -110,18 +111,30 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     else setState((current) => ({ status: "loading", items: current.items }));
     try {
       const page = hasSearch ? await client.search(memberId, filters, cursor) : await client.list(memberId, cursor);
+      if (generation !== requestGeneration.current) return;
       setState((current) => {
         const nextPage = listStateFromPage(page);
         return { ...nextPage, items: cursor ? appendUniqueItems(current.items, nextPage.items) : nextPage.items };
       });
     } catch (error) {
+      if (generation !== requestGeneration.current) return;
       setState((current) => cursor ? paginationStateFromError(current.items, cursor, error) : listStateFromError(current.items, error));
     } finally {
-      setRefreshing(false);
-      setLoadingMore(false);
-      if (cursor) loadingCursor.current = null;
+      if (generation === requestGeneration.current) {
+        setRefreshing(false);
+        setLoadingMore(false);
+        if (cursor) loadingCursor.current = null;
+      }
     }
   }, [client, filters, hasSearch, memberId]);
+
+  const startFreshLoad = useCallback((isRefresh = false) => {
+    const generation = ++requestGeneration.current;
+    loadingCursor.current = null;
+    return load(isRefresh, undefined, generation);
+  }, [load]);
+
+  const refresh = useCallback(() => startFreshLoad(true), [startFreshLoad]);
 
   const openSearch = useCallback(() => {
     setSearchOpen(true);
@@ -222,7 +235,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     }
   }, [captureSubmitter, memberId, offlineDraftStore, synchronizeDraft, voiceRecorder]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void startFreshLoad(); }, [startFreshLoad]);
 
   useEffect(() => {
     if (!offlineDraftStore) return;
@@ -287,7 +300,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
           const next = current ? resolvePreview(current, page.items, Date.now()) : current;
           if (next?.status === "preview" && selectedSpaceId !== null && !assignedCaptures.current.has(next.item.captureId)) {
             assignedCaptures.current.add(next.item.captureId);
-            void spacesClient.assign(next.item.id, next.item.kind, memberId, selectedSpaceId).then(() => void load(true)).catch(() => { assignedCaptures.current.delete(next.item.captureId); });
+            void spacesClient.assign(next.item.id, next.item.kind, memberId, selectedSpaceId).then(() => void refresh()).catch(() => { assignedCaptures.current.delete(next.item.captureId); });
           }
           return next;
         });
@@ -298,7 +311,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     };
     void poll();
     return () => { cancelled = true; };
-  }, [client, load, memberId, preview, selectedSpaceId, spacesClient]);
+  }, [client, memberId, preview, refresh, selectedSpaceId, spacesClient]);
 
   useEffect(() => {
     if (!preview || preview.status !== "preview") return;
@@ -314,15 +327,15 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
 
   const saveResultPreview = useCallback(() => {
     setPreview((current) => current ? savePreview(current) : current);
-    void load(true);
-  }, [load]);
+    void refresh();
+  }, [refresh]);
 
   const assignItem = useCallback(async (item: AssignableItem, spaceId: string | null) => {
     setAssigningItemId(item.id); setSpaceError(null); setFailedAssignment(null);
-    try { await spacesClient.assign(item.id, item.kind, memberId, spaceId); await load(true); }
+    try { await spacesClient.assign(item.id, item.kind, memberId, spaceId); await refresh(); }
     catch (cause) { setSpaceError(cause instanceof Error ? cause.message : "Unable to update Space assignment"); setFailedAssignment({ item, spaceId }); }
     finally { setAssigningItemId(null); }
-  }, [load, memberId, spacesClient]);
+  }, [memberId, refresh, spacesClient]);
 
   useEffect(() => {
     if (capture.status !== "recording") {
@@ -358,14 +371,14 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       {offlineDraftError ? <OfflineDraftErrorBanner message={offlineDraftError} /> : null}
       {state.status === "loading" && timelineItems.length === 0 ? <LoadingState /> : null}
       {state.status === "loading" && timelineItems.length > 0 ? <LoadingBanner message={hasSearch ? "Updating search results…" : "Refreshing your items…"} /> : null}
-      {state.status === "error" && timelineItems.length === 0 ? <ErrorState message={state.message} onRetry={() => void load()} /> : null}
-      {state.status === "ready" && timelineItems.length === 0 ? <EmptyState searching={hasSearch} onRefresh={() => void load(true)} /> : null}
-      {state.status === "error" && timelineItems.length > 0 ? <ErrorBanner message={state.message} onRetry={() => void load(true)} /> : null}
+      {state.status === "error" && timelineItems.length === 0 ? <ErrorState message={state.message} onRetry={() => void refresh()} /> : null}
+      {state.status === "ready" && timelineItems.length === 0 ? <EmptyState searching={hasSearch} onRefresh={() => void refresh()} /> : null}
+      {state.status === "error" && timelineItems.length > 0 ? <ErrorBanner message={state.message} onRetry={() => void refresh()} /> : null}
       {timelineItems.length > 0 ? (
         <FlatList
           data={timelineItems}
           keyExtractor={(entry) => entry.kind === "offline_draft" ? `offline:${entry.draft.draftId}` : `${entry.item.kind}:${entry.item.id}`}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
           onEndReached={state.status === "ready" && state.nextCursor && !loadingMore ? () => void load(false, state.nextCursor ?? undefined) : undefined}
           onEndReachedThreshold={0.5}
           ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} /> : state.status === "pagination_error" ? <PaginationError message={state.message} onRetry={() => void load(false, state.failedCursor)} /> : null}
