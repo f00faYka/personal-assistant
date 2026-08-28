@@ -9,7 +9,7 @@ import { NoteService, OutcomeService, TaskService } from "./features/outcomes/ou
 import { SqliteOutcomeRepository } from "./infrastructure/sqlite/sqlite-outcome-repository.js";
 import { SqliteTranscriptionRepository } from "./infrastructure/sqlite/sqlite-transcription-repository.js";
 import { ReviewService } from "./features/reviews/review.js";
-import { MemberItemsService } from "./features/items/items.js";
+import { ItemSearchService, MemberItemsService } from "./features/items/items.js";
 import { SqliteMemberItemsRepository } from "./infrastructure/sqlite/sqlite-member-items-repository.js";
 import { OfflineDraftService } from "./features/offline-drafts/offline-draft.js";
 import { SqliteOfflineDraftRepository } from "./infrastructure/sqlite/sqlite-offline-draft-repository.js";
@@ -88,6 +88,7 @@ async function start(): Promise<void> {
     noteService: new NoteService(outcomeRepository),
     taskService: new TaskService(outcomeRepository),
     memberItemsService: new MemberItemsService(memberItemsRepository),
+    itemSearchService: new ItemSearchService(memberItemsRepository),
     offlineDraftService: new OfflineDraftService(
       offlineDraftRepository,
       captureService,
