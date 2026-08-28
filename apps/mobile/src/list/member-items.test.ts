@@ -30,6 +30,27 @@ describe("Member items client", () => {
     expect(fetcher).toHaveBeenCalledWith("http://api.test/items?memberId=member-1&cursor=cursor%2F1");
   });
 
+  test("searches with combined content and organization filters", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [], nextCursor: null }), { status: 200 }));
+
+    await createMemberItemsClient("http://api.test", fetcher).search("member-1", {
+      text: "milk",
+      spaceId: "space-1",
+      tagId: "tag-1",
+      entityId: "entity-1",
+    }, "cursor/2");
+
+    expect(fetcher).toHaveBeenCalledWith("http://api.test/items/search?memberId=member-1&q=milk&spaceId=space-1&tagId=tag-1&entityId=entity-1&cursor=cursor%2F2");
+  });
+
+  test("searches the discoverable unassigned root", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [], nextCursor: null }), { status: 200 }));
+
+    await createMemberItemsClient("http://api.test", fetcher).search("member-1", { unassigned: true });
+
+    expect(fetcher).toHaveBeenCalledWith("http://api.test/items/search?memberId=member-1&unassigned=true");
+  });
+
   test("represents an empty server response as an empty ready state", () => {
     expect(listStateFromPage({ items: [], nextCursor: null })).toEqual({ status: "ready", items: [], nextCursor: null });
   });
