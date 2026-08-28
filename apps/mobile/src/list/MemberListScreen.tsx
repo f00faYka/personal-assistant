@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, AppState, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { createIdempotencyKey, type CaptureSubmitter, type RecordedAudio, type VoiceRecorder } from "../capture/voice-capture";
@@ -7,10 +7,11 @@ import { createWaveformBars } from "../capture/audio-waveform";
 import { shouldPersistOfflineDraft } from "../http/request-error";
 import type { OfflineDraft, OfflineDraftStore } from "../offline/offline-drafts";
 import type { OfflineDraftSynchronizationResult, OfflineDraftSyncClient } from "../offline/synchronize-offline-drafts";
-import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, paginationStateFromError, type ListState, type MemberListItem } from "./member-items";
+import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, paginationStateFromError, type ListState, type MemberListItem, type SearchFilters } from "./member-items";
 import { beginPreview, expirePreview, resolvePreview, savePreview, timeOutPreview, type PreviewItem, type PreviewState } from "../preview/result-preview";
 import { SpacePanel } from "../spaces/SpacePanel";
 import { createSpacesClient, type Space } from "../spaces/spaces";
+import { createMetadataClient, type Entity, type Tag } from "../review/metadata";
 
 interface MemberListScreenProps {
   readonly apiBaseUrl: string;
@@ -53,12 +54,20 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
   const [assigningItemId, setAssigningItemId] = useState<string | null>(null);
   const [spaceError, setSpaceError] = useState<string | null>(null);
   const [failedAssignment, setFailedAssignment] = useState<{ readonly item: AssignableItem; readonly spaceId: string | null } | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  const [filters, setFilters] = useState<SearchFilters>({});
+  const [filterOptions, setFilterOptions] = useState<FilterOptionsState>({ status: "idle" });
   const assignedCaptures = useRef(new Set<string>());
   const submissionInFlight = useRef(false);
   const captureKey = useRef<string | null>(null);
   const captureCreatedAt = useRef<string | null>(null);
   const loadingCursor = useRef<string | null>(null);
+  const requestGeneration = useRef(0);
   const deletedOfflineDraftIds = useRef(new Set<string>());
+  const metadataClient = useMemo(() => createMetadataClient(apiBaseUrl), [apiBaseUrl]);
+
+  const hasSearch = Object.values(filters).some((value) => value !== undefined && value !== "");
 
   const synchronizeDraft = useCallback(async (draft: OfflineDraft) => {
     if (!offlineDraftStore || !offlineDraftSyncClient) return;
@@ -92,7 +101,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     setOfflineDraftSync((current) => ({ ...current, [draft.draftId]: result }));
   }, [client, memberId, offlineDraftStore, offlineDraftSyncClient]);
 
-  const load = useCallback(async (isRefresh = false, cursor?: string) => {
+  const load = useCallback(async (isRefresh = false, cursor?: string, generation = requestGeneration.current) => {
     if (isRefresh) setRefreshing(true);
     else if (cursor) {
       if (loadingCursor.current === cursor) return;
@@ -101,19 +110,49 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     }
     else setState((current) => ({ status: "loading", items: current.items }));
     try {
-      const page = await client.list(memberId, cursor);
+      const page = hasSearch ? await client.search(memberId, filters, cursor) : await client.list(memberId, cursor);
+      if (generation !== requestGeneration.current) return;
       setState((current) => {
         const nextPage = listStateFromPage(page);
         return { ...nextPage, items: cursor ? appendUniqueItems(current.items, nextPage.items) : nextPage.items };
       });
     } catch (error) {
+      if (generation !== requestGeneration.current) return;
       setState((current) => cursor ? paginationStateFromError(current.items, cursor, error) : listStateFromError(current.items, error));
     } finally {
-      setRefreshing(false);
-      setLoadingMore(false);
-      if (cursor) loadingCursor.current = null;
+      if (generation === requestGeneration.current) {
+        setRefreshing(false);
+        setLoadingMore(false);
+        if (cursor) loadingCursor.current = null;
+      }
     }
-  }, [client, memberId]);
+  }, [client, filters, hasSearch, memberId]);
+
+  const startFreshLoad = useCallback((isRefresh = false) => {
+    const generation = ++requestGeneration.current;
+    loadingCursor.current = null;
+    return load(isRefresh, undefined, generation);
+  }, [load]);
+
+  const refresh = useCallback(() => startFreshLoad(true), [startFreshLoad]);
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+    if (filterOptions.status === "loading" || filterOptions.status === "ready") return;
+    setFilterOptions({ status: "loading" });
+    Promise.all([spacesClient.list(memberId), metadataClient.listTags(memberId), metadataClient.listEntities(memberId)])
+      .then(([nextSpaces, tags, entities]) => {
+        setSpaces(nextSpaces);
+        setFilterOptions({ status: "ready", spaces: nextSpaces, tags, entities });
+      })
+      .catch((error: unknown) => setFilterOptions({ status: "error", message: error instanceof Error ? error.message : "Unable to load search filters" }));
+  }, [filterOptions.status, memberId, metadataClient, spacesClient]);
+
+  const applyFilters = useCallback((next: SearchFilters) => setFilters(next), []);
+  const clearFilters = useCallback(() => {
+    setSearchText("");
+    setFilters({});
+  }, []);
 
   const startCapture = useCallback(async () => {
     if (!voiceRecorder || capture.status !== "idle") return;
@@ -196,7 +235,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     }
   }, [captureSubmitter, memberId, offlineDraftStore, synchronizeDraft, voiceRecorder]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void startFreshLoad(); }, [startFreshLoad]);
 
   useEffect(() => {
     if (!offlineDraftStore) return;
@@ -261,7 +300,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
           const next = current ? resolvePreview(current, page.items, Date.now()) : current;
           if (next?.status === "preview" && selectedSpaceId !== null && !assignedCaptures.current.has(next.item.captureId)) {
             assignedCaptures.current.add(next.item.captureId);
-            void spacesClient.assign(next.item.id, next.item.kind, memberId, selectedSpaceId).then(() => void load(true)).catch(() => { assignedCaptures.current.delete(next.item.captureId); });
+            void spacesClient.assign(next.item.id, next.item.kind, memberId, selectedSpaceId).then(() => void refresh()).catch(() => { assignedCaptures.current.delete(next.item.captureId); });
           }
           return next;
         });
@@ -272,7 +311,7 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     };
     void poll();
     return () => { cancelled = true; };
-  }, [client, load, memberId, preview, selectedSpaceId, spacesClient]);
+  }, [client, memberId, preview, refresh, selectedSpaceId, spacesClient]);
 
   useEffect(() => {
     if (!preview || preview.status !== "preview") return;
@@ -288,15 +327,15 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
 
   const saveResultPreview = useCallback(() => {
     setPreview((current) => current ? savePreview(current) : current);
-    void load(true);
-  }, [load]);
+    void refresh();
+  }, [refresh]);
 
   const assignItem = useCallback(async (item: AssignableItem, spaceId: string | null) => {
     setAssigningItemId(item.id); setSpaceError(null); setFailedAssignment(null);
-    try { await spacesClient.assign(item.id, item.kind, memberId, spaceId); await load(true); }
+    try { await spacesClient.assign(item.id, item.kind, memberId, spaceId); await refresh(); }
     catch (cause) { setSpaceError(cause instanceof Error ? cause.message : "Unable to update Space assignment"); setFailedAssignment({ item, spaceId }); }
     finally { setAssigningItemId(null); }
-  }, [load, memberId, spacesClient]);
+  }, [memberId, refresh, spacesClient]);
 
   useEffect(() => {
     if (capture.status !== "recording") {
@@ -310,10 +349,12 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     return () => clearInterval(timer);
   }, [capture.status]);
 
-  const timelineItems: readonly TimelineItem[] = [
-    ...offlineDrafts.map((draft): TimelineItem => ({ kind: "offline_draft", draft })),
-    ...state.items.map((item): TimelineItem => ({ kind: "server_item", item })),
-  ];
+  const timelineItems: readonly TimelineItem[] = hasSearch
+    ? state.items.map((item): TimelineItem => ({ kind: "server_item", item }))
+    : [
+      ...offlineDrafts.map((draft): TimelineItem => ({ kind: "offline_draft", draft })),
+      ...state.items.map((item): TimelineItem => ({ kind: "server_item", item })),
+    ];
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -323,19 +364,21 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
         {voiceRecorder && capture.status === "idle" ? <Pressable accessibilityRole="button" accessibilityLabel="Record a voice Capture" onPress={() => void startCapture()} style={styles.captureButton}><Text style={styles.captureButtonText}>Record a Capture</Text></Pressable> : null}
       </View>
       <SpacePanel client={spacesClient} memberId={memberId} selectedSpaceId={selectedSpaceId} onSelect={setSelectedSpaceId} onSpacesChanged={setSpaces} />
+      <SearchFilterPanel open={searchOpen} text={searchText} filters={filters} options={filterOptions} onOpen={openSearch} onTextChange={setSearchText} onApplyText={() => applyFilters(withTextFilter(filters, searchText))} onApply={applyFilters} onClear={clearFilters} onRetry={openSearch} />
       {spaceError && failedAssignment ? <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{spaceError}</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry Space assignment" onPress={() => void assignItem(failedAssignment.item, failedAssignment.spaceId)}><Text style={styles.retryText}>Retry assignment</Text></Pressable></View> : null}
       {voiceRecorder && capture.status !== "idle" ? <CapturePanel state={capture} recordingElapsedSeconds={recordingElapsedSeconds} recordingMetering={recordingMetering} recordingInterrupted={recordingInterrupted} onStop={() => void stopCapture()} onCancel={() => void cancelCapture()} onSubmit={(audio) => void submitCapture(audio)} /> : null}
       {preview ? <ResultPreview state={preview} onSave={saveResultPreview} onOpenReview={onOpenDetail} /> : null}
       {offlineDraftError ? <OfflineDraftErrorBanner message={offlineDraftError} /> : null}
       {state.status === "loading" && timelineItems.length === 0 ? <LoadingState /> : null}
-      {state.status === "error" && timelineItems.length === 0 ? <ErrorState message={state.message} onRetry={() => void load()} /> : null}
-      {state.status === "ready" && timelineItems.length === 0 ? <EmptyState onRefresh={() => void load(true)} /> : null}
-      {state.status === "error" && timelineItems.length > 0 ? <ErrorBanner message={state.message} /> : null}
+      {state.status === "loading" && timelineItems.length > 0 ? <LoadingBanner message={hasSearch ? "Updating search results…" : "Refreshing your items…"} /> : null}
+      {state.status === "error" && timelineItems.length === 0 ? <ErrorState message={state.message} onRetry={() => void refresh()} /> : null}
+      {state.status === "ready" && timelineItems.length === 0 ? <EmptyState searching={hasSearch} onRefresh={() => void refresh()} /> : null}
+      {state.status === "error" && timelineItems.length > 0 ? <ErrorBanner message={state.message} onRetry={() => void refresh()} /> : null}
       {timelineItems.length > 0 ? (
         <FlatList
           data={timelineItems}
           keyExtractor={(entry) => entry.kind === "offline_draft" ? `offline:${entry.draft.draftId}` : `${entry.item.kind}:${entry.item.id}`}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
           onEndReached={state.status === "ready" && state.nextCursor && !loadingMore ? () => void load(false, state.nextCursor ?? undefined) : undefined}
           onEndReachedThreshold={0.5}
           ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} /> : state.status === "pagination_error" ? <PaginationError message={state.message} onRetry={() => void load(false, state.failedCursor)} /> : null}
@@ -359,6 +402,45 @@ function ResultPreview({ state, onSave, onOpenReview }: { readonly state: Previe
 
 function PreviewReviewButton({ captureId, onOpenReview }: { readonly captureId: string; readonly onOpenReview: ((detailUrl: string) => void) | undefined }) {
   return onOpenReview ? <Pressable accessibilityRole="button" accessibilityLabel="Open Capture review" onPress={() => onOpenReview(`/captures/${captureId}/review`)} style={styles.retry}><Text style={styles.retryText}>Open review</Text></Pressable> : null;
+}
+
+type FilterOptionsState =
+  | { readonly status: "idle" | "loading" }
+  | { readonly status: "error"; readonly message: string }
+  | { readonly status: "ready"; readonly spaces: readonly Space[]; readonly tags: readonly Tag[]; readonly entities: readonly Entity[] };
+
+function SearchFilterPanel({ open, text, filters, options, onOpen, onTextChange, onApplyText, onApply, onClear, onRetry }: {
+  readonly open: boolean;
+  readonly text: string;
+  readonly filters: SearchFilters;
+  readonly options: FilterOptionsState;
+  readonly onOpen: () => void;
+  readonly onTextChange: (text: string) => void;
+  readonly onApplyText: () => void;
+  readonly onApply: (filters: SearchFilters) => void;
+  readonly onClear: () => void;
+  readonly onRetry: () => void;
+}) {
+  if (!open) return <Pressable accessibilityRole="button" accessibilityLabel="Open search and filters" onPress={onOpen} style={styles.filterToggle}><Text style={styles.filterToggleText}>Search and filter</Text></Pressable>;
+  return <View style={styles.filterPanel}>
+    <View style={styles.searchRow}>
+      <TextInput accessibilityLabel="Search Task and Note content" placeholder="Search Tasks and Notes" value={text} onChangeText={onTextChange} onSubmitEditing={onApplyText} style={styles.searchInput} />
+      <Pressable accessibilityRole="button" accessibilityLabel="Apply content search" onPress={onApplyText} style={styles.filterButton}><Text style={styles.filterButtonText}>Search</Text></Pressable>
+    </View>
+    {filters.text ? <Text style={styles.filterSummary}>Content: {filters.text}</Text> : null}
+    {options.status === "loading" ? <View style={styles.filterStatus}><ActivityIndicator /><Text style={styles.stateText}>Loading filters…</Text></View> : null}
+    {options.status === "error" ? <View accessibilityRole="alert" style={styles.filterError}><Text style={styles.errorText}>Couldn’t load filters: {options.message}</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry loading filters" onPress={onRetry}><Text style={styles.spaceAction}>Retry filters</Text></Pressable></View> : null}
+    {options.status === "ready" ? <View>
+      <Text style={styles.filterHeading}>Space</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="Filter by unassigned root" onPress={() => onApply(selectUnassignedFilter(filters))}><Text style={styles.filterOption}>{filters.unassigned ? "✓ " : ""}Unassigned root</Text></Pressable>
+      {options.spaces.map((space) => <Pressable key={space.id} accessibilityRole="button" accessibilityLabel={`Filter by Space ${space.name}`} onPress={() => onApply(selectSpaceFilter(filters, space.id))}><Text style={styles.filterOption}>{filters.spaceId === space.id ? "✓ " : ""}{space.name} subtree</Text></Pressable>)}
+      <Text style={styles.filterHeading}>Tag</Text>
+      {options.tags.length === 0 ? <Text style={styles.filterMuted}>No Tags yet</Text> : options.tags.map((tag) => <Pressable key={tag.id} accessibilityRole="button" accessibilityLabel={`Filter by Tag ${tag.name}`} onPress={() => onApply(toggleIdFilter(filters, "tagId", tag.id))}><Text style={styles.filterOption}>{filters.tagId === tag.id ? "✓ " : ""}{tag.name}</Text></Pressable>)}
+      <Text style={styles.filterHeading}>Entity</Text>
+      {options.entities.length === 0 ? <Text style={styles.filterMuted}>No Entities yet</Text> : options.entities.map((entity) => <Pressable key={entity.id} accessibilityRole="button" accessibilityLabel={`Filter by Entity ${entity.name}`} onPress={() => onApply(toggleIdFilter(filters, "entityId", entity.id))}><Text style={styles.filterOption}>{filters.entityId === entity.id ? "✓ " : ""}{entity.name} ({entity.type})</Text></Pressable>)}
+    </View> : null}
+    {(hasActiveFilters(filters) || text.length > 0) ? <Pressable accessibilityRole="button" accessibilityLabel="Clear search and filters" onPress={onClear} style={styles.clearFilters}><Text style={styles.clearFiltersText}>Clear search and filters</Text></Pressable> : null}
+  </View>;
 }
 
 function previewTitle(item: PreviewItem): string {
@@ -421,9 +503,34 @@ function appendUniqueItems(existing: readonly MemberListItem[], next: readonly M
   })];
 }
 
+function hasActiveFilters(filters: SearchFilters): boolean {
+  return Object.values(filters).some((value) => value !== undefined && value !== "");
+}
+
+function withTextFilter(filters: SearchFilters, text: string): SearchFilters {
+  const { text: _ignored, ...rest } = filters;
+  return text.trim() ? { ...rest, text: text.trim() } : rest;
+}
+
+function selectUnassignedFilter(filters: SearchFilters): SearchFilters {
+  const { spaceId: _spaceId, unassigned: current, ...rest } = filters;
+  return current ? rest : { ...rest, unassigned: true };
+}
+
+function selectSpaceFilter(filters: SearchFilters, spaceId: string): SearchFilters {
+  const { unassigned: _unassigned, spaceId: current, ...rest } = filters;
+  return current === spaceId ? rest : { ...rest, spaceId };
+}
+
+function toggleIdFilter(filters: SearchFilters, key: "tagId" | "entityId", value: string): SearchFilters {
+  const { [key]: current, ...rest } = filters;
+  return current === value ? rest : { ...rest, [key]: value } as SearchFilters;
+}
+
 function LoadingState() { return <View style={styles.state}><ActivityIndicator accessibilityLabel="Loading items" /><Text style={styles.stateText}>Loading your items…</Text></View>; }
-function EmptyState({ onRefresh }: { readonly onRefresh: () => void }) { return <View style={styles.state}><Text style={styles.stateTitle}>Nothing here yet</Text><Text style={styles.stateText}>Your Tasks and Notes will appear here after your first Capture.</Text><Pressable accessibilityRole="button" onPress={onRefresh} style={styles.retry}><Text style={styles.retryText}>Refresh</Text></Pressable></View>; }
-function ErrorBanner({ message }: { readonly message: string }) { return <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>Refresh failed: {message}</Text></View>; }
+function LoadingBanner({ message }: { readonly message: string }) { return <View accessibilityRole="alert" style={styles.errorBanner}><ActivityIndicator /><Text style={styles.errorText}>{message}</Text></View>; }
+function EmptyState({ searching, onRefresh }: { readonly searching: boolean; readonly onRefresh: () => void }) { return <View style={styles.state}><Text style={styles.stateTitle}>{searching ? "No matching items" : "Nothing here yet"}</Text><Text style={styles.stateText}>{searching ? "Try clearing a filter or changing your search." : "Your Tasks and Notes will appear here after your first Capture."}</Text><Pressable accessibilityRole="button" onPress={onRefresh} style={styles.retry}><Text style={styles.retryText}>Refresh</Text></Pressable></View>; }
+function ErrorBanner({ message, onRetry }: { readonly message: string; readonly onRetry?: () => void }) { return <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>Refresh failed: {message}</Text>{onRetry ? <Pressable accessibilityRole="button" accessibilityLabel="Retry refreshing items" onPress={onRetry}><Text style={styles.retryText}>Retry</Text></Pressable> : null}</View>; }
 function PaginationError({ message, onRetry }: { readonly message: string; readonly onRetry: () => void }) { return <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>Couldn’t load more items: {message}</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry loading more items" onPress={onRetry} style={styles.retry}><Text style={styles.retryText}>Retry loading more items</Text></Pressable></View>; }
 function OfflineDraftErrorBanner({ message }: { readonly message: string }) { return <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{message}</Text></View>; }
 function ErrorState({ message, onRetry }: { readonly message: string; readonly onRetry: () => void }) { return <View style={styles.state}><Text style={styles.stateTitle}>Couldn’t load your items</Text><Text style={styles.stateText}>{message}</Text><Pressable accessibilityRole="button" onPress={onRetry} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>; }
@@ -433,6 +540,7 @@ function formatDuration(totalSeconds: number): string { const minutes = Math.flo
 const cardTitleStyle = { color: "#24221F", fontSize: 18, fontWeight: "600" as const, lineHeight: 24 };
 
 const styles = StyleSheet.create({
+  filterToggle: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, marginHorizontal: 16, marginBottom: 12, padding: 12 }, filterToggleText: { color: "#5D5146", fontSize: 15, fontWeight: "600", textAlign: "center" }, filterPanel: { backgroundColor: "#FFFDF9", borderColor: "#E5E0D8", borderRadius: 14, borderWidth: 1, marginHorizontal: 16, marginBottom: 12, padding: 14 }, searchRow: { alignItems: "center", flexDirection: "row", gap: 8 }, searchInput: { borderColor: "#B9A895", borderRadius: 10, borderWidth: 1, color: "#24221F", flex: 1, minHeight: 44, paddingHorizontal: 12 }, filterButton: { backgroundColor: "#24221F", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12 }, filterButtonText: { color: "#FFFFFF", fontWeight: "700" }, filterSummary: { color: "#5D5146", fontSize: 13, marginTop: 10 }, filterStatus: { alignItems: "center", flexDirection: "row", gap: 8, marginTop: 12 }, filterError: { backgroundColor: "#FCE8DF", borderRadius: 8, marginTop: 12, padding: 10 }, filterHeading: { color: "#8B7355", fontSize: 12, fontWeight: "700", marginTop: 14, textTransform: "uppercase" }, filterOption: { color: "#5D5146", fontSize: 15, paddingVertical: 7 }, filterMuted: { color: "#908A82", fontSize: 14, paddingVertical: 7 }, clearFilters: { borderColor: "#B9A895", borderRadius: 10, borderWidth: 1, marginTop: 14, padding: 10 }, clearFiltersText: { color: "#8C3D25", fontSize: 14, fontWeight: "700", textAlign: "center" },
   spaceLabel: { color: "#716B64", fontSize: 13, marginTop: 12 }, spaceAction: { color: "#7A5C36", fontSize: 13, fontWeight: "600", marginTop: 8 },
   safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, header: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 34, fontWeight: "700", marginTop: 6 }, captureButton: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 12, paddingHorizontal: 16, paddingVertical: 11, alignSelf: "flex-start" }, captureButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, actionButton: { alignItems: "center", flex: 1, height: 48, justifyContent: "center", paddingHorizontal: 12 }, actionPrimaryButton: { alignSelf: "stretch", marginTop: 0 }, actionButtonContent: { alignItems: "center", flexDirection: "row", gap: 6 }, actionIcon: { fontSize: 16, fontWeight: "700", lineHeight: 18 }, capturePanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewPanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewEyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, recordingPanel: { backgroundColor: "#FCE8E5", borderColor: "#E5A49B", borderWidth: 1 }, captureTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, recordingTitle: { color: "#B43C32", fontSize: 17, fontWeight: "700" }, recordingText: { color: "#8C3D25", fontSize: 15, lineHeight: 21, marginTop: 6 }, meteringStatus: { color: "#8C3D25", fontSize: 12, lineHeight: 18, marginTop: 6 }, recordingHeader: { alignItems: "center", flexDirection: "row", gap: 8 }, recordingDot: { backgroundColor: "#C44739", borderRadius: 5, height: 10, width: 10 }, recordingTimer: { color: "#B43C32", fontSize: 16, fontVariant: ["tabular-nums"], marginLeft: "auto" }, waveform: { alignItems: "center", flexDirection: "row", gap: 3, height: 44, justifyContent: "center", marginTop: 14 }, recordingWaveform: { backgroundColor: "#F8D5D0", borderRadius: 14 }, waveformBar: { backgroundColor: "#D9A88A", borderRadius: 2, minHeight: 6, width: 4 }, recordingWaveformBar: { backgroundColor: "#E08B80" }, recordingWaveformBarActive: { backgroundColor: "#B43C32" }, captureText: { color: "#716B64", fontSize: 15, lineHeight: 21, marginTop: 6 }, captureActions: { alignItems: "stretch", flexDirection: "row", gap: 10, marginTop: 14 }, secondaryButton: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10 }, secondaryButtonText: { color: "#5D5146", fontSize: 15, fontWeight: "600" }, recordingButton: { backgroundColor: "#B43C32" }, recordingButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, recordingSecondaryButton: { borderColor: "#B43C32" }, recordingSecondaryButtonText: { color: "#B43C32", fontSize: 15, fontWeight: "600" }, recordingIcon: { color: "#B43C32", fontSize: 16, fontWeight: "700", lineHeight: 18 }, list: { padding: 16, paddingTop: 4, gap: 12 }, card: { backgroundColor: "#FFFFFF", borderColor: "#E5E0D8", borderRadius: 16, borderWidth: 1, padding: 18 }, offlineDraftCard: { backgroundColor: "#FFF8E8", borderColor: "#CFAE70", borderStyle: "dashed" }, offlineDraftLabel: { color: "#8C641F", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, offlineDraftStatus: { color: "#8C641F", fontSize: 14, fontWeight: "600", marginTop: 8 }, retryDraft: { color: "#8C641F", fontSize: 14, fontWeight: "700", marginTop: 14 }, deleteDraft: { color: "#8C3D25", fontSize: 14, fontWeight: "600", marginTop: 14 }, cardPressed: { opacity: 0.7 }, cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }, label: { color: "#7A5C36", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, date: { color: "#908A82", fontSize: 12 }, detail: { color: "#716B64", fontSize: 14, marginTop: 8 }, reviewHint: { color: "#A15B2A", fontSize: 14, marginTop: 8 }, errorBanner: { backgroundColor: "#FCE8DF", marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 10 }, errorText: { color: "#8C3D25", fontSize: 14 }, state: { alignItems: "center", flex: 1, justifyContent: "center", padding: 32 }, stateTitle: { color: "#24221F", fontSize: 20, fontWeight: "700", textAlign: "center" }, stateText: { color: "#716B64", fontSize: 16, lineHeight: 23, marginTop: 8, maxWidth: 300, textAlign: "center" }, retry: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 20, paddingHorizontal: 20, paddingVertical: 12 }, retryText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" }, footer: { padding: 16 },
 });

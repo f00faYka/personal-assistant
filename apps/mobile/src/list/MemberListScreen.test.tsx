@@ -26,7 +26,7 @@ vi.mock("react-native-safe-area-context", async () => {
   return { SafeAreaView: (props: { readonly children?: React.ReactNode; readonly [key: string]: unknown }) => React.createElement("SafeAreaView", props, props.children) };
 });
 
-import { Pressable, RefreshControl } from "react-native";
+import { Pressable, RefreshControl, TextInput } from "react-native";
 
 import { MemberListScreen } from "./MemberListScreen";
 import type { CaptureSubmitter, VoiceRecorder } from "../capture/voice-capture";
@@ -121,6 +121,86 @@ describe("MemberListScreen", () => {
 
     expect(textContent(renderer)).toContain("Couldn’t load your items");
     expect(textContent(renderer)).not.toContain("Task");
+    renderer.unmount();
+  });
+
+  test("combines search filters and clears them back to the normal timeline", async () => {
+    const searchResult = { items: [{ ...task, spaceId: "space-1" }], nextCursor: null };
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ items: [task, note], nextCursor: null }))
+      .mockResolvedValueOnce(jsonResponse({ spaces: [{ id: "space-1", memberId: "member-1", name: "Home", createdAt: "now" }] }))
+      .mockResolvedValueOnce(jsonResponse({ tags: [{ id: "tag-1", memberId: "member-1", name: "urgent", createdAt: "now" }] }))
+      .mockResolvedValueOnce(jsonResponse({ entities: [{ id: "entity-1", memberId: "member-1", name: "Office", type: "Place", createdAt: "now" }] }))
+      .mockResolvedValue(jsonResponse(searchResult));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen();
+
+    await act(async () => { findButton(renderer, "Open search and filters").props.onPress(); });
+    await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("milk"); });
+    await act(async () => { findButton(renderer, "Apply content search").props.onPress(); });
+    await act(async () => { findButton(renderer, "Filter by Space Home").props.onPress(); });
+    await act(async () => { findButton(renderer, "Filter by Tag urgent").props.onPress(); });
+    await act(async () => { findButton(renderer, "Filter by Entity Office").props.onPress(); });
+
+    expect(fetcher).toHaveBeenLastCalledWith("http://api.test/items/search?memberId=member-1&q=milk&spaceId=space-1&tagId=tag-1&entityId=entity-1");
+    expect(textContent(renderer)).toContain("Task");
+    expect(textContent(renderer)).not.toContain("Call the dentist");
+
+    await act(async () => { findButton(renderer, "Clear search and filters").props.onPress(); });
+
+    expect(fetcher).toHaveBeenLastCalledWith("http://api.test/items?memberId=member-1");
+    renderer.unmount();
+  });
+
+  test("ignores a previous search response after filters are cleared", async () => {
+    let resolveSearch!: (response: Response) => void;
+    const staleSearch = new Promise<Response>((resolve) => { resolveSearch = resolve; });
+    const current = { ...note, id: "note-current", captureId: "capture-current", content: "Current timeline" };
+    const fetcher = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/items/search")) return staleSearch;
+      if (url.includes("/spaces")) return Promise.resolve(jsonResponse({ spaces: [] }));
+      if (url.includes("/tags")) return Promise.resolve(jsonResponse({ tags: [{ id: "tag-1", memberId: "member-1", name: "urgent", createdAt: "now" }] }));
+      if (url.includes("/entities")) return Promise.resolve(jsonResponse({ entities: [] }));
+      return Promise.resolve(jsonResponse({ items: [current], nextCursor: null }));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen();
+
+    await act(async () => { findButton(renderer, "Open search and filters").props.onPress(); });
+    await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("stale"); });
+    act(() => { findButton(renderer, "Apply content search").props.onPress(); });
+    await act(async () => { findButton(renderer, "Clear search and filters").props.onPress(); });
+    resolveSearch(jsonResponse({ items: [task], nextCursor: null }));
+    await act(async () => { await staleSearch; });
+
+    expect(textContent(renderer)).toContain("Current timeline");
+    expect(textContent(renderer)).not.toContain("Buy milk");
+    renderer.unmount();
+  });
+
+  test("does not append a previous pagination response after a filter changes", async () => {
+    let resolvePage!: (response: Response) => void;
+    const stalePage = new Promise<Response>((resolve) => { resolvePage = resolve; });
+    const filtered = { ...note, id: "note-filtered", captureId: "capture-filtered", content: "Filtered note" };
+    const fetcher = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("cursor=next-page")) return stalePage;
+      if (url.includes("/items/search")) return Promise.resolve(jsonResponse({ items: [filtered], nextCursor: null }));
+      if (url.includes("/spaces")) return Promise.resolve(jsonResponse({ spaces: [] }));
+      if (url.includes("/tags")) return Promise.resolve(jsonResponse({ tags: [{ id: "tag-1", memberId: "member-1", name: "urgent", createdAt: "now" }] }));
+      if (url.includes("/entities")) return Promise.resolve(jsonResponse({ entities: [] }));
+      return Promise.resolve(jsonResponse({ items: [task], nextCursor: "next-page" }));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen();
+
+    await act(async () => { await findFlatList(renderer).props.onEndReached(); });
+    await act(async () => { findButton(renderer, "Open search and filters").props.onPress(); });
+    await act(async () => { findButton(renderer, "Filter by Tag urgent").props.onPress(); });
+    resolvePage(jsonResponse({ items: [note], nextCursor: null }));
+    await act(async () => { await stalePage; });
+
+    expect(textContent(renderer)).toContain("Filtered note");
+    expect(textContent(renderer)).not.toContain("Call the dentist");
     renderer.unmount();
   });
 

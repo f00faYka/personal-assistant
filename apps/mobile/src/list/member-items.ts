@@ -39,6 +39,15 @@ export interface MemberItemsPage {
 
 export interface MemberItemsClient {
   list(memberId: string, cursor?: string): Promise<MemberItemsPage>;
+  search(memberId: string, filters: SearchFilters, cursor?: string): Promise<MemberItemsPage>;
+}
+
+export interface SearchFilters {
+  readonly text?: string;
+  readonly spaceId?: string;
+  readonly unassigned?: boolean;
+  readonly tagId?: string;
+  readonly entityId?: string;
 }
 
 export type ItemsFetcher = (url: string) => Promise<Response>;
@@ -50,6 +59,18 @@ export function createMemberItemsClient(apiBaseUrl: string, fetcher: ItemsFetche
       if (cursor) params.set("cursor", cursor);
       const response = await fetcher(`${apiBaseUrl}/items?${params.toString()}`);
       if (!response.ok) throw new Error(`Unable to load items (${response.status})`);
+      return parseMemberItemsPage(await response.json());
+    },
+    async search(memberId, filters, cursor) {
+      const params = new URLSearchParams({ memberId });
+      if (filters.text) params.set("q", filters.text);
+      if (filters.spaceId) params.set("spaceId", filters.spaceId);
+      if (filters.unassigned) params.set("unassigned", "true");
+      if (filters.tagId) params.set("tagId", filters.tagId);
+      if (filters.entityId) params.set("entityId", filters.entityId);
+      if (cursor) params.set("cursor", cursor);
+      const response = await fetcher(`${apiBaseUrl}/items/search?${params.toString()}`);
+      if (!response.ok) throw new Error(`Unable to search items (${response.status})`);
       return parseMemberItemsPage(await response.json());
     },
   };
