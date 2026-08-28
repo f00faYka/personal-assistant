@@ -22,6 +22,8 @@ import { LocalOllamaInterpretationProvider } from "./infrastructure/interpretati
 import { SqliteInterpretationJobRepository } from "./infrastructure/sqlite/sqlite-interpretation-job-repository.js";
 import { SpaceService } from "./features/spaces/space.js";
 import { SqliteSpaceRepository } from "./infrastructure/sqlite/sqlite-space-repository.js";
+import { MetadataService } from "./features/metadata/metadata.js";
+import { SqliteMetadataRepository } from "./infrastructure/sqlite/sqlite-metadata-repository.js";
 
 async function start(): Promise<void> {
   loadLocalEnvironment();
@@ -36,6 +38,7 @@ async function start(): Promise<void> {
   const memberItemsRepository = new SqliteMemberItemsRepository(configuration.databasePath);
   const offlineDraftRepository = new SqliteOfflineDraftRepository(configuration.databasePath);
   const spaceRepository = new SqliteSpaceRepository(configuration.databasePath);
+  const metadataRepository = new SqliteMetadataRepository(configuration.databasePath);
   const captureService = new CaptureService(repository, new FileSystemBlobStorage(configuration.blobRoot));
   const interpretationWorker = new InterpretationWorker({
     service: new InterpretationService(interpretationRepository),
@@ -92,6 +95,7 @@ async function start(): Promise<void> {
       transcriptionWorker,
     ),
     spaceService: new SpaceService(spaceRepository),
+    metadataService: new MetadataService(metadataRepository),
   });
   application.addHook("onClose", async () => {
     await transcriptionWorker.stop();
@@ -104,6 +108,7 @@ async function start(): Promise<void> {
     memberItemsRepository.close();
     offlineDraftRepository.close();
     spaceRepository.close();
+    metadataRepository.close();
   });
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {

@@ -193,4 +193,41 @@ export const foundationMigrations: readonly Migration[] = [
     name: "support Space lifecycle",
     sql: "ALTER TABLE spaces ADD COLUMN archived_at TEXT",
   },
+  {
+    version: 13,
+    name: "create Tags and Entities",
+    sql: `
+      CREATE TABLE tags (
+        id TEXT PRIMARY KEY,
+        member_id TEXT NOT NULL,
+        name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+        created_at TEXT NOT NULL,
+        UNIQUE (member_id, name)
+      ) STRICT;
+      CREATE TABLE entities (
+        id TEXT PRIMARY KEY,
+        member_id TEXT NOT NULL,
+        name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+        type TEXT NOT NULL CHECK (type IN ('Person', 'Place', 'Organization', 'Object')),
+        created_at TEXT NOT NULL,
+        UNIQUE (member_id, name, type)
+      ) STRICT;
+      CREATE TABLE item_tags (
+        member_id TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        item_kind TEXT NOT NULL CHECK (item_kind IN ('task', 'note')),
+        tag_id TEXT NOT NULL REFERENCES tags(id),
+        PRIMARY KEY (member_id, item_id, item_kind, tag_id)
+      ) STRICT;
+      CREATE TABLE item_entities (
+        member_id TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        item_kind TEXT NOT NULL CHECK (item_kind IN ('task', 'note')),
+        entity_id TEXT NOT NULL REFERENCES entities(id),
+        PRIMARY KEY (member_id, item_id, item_kind, entity_id)
+      ) STRICT;
+      CREATE INDEX item_tags_item_index ON item_tags(member_id, item_id, item_kind);
+      CREATE INDEX item_entities_item_index ON item_entities(member_id, item_id, item_kind);
+    `,
+  },
 ];
