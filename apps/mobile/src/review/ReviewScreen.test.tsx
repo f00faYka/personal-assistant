@@ -18,6 +18,7 @@ vi.mock("react-native-safe-area-context", async () => {
 import { TextInput } from "react-native";
 import { ReviewScreen } from "./ReviewScreen";
 import type { OfflineDraftStore } from "../offline/offline-drafts";
+import type { Entity, MetadataClient, MetadataLinks, Tag } from "./metadata";
 
 describe("ReviewScreen", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -39,6 +40,128 @@ describe("ReviewScreen", () => {
 
     expect(fetcher).toHaveBeenLastCalledWith("http://api.test/tasks/task-1", expect.objectContaining({ method: "PATCH" }));
     expect(onBack).toHaveBeenCalledOnce();
+    renderer.unmount();
+  });
+
+  test("links and unlinks an existing Tag without changing the Task", async () => {
+    const tag = metadataTag("tag-1", "urgent");
+    const links: MetadataLinks = { tags: [], entities: [] };
+    const metadataClient = metadataFixture({ listTags: vi.fn().mockResolvedValue([tag]), listLinks: vi.fn().mockResolvedValue(links), linkTag: vi.fn().mockResolvedValue({ tags: [tag], entities: [] }), unlinkTag: vi.fn().mockResolvedValue(links) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient });
+    await act(async () => { await Promise.resolve(); });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" }).props.onPress(); });
+    expect(metadataClient.linkTag).toHaveBeenCalledWith("task-1", "task", "tag-1", "member-1");
+    expect(textContent(renderer)).toContain("urgent");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Remove Tag urgent" }).props.onPress(); });
+    expect(metadataClient.unlinkTag).toHaveBeenCalledWith("task-1", "task", "tag-1", "member-1");
+    renderer.unmount();
+  });
+
+  test("validates Entity name before creating and supports each allowed type", async () => {
+    const metadataClient = metadataFixture();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "none", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Create and add Entity" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("Entity name must not be empty");
+    expect(metadataClient.createEntity).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Entity type Organization" })).toBeTruthy();
+    renderer.unmount();
+  });
+
+  test("keeps links visible and reports a recoverable mutation failure", async () => {
+    const tag = metadataTag("tag-1", "urgent");
+    const metadataClient = metadataFixture({ listTags: vi.fn().mockResolvedValue([tag]), listLinks: vi.fn().mockResolvedValue({ tags: [tag], entities: [] }), unlinkTag: vi.fn().mockRejectedValueOnce(new Error("network unavailable")).mockResolvedValueOnce({ tags: [], entities: [] }) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Remove Tag urgent" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("network unavailable");
+    expect(textContent(renderer)).toContain("urgent");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry removing Tag urgent" }).props.onPress(); });
+    expect(metadataClient.unlinkTag).toHaveBeenCalledTimes(2);
+    expect(textContent(renderer)).not.toContain("network unavailable");
+    renderer.unmount();
+  });
+
+  test("retries a failed create-and-link operation without recreating the Tag", async () => {
+    const tag = metadataTag("tag-new", "urgent");
+    const metadataClient = metadataFixture({ createTag: vi.fn().mockResolvedValue(tag), linkTag: vi.fn().mockRejectedValueOnce(new Error("link unavailable")).mockResolvedValueOnce({ tags: [tag], entities: [] }) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "New Tag name" }).props.onChangeText("urgent"); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Create and add Tag" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("link unavailable");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Retry creating and adding Tag urgent" })).toBeTruthy();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry creating and adding Tag urgent" }).props.onPress(); });
+    expect(metadataClient.createTag).toHaveBeenCalledOnce();
+    expect(metadataClient.linkTag).toHaveBeenCalledTimes(2);
+    expect(textContent(renderer)).toContain("urgent");
+    renderer.unmount();
+  });
+
+  test("ignores duplicate taps while a metadata link is in flight", async () => {
+    const tag = metadataTag("tag-1", "urgent");
+    let releaseLink!: (links: MetadataLinks) => void;
+    const linkTag = vi.fn().mockReturnValue(new Promise<MetadataLinks>((resolve) => { releaseLink = resolve; }));
+    const metadataClient = metadataFixture({ listTags: vi.fn().mockResolvedValue([tag]), linkTag });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient });
+    const addButton = renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" });
+
+    act(() => { addButton.props.onPress(); addButton.props.onPress(); });
+    expect(linkTag).toHaveBeenCalledOnce();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" }).props.disabled).toBe(true);
+    await act(async () => { releaseLink({ tags: [tag], entities: [] }); });
+    expect(textContent(renderer)).not.toContain("Unable to update metadata");
+    renderer.unmount();
+  });
+
+  test("links and unlinks an Entity", async () => {
+    const entity = metadataEntity("entity-1", "Office", "Place");
+    const metadataClient = metadataFixture({ listEntities: vi.fn().mockResolvedValue([entity]), linkEntity: vi.fn().mockResolvedValue({ tags: [], entities: [entity] }), unlinkEntity: vi.fn().mockResolvedValue({ tags: [], entities: [] }) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "none", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add existing Entity Office" }).props.onPress(); });
+    expect(metadataClient.linkEntity).toHaveBeenCalledWith("note-1", "note", "entity-1", "member-1");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Remove Entity Office" }).props.onPress(); });
+    expect(metadataClient.unlinkEntity).toHaveBeenCalledWith("note-1", "note", "entity-1", "member-1");
+    renderer.unmount();
+  });
+
+  test("preserves links and offers retry after metadata loading fails", async () => {
+    const tag = metadataTag("tag-1", "urgent");
+    const listTags = vi.fn().mockResolvedValueOnce([tag]).mockRejectedValueOnce(new Error("metadata unavailable")).mockResolvedValueOnce([tag]);
+    const metadataClient = metadataFixture({ listTags, listLinks: vi.fn().mockResolvedValue({ tags: [tag], entities: [] }) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient });
+    expect(textContent(renderer)).toContain("urgent");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Refresh Tags and Entities" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("metadata unavailable");
+    expect(textContent(renderer)).toContain("urgent");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Create and add Tag" })).toBeTruthy();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry Tags and Entities" }).props.onPress(); });
+    expect(textContent(renderer)).not.toContain("metadata unavailable");
+    renderer.unmount();
+  });
+
+  test("edits existing Tag and Entity records", async () => {
+    const tag = metadataTag("tag-1", "urgent");
+    const entity = metadataEntity("entity-1", "Office", "Place");
+    const metadataClient = metadataFixture({ listTags: vi.fn().mockResolvedValue([tag]), listEntities: vi.fn().mockResolvedValue([entity]), listLinks: vi.fn().mockResolvedValue({ tags: [tag], entities: [entity] }), updateTag: vi.fn().mockResolvedValue({ ...tag, name: "later" }), updateEntity: vi.fn().mockResolvedValue({ ...entity, name: "HQ", type: "Organization" }) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Tag urgent" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Tag urgent" }).props.onChangeText("later"); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save Tag urgent" }).props.onPress(); });
+    expect(metadataClient.updateTag).toHaveBeenCalledWith("tag-1", "member-1", "later");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Entity Office" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Entity Office" }).props.onChangeText("HQ"); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Entity type Organization" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save Entity Office" }).props.onPress(); });
+    expect(metadataClient.updateEntity).toHaveBeenCalledWith("entity-1", "member-1", "HQ", "Organization");
     renderer.unmount();
   });
 
@@ -448,4 +571,21 @@ function textContent(renderer: ReactTestRenderer): string { return renderer.root
 
 function draftStore(overrides: Partial<OfflineDraftStore> = {}): OfflineDraftStore {
   return { list: vi.fn().mockResolvedValue([]), save: vi.fn(), remove: vi.fn().mockResolvedValue(undefined), ...overrides };
+}
+
+function metadataTag(id: string, name: string): Tag { return { id, name, memberId: "member-1", createdAt: "2026-01-01T00:00:00.000Z" }; }
+function metadataEntity(id: string, name: string, type: Entity["type"]): Entity { return { id, name, type, memberId: "member-1", createdAt: "2026-01-01T00:00:00.000Z" }; }
+
+function metadataFixture(overrides: Partial<MetadataClient> = {}): MetadataClient {
+  const entity = metadataEntity("entity-1", "Office", "Place");
+  return {
+    listTags: vi.fn().mockResolvedValue([]), createTag: vi.fn().mockResolvedValue(metadataTag("tag-new", "new")),
+    updateTag: vi.fn().mockResolvedValue(metadataTag("tag-1", "updated")),
+    listEntities: vi.fn().mockResolvedValue([entity]), createEntity: vi.fn().mockResolvedValue(entity),
+    updateEntity: vi.fn().mockResolvedValue(entity),
+    listLinks: vi.fn().mockResolvedValue({ tags: [], entities: [] }),
+    linkTag: vi.fn().mockResolvedValue({ tags: [], entities: [] }), unlinkTag: vi.fn().mockResolvedValue({ tags: [], entities: [] }),
+    linkEntity: vi.fn().mockResolvedValue({ tags: [], entities: [] }), unlinkEntity: vi.fn().mockResolvedValue({ tags: [], entities: [] }),
+    ...overrides,
+  };
 }
