@@ -227,10 +227,14 @@ function OrganizationProposalControls({ client, memberId, itemId, itemKind }: { 
     {!error ? proposals.filter((proposal) => proposal.state === "pending" && proposal.candidates.some((candidate) => candidate.state === "pending")).map((proposal) => <View key={proposal.id} style={styles.proposalCard}>
       <Text style={styles.proposalMeta}>Suggested by {proposal.modelVersion} · rules {proposal.rulesVersion}</Text>
       {proposal.candidates.filter((candidate) => candidate.state === "pending").map((candidate) => <ProposalCandidateRow key={candidate.id} candidate={candidate} selected={(selected[proposal.id] ?? proposal.candidates.filter((item) => item.state === "pending" && item.confidenceBand !== "low").map((item) => item.id)).includes(candidate.id)} disabled={inFlight !== null} onToggle={() => setSelected((current) => ({ ...current, [proposal.id]: (current[proposal.id] ?? proposal.candidates.filter((item) => item.state === "pending" && item.confidenceBand !== "low").map((item) => item.id)).includes(candidate.id) ? (current[proposal.id] ?? []).filter((id) => id !== candidate.id) : [...(current[proposal.id] ?? proposal.candidates.filter((item) => item.state === "pending" && item.confidenceBand !== "low").map((item) => item.id)), candidate.id] }))} />)}
-      <View style={styles.proposalActions}><Button label={inFlight === proposal.id ? "Accepting…" : "Accept selected suggestions"} onPress={() => void decide(proposal, "accepted")} disabled={inFlight !== null} /><Button label={inFlight === proposal.id ? "Dismissing…" : "Dismiss suggestions"} onPress={() => void decide(proposal, "dismissed")} disabled={inFlight !== null} /></View>
+      <View style={styles.proposalActions}><Button label={inFlight === proposal.id ? "Accepting…" : "Accept selected suggestions"} onPress={() => void decide(proposal, "accepted")} disabled={inFlight !== null || hasNoSelectedCandidates(selected[proposal.id])} /><Button label={inFlight === proposal.id ? "Dismissing…" : "Dismiss suggestions"} onPress={() => void decide(proposal, "dismissed")} disabled={inFlight !== null} /></View>
     </View>) : null}
     {mutationError ? <Text accessibilityRole="alert" style={styles.error}>{mutationError}</Text> : null}
   </View>;
+}
+
+function hasNoSelectedCandidates(candidateIds: readonly string[] | undefined): boolean {
+  return candidateIds !== undefined && candidateIds.length === 0;
 }
 
 function ProposalCandidateRow({ candidate, selected, disabled, onToggle }: { readonly candidate: OrganizationProposalCandidate; readonly selected: boolean; readonly disabled: boolean; readonly onToggle: () => void }) {

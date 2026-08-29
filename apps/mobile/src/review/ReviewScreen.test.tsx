@@ -58,6 +58,18 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
+  test("disables accepting when every organization proposal is deselected", async () => {
+    const organizationProposalClient = organizationProposalFixture();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Remove space suggestion Office" }).props.onPress(); });
+
+    expect(renderer.root.findByProps({ accessibilityLabel: "Accept selected suggestions" }).props.disabled).toBe(true);
+    expect(organizationProposalClient.decide).not.toHaveBeenCalled();
+    renderer.unmount();
+  });
+
   test("dismisses organization proposals without changing the underlying result", async () => {
     const proposal = organizationProposal();
     const organizationProposalClient = organizationProposalFixture({ decide: vi.fn().mockResolvedValue({ ...proposal, state: "dismissed", candidates: proposal.candidates.map((candidate) => ({ ...candidate, state: "dismissed" })) }) });
