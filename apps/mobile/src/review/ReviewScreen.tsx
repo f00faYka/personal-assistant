@@ -7,6 +7,7 @@ import { shouldPersistOfflineDraft } from "../http/request-error";
 import { entityTypes, type Entity, type EntityType, type MetadataClient, type MetadataItemKind, type MetadataLinks, type Tag } from "./metadata";
 import { createReviewClient, type ReviewClient, type ReviewContract, type ReviewOutcome } from "./review";
 import type { OrganizationProposal, OrganizationProposalCandidate, OrganizationProposalClient } from "./organization-proposals";
+import type { Space, SpacesClient } from "../spaces/spaces";
 
 interface ReviewScreenProps {
   readonly apiBaseUrl: string;
@@ -17,16 +18,18 @@ interface ReviewScreenProps {
   readonly offlineDraftStore?: OfflineDraftStore;
   readonly metadataClient?: MetadataClient;
   readonly organizationProposalClient?: OrganizationProposalClient;
+  readonly spacesClient?: SpacesClient;
 }
 
 type ReviewStatus = { readonly status: "loading" } | { readonly status: "error"; readonly message: string } | { readonly status: "ready"; readonly review: ReviewContract };
 type Draft = { readonly title?: string; readonly dueAt?: string | null; readonly content?: string };
 type PendingMetadataMutation = { readonly label: string; readonly operation: () => Promise<void> };
 
-export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: providedClient, offlineDraftStore, metadataClient: providedMetadataClient, organizationProposalClient: providedOrganizationProposalClient }: ReviewScreenProps) {
+export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: providedClient, offlineDraftStore, metadataClient: providedMetadataClient, organizationProposalClient: providedOrganizationProposalClient, spacesClient: providedSpacesClient }: ReviewScreenProps) {
   const client = useMemo(() => providedClient ?? createReviewClient(apiBaseUrl), [apiBaseUrl, providedClient]);
   const metadataClient = useMemo(() => providedMetadataClient ?? null, [providedMetadataClient]);
   const organizationProposalClient = useMemo(() => providedOrganizationProposalClient ?? null, [providedOrganizationProposalClient]);
+  const spacesClient = useMemo(() => providedSpacesClient ?? null, [providedSpacesClient]);
   const [state, setState] = useState<ReviewStatus>({ status: "loading" });
   const [draft, setDraft] = useState<Draft>({});
   const [editing, setEditing] = useState<"title" | "dueAt" | "content" | null>(null);
@@ -173,6 +176,7 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     <Text style={styles.stateText}>Original source and processing history remain separate from editable result fields.</Text>
     {state.review.outcome ? <ReviewFields outcome={state.review.outcome} draft={draft} editing={editing} onEdit={setEditing} onChange={setDraft} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}
     {state.review.outcome && metadataClient ? <MetadataControls client={metadataClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> : null}
+    {state.review.outcome && spacesClient ? <SpaceAssignmentControls client={spacesClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> : null}
     {state.review.outcome && organizationProposalClient ? <OrganizationProposalControls client={organizationProposalClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> : null}
     <Text style={styles.sectionTitle}>Source and provenance</Text>
     <Text style={styles.provenance}>Capture {state.review.capture.id} · source {state.review.source.id}</Text>
@@ -190,6 +194,59 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     {conversionError ? <Text accessibilityRole="alert" style={styles.error}>{conversionError}</Text> : null}
     {conversionNotice ? <Text accessibilityRole="alert" style={styles.success}>{conversionNotice}</Text> : null}
   </ReviewShell>;
+}
+
+function SpaceAssignmentControls({ client, memberId, itemId, itemKind }: { readonly client: SpacesClient; readonly memberId: string; readonly itemId: string; readonly itemKind: "task" | "note" }) {
+  const [spaces, setSpaces] = useState<readonly Space[]>([]);
+  const [assignedSpaceId, setAssignedSpaceId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [inFlight, setInFlight] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const nextSpaces = await client.list(memberId);
+      const activeSpaces = nextSpaces.filter((space) => !space.archivedAt);
+      const views = await Promise.all(activeSpaces.map((space) => client.read(memberId, space.id, "flat")));
+      const assigned = views.find((view) => view.items.some((item) => item.itemId === itemId && item.itemKind === itemKind));
+      setSpaces(nextSpaces);
+      setAssignedSpaceId(assigned?.space.id ?? null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to load Space assignment");
+    } finally {
+      setLoading(false);
+    }
+  }, [client, itemId, itemKind, memberId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const assign = async (spaceId: string | null) => {
+    if (inFlight) return;
+    setInFlight(true);
+    setError(null);
+    try {
+      await client.assign(itemId, itemKind, memberId, spaceId);
+      setAssignedSpaceId(spaceId);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to update Space assignment");
+    } finally {
+      setInFlight(false);
+    }
+  };
+
+  const assigned = assignedSpaceId === null ? undefined : spaces.find((space) => space.id === assignedSpaceId);
+  return <View style={styles.metadata}>
+    <Text style={styles.sectionTitle}>Space</Text>
+    {loading ? <Text style={styles.stateText}>Loading Space assignment…</Text> : null}
+    {error ? <><Text accessibilityRole="alert" style={styles.error}>{error}</Text><Button label="Retry Space assignment" onPress={() => void load()} disabled={inFlight} /></> : null}
+    {!loading && !error ? <>
+      <Text style={styles.metadataValue}>{assigned ? `Space · ${assigned.name}` : "Space · Unassigned"}</Text>
+      {assigned ? <Button label={`Remove Space ${assigned.name}`} onPress={() => void assign(null)} disabled={inFlight} /> : null}
+      {spaces.filter((space) => !space.archivedAt && space.id !== assignedSpaceId).map((space) => <Button key={space.id} label={`Assign Space ${space.name}`} onPress={() => void assign(space.id)} disabled={inFlight} />)}
+    </> : null}
+  </View>;
 }
 
 function OrganizationProposalControls({ client, memberId, itemId, itemKind }: { readonly client: OrganizationProposalClient; readonly memberId: string; readonly itemId: string; readonly itemKind: "task" | "note" }) {
