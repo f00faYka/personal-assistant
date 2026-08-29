@@ -15,7 +15,6 @@ export interface OrganizationProposalCandidate {
   readonly provenance: readonly string[];
   readonly state: CandidateState;
 }
-
 export interface OrganizationProposal {
   readonly id: string;
   readonly itemId: string;
@@ -53,4 +52,3 @@ async function request<T>(base: string, path: string, options: { readonly method
   if (!response.ok) throw responseError(typeof body === "object" && body !== null && "error" in body && typeof body.error === "string" ? body.error : `Request failed (${response.status})`, response.status);
   return body as T;
 }
-

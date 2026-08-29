@@ -19,6 +19,7 @@ import { TextInput } from "react-native";
 import { ReviewScreen } from "./ReviewScreen";
 import type { OfflineDraftStore } from "../offline/offline-drafts";
 import type { Entity, MetadataClient, MetadataLinks, Tag } from "./metadata";
+import type { OrganizationProposal, OrganizationProposalClient } from "./organization-proposals";
 
 describe("ReviewScreen", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -40,6 +41,48 @@ describe("ReviewScreen", () => {
 
     expect(fetcher).toHaveBeenLastCalledWith("http://api.test/tasks/task-1", expect.objectContaining({ method: "PATCH" }));
     expect(onBack).toHaveBeenCalledOnce();
+    renderer.unmount();
+  });
+
+  test("accepts selected organization proposals and keeps the result visible", async () => {
+    const proposal = organizationProposal();
+    const organizationProposalClient = organizationProposalFixture({ decide: vi.fn().mockResolvedValue({ ...proposal, state: "accepted", candidates: proposal.candidates.map((candidate) => ({ ...candidate, state: "accepted" })) }) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
+
+    expect(textContent(renderer)).toContain("Office");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Accept selected suggestions" }).props.onPress(); });
+
+    expect(organizationProposalClient.decide).toHaveBeenCalledWith("proposal-1", "accepted", "member-1", ["candidate-space"]);
+    expect(textContent(renderer)).toContain("No organization suggestions need review.");
+    renderer.unmount();
+  });
+
+  test("dismisses organization proposals without changing the underlying result", async () => {
+    const proposal = organizationProposal();
+    const organizationProposalClient = organizationProposalFixture({ decide: vi.fn().mockResolvedValue({ ...proposal, state: "dismissed", candidates: proposal.candidates.map((candidate) => ({ ...candidate, state: "dismissed" })) }) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "needs_review", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Dismiss suggestions" }).props.onPress(); });
+
+    expect(organizationProposalClient.decide).toHaveBeenCalledWith("proposal-1", "dismissed", "member-1", undefined);
+    expect(textContent(renderer)).toContain("Call");
+    expect(textContent(renderer)).toContain("No organization suggestions need review.");
+    renderer.unmount();
+  });
+
+  test("reports a failed proposal load and retries it", async () => {
+    const list = vi.fn().mockRejectedValueOnce(new Error("proposals unavailable")).mockResolvedValueOnce([]);
+    const organizationProposalClient = organizationProposalFixture({ list });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
+
+    expect(textContent(renderer)).toContain("proposals unavailable");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry organization suggestions" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("No organization suggestions need review.");
+    expect(list).toHaveBeenCalledTimes(2);
     renderer.unmount();
   });
 
@@ -588,4 +631,16 @@ function metadataFixture(overrides: Partial<MetadataClient> = {}): MetadataClien
     linkEntity: vi.fn().mockResolvedValue({ tags: [], entities: [] }), unlinkEntity: vi.fn().mockResolvedValue({ tags: [], entities: [] }),
     ...overrides,
   };
+}
+
+function organizationProposal(overrides: Partial<OrganizationProposal> = {}): OrganizationProposal {
+  return {
+    id: "proposal-1", itemId: "task-1", itemKind: "task", modelVersion: "qwen3.5:4b", rulesVersion: "organization.v1", state: "pending",
+    candidates: [{ id: "candidate-space", kind: "space", confidence: 0.94, confidenceBand: "high", targetId: "space-1", suggestedName: "Office", provenance: ["model"], state: "pending" }],
+    ...overrides,
+  };
+}
+
+function organizationProposalFixture(overrides: Partial<OrganizationProposalClient> = {}): OrganizationProposalClient {
+  return { list: vi.fn().mockResolvedValue([organizationProposal()]), decide: vi.fn().mockResolvedValue(organizationProposal()), ...overrides };
 }
