@@ -20,6 +20,7 @@ import { ReviewScreen } from "./ReviewScreen";
 import type { OfflineDraftStore } from "../offline/offline-drafts";
 import type { Entity, MetadataClient, MetadataLinks, Tag } from "./metadata";
 import type { OrganizationProposal, OrganizationProposalClient } from "./organization-proposals";
+import type { Space, SpacesClient } from "../spaces/spaces";
 
 describe("ReviewScreen", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -424,6 +425,31 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
+  test("keeps inherited Space visible and editable after Note conversion", async () => {
+    const office: Space = { id: "space-1", memberId: "member-1", name: "Office", createdAt: "now" };
+    const spacesClient = spacesFixture({
+      list: vi.fn().mockResolvedValue([office]),
+      read: vi.fn()
+        .mockResolvedValueOnce({ space: office, path: "Office", children: [], items: [{ itemId: "note-1", itemKind: "note", spaceId: office.id, path: "Office", content: "Call" }] })
+        .mockResolvedValueOnce({ space: office, path: "Office", children: [], items: [{ itemId: "note-1", itemKind: "task", spaceId: office.id, path: "Office", title: "Call" }] }),
+    });
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "none", version: 1 }) }))
+      .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "note-1", title: "Call", status: "open", version: 2 } }));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen(vi.fn(), { spacesClient });
+
+    expect(textContent(renderer)).toContain("Space · Office");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Convert saved Note to Task" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Converted to Task. Identity and provenance were kept.");
+    expect(textContent(renderer)).toContain("Space · Office");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Remove Space Office" })).toBeDefined();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Remove Space Office" }).props.onPress(); });
+    expect(spacesClient.assign).toHaveBeenCalledWith("note-1", "task", "member-1", null);
+    renderer.unmount();
+  });
+
   test("prevents duplicate Note conversion requests while one is in flight", async () => {
     let resolveConversion!: (response: Response) => void;
     const conversion = new Promise<Response>((resolve) => { resolveConversion = resolve; });
@@ -642,6 +668,14 @@ function metadataFixture(overrides: Partial<MetadataClient> = {}): MetadataClien
     linkTag: vi.fn().mockResolvedValue({ tags: [], entities: [] }), unlinkTag: vi.fn().mockResolvedValue({ tags: [], entities: [] }),
     linkEntity: vi.fn().mockResolvedValue({ tags: [], entities: [] }), unlinkEntity: vi.fn().mockResolvedValue({ tags: [], entities: [] }),
     ...overrides,
+  };
+}
+
+function spacesFixture(overrides: Partial<SpacesClient> = {}): SpacesClient {
+  const space: Space = { id: "space-1", memberId: "member-1", name: "Office", createdAt: "now" };
+  return {
+    list: vi.fn().mockResolvedValue([space]), create: vi.fn(), read: vi.fn().mockResolvedValue({ space, path: "Office", children: [], items: [] }),
+    update: vi.fn(), archive: vi.fn(), restore: vi.fn(), remove: vi.fn(), assign: vi.fn().mockResolvedValue(undefined), ...overrides,
   };
 }
 
