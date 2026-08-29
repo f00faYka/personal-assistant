@@ -8,6 +8,10 @@ import type { Outcome } from "../../features/outcomes/outcome.js";
 import { foundationMigrations } from "./foundation-migrations.js";
 import { migrateDatabase } from "./migrate.js";
 import { SqliteOutcomeRepository } from "./sqlite-outcome-repository.js";
+import { SqliteMetadataRepository } from "./sqlite-metadata-repository.js";
+import { SqliteSpaceRepository } from "./sqlite-space-repository.js";
+import { MetadataService } from "../../features/metadata/metadata.js";
+import { SpaceService } from "../../features/spaces/space.js";
 
 describe("SqliteOutcomeRepository", () => {
   const directories: string[] = [];
@@ -188,5 +192,55 @@ describe("SqliteOutcomeRepository", () => {
     expect(repository.convertNoteToTask("note-1", "member-1", 0)).toBeUndefined();
     expect(repository.convertNoteToTask("note-1", "other-member", 1)).toBeUndefined();
     repository.close();
+  });
+
+  test("inherits the primary Space, Tags, and Entities when converting a Note", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "personal-assistant-note-organization-"));
+    directories.push(directory);
+    const databasePath = join(directory, "api.sqlite");
+    migrateDatabase({ databasePath, migrations: foundationMigrations });
+    const repository = new SqliteOutcomeRepository(databasePath);
+    const spaceRepository = new SqliteSpaceRepository(databasePath);
+    const metadataRepository = new SqliteMetadataRepository(databasePath);
+    const spaces = new SpaceService(spaceRepository);
+    const metadata = new MetadataService(metadataRepository);
+    const note: Outcome = {
+      kind: "note",
+      id: "note-1",
+      memberId: "member-1",
+      interpretationId: "interpretation-1",
+      captureId: "capture-1",
+      sourceId: "source-1",
+      content: "Call the gardener",
+      reviewState: "none",
+      version: 0,
+      createdAt: "2026-08-14T10:00:00.000Z",
+    };
+    repository.create(note);
+    const space = spaces.create("member-1", "Home");
+    spaces.assign(note.id, "note", note.memberId, space.id);
+    const tag = metadata.createTag("member-1", "Garden");
+    const entity = metadata.createEntity("member-1", "Gardener", "Person");
+    metadata.linkTag(note.id, "note", note.memberId, tag.id);
+    metadata.linkEntity(note.id, "note", note.memberId, entity.id);
+
+    const converted = repository.convertNoteToTask(note.id, note.memberId, note.version);
+
+    expect(converted).toMatchObject({
+      kind: "task",
+      id: note.id,
+      title: note.content,
+      version: 1,
+      interpretationId: note.interpretationId,
+      captureId: note.captureId,
+      sourceId: note.sourceId,
+    });
+    expect(spaces.read(note.memberId, space.id).items).toEqual([
+      expect.objectContaining({ itemId: note.id, itemKind: "task", spaceId: space.id }),
+    ]);
+    expect(metadata.listLinks(note.id, "task", note.memberId)).toEqual({ tags: [tag], entities: [entity] });
+    repository.close();
+    spaceRepository.close();
+    metadataRepository.close();
   });
 });

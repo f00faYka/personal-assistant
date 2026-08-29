@@ -120,17 +120,32 @@ export class SqliteOutcomeRepository implements OutcomeRepository {
   }
 
   convertNoteToTask(noteId: string, memberId: string, expectedVersion: number): TaskOutcome | undefined {
-    const result = this.database
-      .prepare(
-        `UPDATE outcomes
-         SET kind = 'task', title = content, content = NULL, review_state = NULL,
-             status = 'open', due_at = NULL, version = version + 1
-         WHERE id = ? AND member_id = ? AND version = ? AND kind = 'note'`,
-      )
-      .run(noteId, memberId, expectedVersion);
-    if (result.changes === 0) return undefined;
-    const outcome = this.findById(noteId);
-    return outcome?.kind === "task" ? outcome : undefined;
+    const convert = this.database.transaction(() => {
+      const result = this.database
+        .prepare(
+          `UPDATE outcomes
+           SET kind = 'task', title = content, content = NULL, review_state = NULL,
+               status = 'open', due_at = NULL, version = version + 1
+           WHERE id = ? AND member_id = ? AND version = ? AND kind = 'note'`,
+        )
+        .run(noteId, memberId, expectedVersion);
+      if (result.changes === 0) return undefined;
+
+      this.database
+        .prepare(
+          "UPDATE item_tags SET item_kind = 'task' WHERE member_id = ? AND item_id = ? AND item_kind = 'note'",
+        )
+        .run(memberId, noteId);
+      this.database
+        .prepare(
+          "UPDATE item_entities SET item_kind = 'task' WHERE member_id = ? AND item_id = ? AND item_kind = 'note'",
+        )
+        .run(memberId, noteId);
+
+      const outcome = this.findById(noteId);
+      return outcome?.kind === "task" ? outcome : undefined;
+    });
+    return convert();
   }
 
   close(): void {
