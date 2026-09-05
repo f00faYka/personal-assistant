@@ -30,6 +30,7 @@ tmp/
 /local-data.backup-*/
 /uploads/
 /recordings/
+/models/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
