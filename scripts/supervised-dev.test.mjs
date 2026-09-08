@@ -4,7 +4,9 @@ import { describe, expect, test, vi } from "vitest";
 
 import {
   ConfigurationError,
+  HerdrRuntime,
   SupervisedDevelopment,
+  isHerdrEnvironment,
   loadSupervisedConfiguration,
 } from "./supervised-dev.mjs";
 
@@ -42,6 +44,75 @@ describe("supervised development configuration", () => {
     expect(() => loadSupervisedConfiguration({})).toThrow(ConfigurationError);
     expect(() => loadSupervisedConfiguration({ ...validEnvironment, OLLAMA_MODEL: "" })).toThrow(/OLLAMA_MODEL/);
     expect(() => loadSupervisedConfiguration({ ...validEnvironment, WHISPER_ENDPOINT: "file:///tmp/inference" })).toThrow(/WHISPER_ENDPOINT/);
+  });
+
+  test("detects a Herdr-launched command from its environment", () => {
+    expect(isHerdrEnvironment({ HERDR_ENV: "1", HERDR_WORKSPACE_ID: "w3" })).toBe(true);
+    expect(isHerdrEnvironment({ HERDR_ENV: "1" })).toBe(false);
+    expect(isHerdrEnvironment({})).toBe(false);
+  });
+});
+
+describe("HerdrRuntime", () => {
+  test("uses the run tab, creates separate labelled panes, and stops only owned panes", () => {
+    const commands = [];
+    const panes = [];
+    let nextPane = 10;
+    const runCommand = vi.fn((arguments_) => {
+      commands.push(arguments_);
+      if (arguments_[0] === "tab" && arguments_[1] === "list") return { tabs: [{ tab_id: "w3:t2", label: "run", pane_id: "w3:p4" }] };
+      if (arguments_[0] === "pane" && arguments_[1] === "list") return { panes: [...panes] };
+      if (arguments_[0] === "pane" && arguments_[1] === "split") {
+        const pane = { pane_id: `w3:p${nextPane++}` };
+        panes.push({ ...pane, tab_id: "w3:t2" });
+        return { pane };
+      }
+      return {};
+    });
+    const runtime = new HerdrRuntime({
+      environment: { HERDR_WORKSPACE_ID: "w3" },
+      runCommand,
+      cwd: "/repo",
+    });
+
+    expect(runtime.startProcess("npm", ["run", "dev"], "API", { API_PORT: "3000" })).toEqual({ paneId: "w3:p10", owned: true });
+    expect(runtime.startProcess("npm", ["run", "start"], "Expo", { EXPO_PUBLIC_API_BASE_URL: "http://phone.test" })).toEqual({ paneId: "w3:p11", owned: true });
+    runtime.stop();
+
+    expect(commands).toContainEqual(["pane", "run", "w3:p10", "npm", "run", "dev"]);
+    expect(commands).toContainEqual(["pane", "rename", "w3:p10", "personal-assistant API :3000"]);
+    expect(commands).toContainEqual(["pane", "send-text", "w3:p11", "\u0003"]);
+    expect(commands).toContainEqual(["pane", "send-text", "w3:p10", "\u0003"]);
+  });
+
+  test("reuses an existing labelled run-tab pane", () => {
+    const runCommand = vi.fn((arguments_) => {
+      if (arguments_[0] === "tab") return { tabs: [{ tab_id: "w3:t2", label: "run" }] };
+      if (arguments_[0] === "pane") return { panes: [{ pane_id: "w3:p5", tab_id: "w3:t2", label: "personal-assistant API :3000" }] };
+      return {};
+    });
+    const runtime = new HerdrRuntime({ environment: { HERDR_WORKSPACE_ID: "w3" }, runCommand });
+
+    expect(runtime.startProcess("npm", ["run", "dev"], "API", {})).toEqual({ paneId: "w3:p5", owned: false });
+    runtime.stop();
+    expect(runCommand).not.toHaveBeenCalledWith(expect.arrayContaining(["pane", "split"]));
+    expect(runCommand).not.toHaveBeenCalledWith(expect.arrayContaining(["pane", "send-text"]));
+  });
+
+  test("does not reuse a stale AI pane after readiness failed", () => {
+    const commands = [];
+    const runCommand = vi.fn((arguments_) => {
+      commands.push(arguments_);
+      if (arguments_[0] === "tab") return { tabs: [{ tab_id: "w3:t2", label: "run", pane_id: "w3:p4" }] };
+      if (arguments_[0] === "pane" && arguments_[1] === "list") return { panes: [{ pane_id: "w3:p6", tab_id: "w3:t2", label: "personal-assistant Whisper :local" }] };
+      if (arguments_[0] === "pane" && arguments_[1] === "split") return { pane: { pane_id: "w3:p9" } };
+      return {};
+    });
+    const runtime = new HerdrRuntime({ environment: { HERDR_WORKSPACE_ID: "w3" }, runCommand });
+
+    expect(runtime.startProcess("/tools/whisper-server", ["-m", "/models/model.bin"], "Whisper", {})).toEqual({ paneId: "w3:p9", owned: true });
+    expect(commands).toContainEqual(expect.arrayContaining(["pane", "split"]));
+    expect(commands).toContainEqual(["pane", "run", "w3:p9", "/tools/whisper-server", "-m", "/models/model.bin"]);
   });
 });
 

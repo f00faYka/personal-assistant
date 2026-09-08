@@ -1,5 +1,6 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import { spawn as nodeSpawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 
 const REQUIRED = [
@@ -73,18 +74,22 @@ export class SupervisedDevelopment {
   #children = [];
   #stopping = false;
   #started = false;
+  #herdr;
 
-  constructor({ environment, fetch = globalThis.fetch, spawn = nodeSpawn, exists = existsSync }) {
+  constructor({ environment, fetch = globalThis.fetch, spawn = nodeSpawn, exists = existsSync, herdr } = {}) {
     this.#configuration = loadSupervisedConfiguration(environment);
     this.#fetch = fetch;
     this.#spawn = spawn;
     this.#exists = exists;
+    this.#herdr = herdr ?? (isHerdrEnvironment(environment) ? new HerdrRuntime({ environment }) : null);
   }
 
   async start() {
     if (this.#started) return;
     await this.#ensureOllama();
+    if (this.#stopping) return;
     await this.#ensureWhisper();
+    if (this.#stopping) return;
     this.#startApplicationProcesses();
     this.#started = true;
   }
@@ -94,6 +99,7 @@ export class SupervisedDevelopment {
     this.#stopping = true;
     for (const child of [...this.#children].reverse()) child.kill("SIGTERM");
     this.#children = [];
+    this.#herdr?.stop();
   }
 
   #validateWhisperAssets() {
@@ -186,6 +192,10 @@ export class SupervisedDevelopment {
   }
 
   #startChild(command, arguments_, name, environment = process.env) {
+    if (this.#herdr) {
+      this.#herdr.startProcess(command, arguments_, name, environment);
+      return;
+    }
     const child = this.#spawn(command, arguments_, { env: environment, stdio: "inherit" });
     this.#children.push(child);
     child.once?.("exit", (code, signal) => {
@@ -195,6 +205,79 @@ export class SupervisedDevelopment {
       }
     });
     return child;
+  }
+}
+
+export class HerdrRuntime {
+  #environment;
+  #runCommand;
+  #cwd;
+  #ownedPanes = [];
+
+  constructor({ environment, runCommand = defaultHerdrCommand, cwd = process.cwd() }) {
+    this.#environment = environment;
+    this.#runCommand = runCommand;
+    this.#cwd = cwd;
+  }
+
+  startProcess(command, arguments_, name, environment) {
+    const tab = this.#runCommand(["tab", "list", "--workspace", this.#environment.HERDR_WORKSPACE_ID]).tabs
+      .find((candidate) => candidate.label === "run");
+    const targetTab = tab ?? this.#createRunTab();
+    const panes = this.#runCommand(["pane", "list", "--workspace", this.#environment.HERDR_WORKSPACE_ID]).panes
+      .filter((pane) => pane.tab_id === targetTab.tab_id);
+    const labelPrefix = `personal-assistant ${name}`;
+    const existing = ["API", "Expo"].includes(name)
+      ? panes.find((pane) => pane.label?.startsWith(labelPrefix))
+      : undefined;
+    if (existing) return { paneId: existing.pane_id, owned: false };
+
+    const anchor = panes.at(-1)?.pane_id ?? targetTab.pane_id;
+    if (!anchor) throw new Error("Herdr run tab has no pane to split. Open or recreate the run tab, then retry.");
+    const splitArguments = ["pane", "split", "--pane", anchor, "--direction", "down", "--cwd", this.#cwd, "--no-focus"];
+    for (const [key, value] of Object.entries(environment)) {
+      if (!["API_HOST", "API_PORT", "EXPO_PUBLIC_API_BASE_URL"].includes(key)) continue;
+      if (value !== undefined) splitArguments.push("--env", `${key}=${value}`);
+    }
+    const pane = this.#runCommand(splitArguments).pane;
+    if (!pane?.pane_id) throw new Error(`Herdr did not return the new pane ID for ${name}.`);
+    this.#runCommand(["pane", "run", pane.pane_id, command, ...arguments_]);
+    this.#runCommand(["pane", "rename", pane.pane_id, `${labelPrefix} :${this.#portFor(name, environment)}`]);
+    this.#ownedPanes.push(pane.pane_id);
+    return { paneId: pane.pane_id, owned: true };
+  }
+
+  stop() {
+    for (const paneId of [...this.#ownedPanes].reverse()) {
+      this.#runCommand(["pane", "send-text", paneId, "\u0003"]);
+    }
+    this.#ownedPanes = [];
+  }
+
+  #createRunTab() {
+    const result = this.#runCommand(["tab", "create", "--workspace", this.#environment.HERDR_WORKSPACE_ID, "--cwd", this.#cwd, "--label", "run", "--no-focus"]);
+    if (!result.tab?.tab_id) throw new Error("Herdr did not return the new run tab ID.");
+    return result.tab;
+  }
+
+  #portFor(name, environment) {
+    if (name === "API") return environment.API_PORT ?? this.#environment.API_PORT ?? "local";
+    if (name === "Expo") return environment.EXPO_PORT ?? this.#environment.EXPO_PORT ?? "local";
+    return "local";
+  }
+}
+
+export function isHerdrEnvironment(environment) {
+  return environment.HERDR_ENV === "1" && Boolean(environment.HERDR_WORKSPACE_ID);
+}
+
+function defaultHerdrCommand(arguments_) {
+  const output = execFileSync("herdr", arguments_, { encoding: "utf8" });
+  try {
+    const envelope = JSON.parse(output);
+    return envelope.result ?? envelope;
+  } catch {
+    throw new Error(`Herdr returned invalid command output for: herdr ${arguments_.join(" ")}`);
   }
 }
 

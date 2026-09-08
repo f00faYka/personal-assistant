@@ -1,7 +1,7 @@
 import { networkInterfaces } from "node:os";
 import { loadEnvFile } from "node:process";
 
-import { SupervisedDevelopment } from "./supervised-dev.mjs";
+import { isHerdrEnvironment, SupervisedDevelopment } from "./supervised-dev.mjs";
 
 try {
   loadEnvFile();
@@ -21,14 +21,27 @@ if (process.argv.includes("--lan")) {
 }
 
 const routine = new SupervisedDevelopment({ environment: process.env });
+const herdrMode = isHerdrEnvironment(process.env);
+let keepAlive;
+let releaseLauncher;
+const launcherStopped = new Promise((resolve) => { releaseLauncher = resolve; });
 console.log("Supervising local Ollama and Whisper, then starting API and Expo. Press Ctrl+C to stop owned processes.\n");
 
-for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => void routine.stop());
+if (herdrMode) keepAlive = setInterval(() => {}, 60_000);
+for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => {
+  void routine.stop().finally(() => {
+    if (keepAlive) clearInterval(keepAlive);
+    releaseLauncher();
+  });
+});
 
 try {
   await routine.start();
+  if (herdrMode) await launcherStopped;
 } catch (error) {
   await routine.stop();
+  if (keepAlive) clearInterval(keepAlive);
+  releaseLauncher();
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
 }

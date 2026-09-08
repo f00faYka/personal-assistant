@@ -77,6 +77,8 @@ Use `npm run dev:all` for the complete local workflow. It reads and validates `.
 
 Copy `.env.example` to `.env` and replace the reviewed model names and machine-specific paths. The routine requires `OLLAMA_ENDPOINT`, `OLLAMA_HEALTH_ENDPOINT`, `OLLAMA_MODEL`, `OLLAMA_BINARY_PATH`, `WHISPER_ENDPOINT`, `WHISPER_HEALTH_ENDPOINT`, `WHISPER_BINARY_PATH`, `WHISPER_MODEL_PATH`, and `EXPO_PUBLIC_API_BASE_URL`. It never downloads binaries or models. A missing path, unavailable model, startup failure, or readiness timeout is reported with the variable and the next operator action.
 
+When the command is run from Herdr, it detects `HERDR_ENV=1`, uses the current workspace's `run` tab, and keeps API, Expo, and any newly started local runtime visible in separate panes. Stop the launcher with Ctrl+C; existing panes and reused services remain running.
+
 For a physical iPhone on the same Wi-Fi network, use:
 
 ```sh
