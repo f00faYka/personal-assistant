@@ -86,7 +86,8 @@ export class SupervisedDevelopment {
 
   async start() {
     if (this.#started) return;
-    await this.#ensureOllama();
+    const ollamaReused = await this.#ensureOllama();
+    if (ollamaReused) this.#herdr?.startMonitor(this.#configuration.ollamaModel);
     if (this.#stopping) return;
     await this.#ensureWhisper();
     if (this.#stopping) return;
@@ -119,7 +120,7 @@ export class SupervisedDevelopment {
 
   async #ensureOllama() {
     const currentState = await this.#ollamaModelState();
-    if (currentState === "ready") return;
+    if (currentState === "ready") return true;
     if (currentState === "missing") throw this.#missingOllamaModelError();
     if (!this.#exists(this.#configuration.ollamaBinaryPath)) {
       throw new Error(`Missing OLLAMA_BINARY_PATH. Install Ollama and set its binary path in .env; this command never downloads it.`);
@@ -130,6 +131,7 @@ export class SupervisedDevelopment {
       if (state === "missing") throw this.#missingOllamaModelError();
       return state === "ready";
     });
+    return false;
   }
 
   async #ollamaModelState() {
@@ -213,6 +215,7 @@ export class HerdrRuntime {
   #runCommand;
   #cwd;
   #ownedPanes = [];
+  #freshTab = false;
 
   constructor({ environment, runCommand = defaultHerdrCommand, cwd = process.cwd() }) {
     this.#environment = environment;
@@ -227,19 +230,25 @@ export class HerdrRuntime {
     const panes = this.#runCommand(["pane", "list", "--workspace", this.#environment.HERDR_WORKSPACE_ID]).panes
       .filter((pane) => pane.tab_id === targetTab.tab_id);
     const labelPrefix = `personal-assistant ${name}`;
-    const existing = ["API", "Expo"].includes(name)
+    const existing = ["API", "Expo", "Ollama monitor"].includes(name)
       ? panes.find((pane) => pane.label?.startsWith(labelPrefix))
       : undefined;
     if (existing && this.#isActiveRuntimePane(existing, name)) return { paneId: existing.pane_id, owned: false };
 
-    const anchor = panes.at(-1)?.pane_id ?? targetTab.pane_id;
-    if (!anchor) throw new Error("Herdr run tab has no pane to split. Open or recreate the run tab, then retry.");
-    const splitArguments = ["pane", "split", "--pane", anchor, "--direction", "down", "--cwd", this.#cwd, "--no-focus"];
-    for (const [key, value] of Object.entries(environment)) {
-      if (!["API_HOST", "API_PORT", "EXPO_PUBLIC_API_BASE_URL"].includes(key)) continue;
-      if (value !== undefined) splitArguments.push("--env", `${key}=${value}`);
+    const useFreshTabRoot = this.#freshTab && this.#ownedPanes.length === 0;
+    let pane;
+    if (useFreshTabRoot) {
+      pane = panes[0] ?? (targetTab.pane_id ? { pane_id: targetTab.pane_id } : undefined);
+    } else {
+      const anchor = this.#layoutAnchor(panes, targetTab);
+      if (!anchor) throw new Error("Herdr run tab has no pane to split. Open or recreate the run tab, then retry.");
+      const splitArguments = ["pane", "split", "--pane", anchor.paneId, "--direction", anchor.direction, "--cwd", this.#cwd, "--no-focus"];
+      for (const [key, value] of Object.entries(environment)) {
+        if (!["API_HOST", "API_PORT", "EXPO_PUBLIC_API_BASE_URL"].includes(key)) continue;
+        if (value !== undefined) splitArguments.push("--env", `${key}=${value}`);
+      }
+      pane = this.#runCommand(splitArguments).pane;
     }
-    const pane = this.#runCommand(splitArguments).pane;
     if (!pane?.pane_id) throw new Error(`Herdr did not return the new pane ID for ${name}.`);
     this.#ownedPanes.push(pane.pane_id);
     this.#runCommand(["pane", "run", pane.pane_id, [command, ...arguments_].map(shellQuote).join(" ")]);
@@ -254,10 +263,26 @@ export class HerdrRuntime {
     this.#ownedPanes = [];
   }
 
+  startMonitor(model) {
+    const monitor = `while true; do clear; printf '%s\\n' 'Ollama monitor'; ollama ps; printf '\\nConfigured model: %s\\n' ${shellQuote(model)}; ollama list | grep -F -- ${shellQuote(model)} || true; sleep 5; done`;
+    return this.startProcess("sh", ["-c", monitor], "Ollama monitor", {});
+  }
+
   #createRunTab() {
     const result = this.#runCommand(["tab", "create", "--workspace", this.#environment.HERDR_WORKSPACE_ID, "--cwd", this.#cwd, "--label", "run", "--no-focus"]);
     if (!result.tab?.tab_id) throw new Error("Herdr did not return the new run tab ID.");
+    this.#freshTab = true;
     return result.tab;
+  }
+
+  #layoutAnchor(panes, targetTab) {
+    if (this.#freshTab && this.#ownedPanes.length === 0) return { paneId: panes[0]?.pane_id ?? targetTab.pane_id, direction: "right" };
+    const root = this.#ownedPanes[0] ?? panes[0]?.pane_id ?? targetTab.pane_id;
+    const topRight = this.#ownedPanes[1];
+    if (this.#ownedPanes.length === 1) return { paneId: root, direction: "right" };
+    if (this.#ownedPanes.length === 2) return { paneId: root, direction: "down" };
+    if (this.#ownedPanes.length === 3 && topRight) return { paneId: topRight, direction: "down" };
+    return { paneId: panes.at(-1)?.pane_id ?? root, direction: "down" };
   }
 
   #portFor(name, environment) {
@@ -272,7 +297,8 @@ export class HerdrRuntime {
       return processes.some((process) => {
         const commandLine = process.cmdline ?? "";
         if (name === "API") return commandLine.includes("npm run dev") || commandLine.includes("server.ts");
-        return commandLine.includes("npm run start") || commandLine.includes("expo start");
+        if (name === "Expo") return commandLine.includes("npm run start") || commandLine.includes("expo start");
+        return !commandLine.includes("-zsh") && !commandLine.includes("bash");
       });
     } catch {
       return false;

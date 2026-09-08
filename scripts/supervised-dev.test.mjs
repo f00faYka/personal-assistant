@@ -115,6 +115,43 @@ describe("HerdrRuntime", () => {
     expect(commands).toContainEqual(expect.arrayContaining(["pane", "split"]));
     expect(commands).toContainEqual(["pane", "run", "w3:p9", "'/tools/whisper-server' '-m' '/models/model.bin'"]);
   });
+
+  test("lays out a fresh run tab as a 2x2 grid with an Ollama monitor", () => {
+    const commands = [];
+    const panes = [];
+    let hasRunTab = false;
+    let nextPane = 7;
+    const runCommand = vi.fn((arguments_) => {
+      commands.push(arguments_);
+      if (arguments_[0] === "tab" && arguments_[1] === "list") return { tabs: hasRunTab ? [{ tab_id: "w3:t3", label: "run" }] : [] };
+      if (arguments_[0] === "tab" && arguments_[1] === "create") {
+        hasRunTab = true;
+        panes.push({ pane_id: "w3:pF", tab_id: "w3:t3" });
+        return { tab: { tab_id: "w3:t3", label: "run" } };
+      }
+      if (arguments_[0] === "pane" && arguments_[1] === "list") return { panes: [...panes] };
+      if (arguments_[0] === "pane" && arguments_[1] === "split") {
+        const pane = { pane_id: `w3:p${String.fromCharCode(71 + nextPane++ - 7)}` };
+        panes.push({ ...pane, tab_id: "w3:t3" });
+        return { pane };
+      }
+      if (arguments_[0] === "pane" && arguments_[1] === "rename") {
+        const pane = panes.find((candidate) => candidate.pane_id === arguments_[2]);
+        if (pane) pane.label = arguments_[3];
+      }
+      return {};
+    });
+    const runtime = new HerdrRuntime({ environment: { HERDR_WORKSPACE_ID: "w3" }, runCommand, cwd: "/repo" });
+
+    runtime.startMonitor("reviewed-model");
+    runtime.startProcess("/tools/whisper-server", ["-m", "/models/model.bin"], "Whisper", {});
+    runtime.startProcess("npm", ["run", "dev"], "API", { API_PORT: "3000" });
+    runtime.startProcess("npm", ["run", "start"], "Expo", {});
+
+    expect(commands).toContainEqual(expect.arrayContaining(["pane", "split", "--pane", "w3:pF", "--direction", "right"]));
+    expect(commands).toContainEqual(expect.arrayContaining(["pane", "split", "--pane", "w3:pF", "--direction", "down"]));
+    expect(commands).toContainEqual(expect.arrayContaining(["pane", "split", "--pane", "w3:pG", "--direction", "down"]));
+  });
 });
 
 describe("SupervisedDevelopment", () => {
