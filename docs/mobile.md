@@ -73,7 +73,9 @@ To inspect the review UI before a local processing provider is configured, start
 
 ## Starting the API and Expo together
 
-Use `npm run dev:all` for an iPhone simulator or a Mac-local workflow. It starts the API and Expo together and points the mobile app at `http://127.0.0.1:3000`.
+Use `npm run dev:all` for the complete local workflow. It reads and validates `.env`, reuses ready Ollama/Whisper services, starts missing local services, checks the configured Ollama model, waits for both runtimes, and only then starts the API and Expo. On Ctrl+C it terminates only processes started by this command.
+
+Copy `.env.example` to `.env` and replace the reviewed model names and machine-specific paths. The routine requires `OLLAMA_ENDPOINT`, `OLLAMA_HEALTH_ENDPOINT`, `OLLAMA_MODEL`, `OLLAMA_BINARY_PATH`, `WHISPER_ENDPOINT`, `WHISPER_HEALTH_ENDPOINT`, `WHISPER_BINARY_PATH`, `WHISPER_MODEL_PATH`, and `EXPO_PUBLIC_API_BASE_URL`. It never downloads binaries or models. A missing path, unavailable model, startup failure, or readiness timeout is reported with the variable and the next operator action.
 
 For a physical iPhone on the same Wi-Fi network, use:
 

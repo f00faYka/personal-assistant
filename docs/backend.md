@@ -42,6 +42,14 @@ Copy `.env.example` to `.env` to override the defaults. `.env`, SQLite files, `l
 
 ## Local Whisper runtime
 
+### Supervised local development
+
+The development-only `npm run dev:all` command supervises the local stack. Configure the command through the repository `.env` described in [`.env.example`](../.env.example); do not put machine-specific model or binary paths in source code. The endpoint, binary path, and model path may point to another reviewed installation without a code change.
+
+The routine first checks the configured Whisper and Ollama health endpoints. A healthy service is reused. Otherwise it starts the configured Ollama binary with `serve` or the configured `whisper-server` binary with the configured model path, waits until the health check succeeds, and verifies the configured Ollama model via its tags endpoint. Only after those checks does it start API and Expo. Ctrl+C cleans up children started by the routine and leaves reused services running. Missing assets, an unavailable Ollama model, duplicate startup, process failure, and timeout are actionable errors; no binary or model is downloaded.
+
+The current interpretation provider intentionally remains a direct HTTP adapter. The SDK evaluation found no concrete benefit for this boundary: the adapter already owns the small request/response contract, timeout, structured-output format, safe-error translation, and configured model provenance. Adding an SDK would add dependency and lifecycle coupling without changing those contracts, so no SDK is adopted in this prototype.
+
 The production API expects the owner-operated [`whisper.cpp` HTTP server](https://github.com/ggml-org/whisper.cpp/tree/master/examples/server) to be running before a voice Capture is submitted. Build `whisper-server`, download a compatible model, install `ffmpeg`, and start the server with conversion enabled so iPhone formats such as M4A are accepted. A default-compatible command from the `whisper.cpp` checkout is:
 
 ```sh

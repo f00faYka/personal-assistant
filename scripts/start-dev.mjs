@@ -1,31 +1,37 @@
-import { spawn } from "node:child_process";
 import { networkInterfaces } from "node:os";
+import { loadEnvFile } from "node:process";
 
-const useLan = process.argv.includes("--lan");
-const apiPort = process.env.API_PORT ?? "3000";
-const apiHost = useLan ? "0.0.0.0" : (process.env.API_HOST ?? "127.0.0.1");
-const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL ?? `http://${useLan ? findLanAddress() : "127.0.0.1"}:${apiPort}`;
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-const environment = { ...process.env, API_HOST: apiHost, EXPO_PUBLIC_API_BASE_URL: apiBaseUrl };
+import { SupervisedDevelopment } from "./supervised-dev.mjs";
 
-console.log(`API:    ${apiBaseUrl}`);
-console.log(`Binding API to ${apiHost}:${apiPort}`);
-console.log("Starting API and Expo. Press Ctrl+C to stop both.\n");
-
-const api = spawn(npmCommand, ["run", "dev", "--workspace", "@personal-assistant/api"], { env: environment, stdio: "inherit" });
-const mobile = spawn(npmCommand, ["run", "start", "--workspace", "@personal-assistant/mobile"], { env: environment, stdio: "inherit" });
-const children = [api, mobile];
-let stopping = false;
-
-function stop() {
-  if (stopping) return;
-  stopping = true;
-  for (const child of children) child.kill("SIGTERM");
+try {
+  loadEnvFile();
+} catch (error) {
+  if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
 }
 
-process.on("SIGINT", stop);
-process.on("SIGTERM", stop);
-for (const child of children) child.on("exit", stop);
+if (process.argv.includes("--lan")) {
+  process.env.API_HOST = "0.0.0.0";
+  if (process.env.EXPO_PUBLIC_API_BASE_URL) {
+    // Keep the explicitly configured phone URL and only widen the API bind address.
+  } else {
+    const port = process.env.API_PORT;
+    if (!port) throw new Error("Set EXPO_PUBLIC_API_BASE_URL or API_PORT before using --lan.");
+    process.env.EXPO_PUBLIC_API_BASE_URL = `http://${findLanAddress()}:${port}`;
+  }
+}
+
+const routine = new SupervisedDevelopment({ environment: process.env });
+console.log("Supervising local Ollama and Whisper, then starting API and Expo. Press Ctrl+C to stop owned processes.\n");
+
+for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => void routine.stop());
+
+try {
+  await routine.start();
+} catch (error) {
+  await routine.stop();
+  console.error(error instanceof Error ? error.message : error);
+  process.exitCode = 1;
+}
 
 function findLanAddress() {
   for (const interfaces of Object.values(networkInterfaces())) {
