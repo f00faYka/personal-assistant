@@ -79,7 +79,7 @@ describe("HerdrRuntime", () => {
     expect(runtime.startProcess("npm", ["run", "start"], "Expo", { EXPO_PUBLIC_API_BASE_URL: "http://phone.test" })).toEqual({ paneId: "w3:p11", owned: true });
     runtime.stop();
 
-    expect(commands).toContainEqual(["pane", "run", "w3:p10", "npm", "run", "dev"]);
+    expect(commands).toContainEqual(["pane", "run", "w3:p10", "'npm' 'run' 'dev'"]);
     expect(commands).toContainEqual(["pane", "rename", "w3:p10", "personal-assistant API :3000"]);
     expect(commands).toContainEqual(["pane", "send-text", "w3:p11", "\u0003"]);
     expect(commands).toContainEqual(["pane", "send-text", "w3:p10", "\u0003"]);
@@ -88,7 +88,8 @@ describe("HerdrRuntime", () => {
   test("reuses an existing labelled run-tab pane", () => {
     const runCommand = vi.fn((arguments_) => {
       if (arguments_[0] === "tab") return { tabs: [{ tab_id: "w3:t2", label: "run" }] };
-      if (arguments_[0] === "pane") return { panes: [{ pane_id: "w3:p5", tab_id: "w3:t2", label: "personal-assistant API :3000" }] };
+      if (arguments_[0] === "pane" && arguments_[1] === "list") return { panes: [{ pane_id: "w3:p5", tab_id: "w3:t2", label: "personal-assistant API :3000" }] };
+      if (arguments_[0] === "pane" && arguments_[1] === "process-info") return { process_info: { foreground_processes: [{ cmdline: "npm run dev --workspace @personal-assistant/api" }] } };
       return {};
     });
     const runtime = new HerdrRuntime({ environment: { HERDR_WORKSPACE_ID: "w3" }, runCommand });
@@ -112,7 +113,7 @@ describe("HerdrRuntime", () => {
 
     expect(runtime.startProcess("/tools/whisper-server", ["-m", "/models/model.bin"], "Whisper", {})).toEqual({ paneId: "w3:p9", owned: true });
     expect(commands).toContainEqual(expect.arrayContaining(["pane", "split"]));
-    expect(commands).toContainEqual(["pane", "run", "w3:p9", "/tools/whisper-server", "-m", "/models/model.bin"]);
+    expect(commands).toContainEqual(["pane", "run", "w3:p9", "'/tools/whisper-server' '-m' '/models/model.bin'"]);
   });
 });
 

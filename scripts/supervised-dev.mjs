@@ -230,7 +230,7 @@ export class HerdrRuntime {
     const existing = ["API", "Expo"].includes(name)
       ? panes.find((pane) => pane.label?.startsWith(labelPrefix))
       : undefined;
-    if (existing) return { paneId: existing.pane_id, owned: false };
+    if (existing && this.#isActiveRuntimePane(existing, name)) return { paneId: existing.pane_id, owned: false };
 
     const anchor = panes.at(-1)?.pane_id ?? targetTab.pane_id;
     if (!anchor) throw new Error("Herdr run tab has no pane to split. Open or recreate the run tab, then retry.");
@@ -241,9 +241,9 @@ export class HerdrRuntime {
     }
     const pane = this.#runCommand(splitArguments).pane;
     if (!pane?.pane_id) throw new Error(`Herdr did not return the new pane ID for ${name}.`);
-    this.#runCommand(["pane", "run", pane.pane_id, command, ...arguments_]);
-    this.#runCommand(["pane", "rename", pane.pane_id, `${labelPrefix} :${this.#portFor(name, environment)}`]);
     this.#ownedPanes.push(pane.pane_id);
+    this.#runCommand(["pane", "run", pane.pane_id, [command, ...arguments_].map(shellQuote).join(" ")]);
+    this.#runCommand(["pane", "rename", pane.pane_id, `${labelPrefix} :${this.#portFor(name, environment)}`]);
     return { paneId: pane.pane_id, owned: true };
   }
 
@@ -265,6 +265,19 @@ export class HerdrRuntime {
     if (name === "Expo") return environment.EXPO_PORT ?? this.#environment.EXPO_PORT ?? "local";
     return "local";
   }
+
+  #isActiveRuntimePane(pane, name) {
+    try {
+      const processes = this.#runCommand(["pane", "process-info", "--pane", pane.pane_id]).process_info?.foreground_processes ?? [];
+      return processes.some((process) => {
+        const commandLine = process.cmdline ?? "";
+        if (name === "API") return commandLine.includes("npm run dev") || commandLine.includes("server.ts");
+        return commandLine.includes("npm run start") || commandLine.includes("expo start");
+      });
+    } catch {
+      return false;
+    }
+  }
 }
 
 export function isHerdrEnvironment(environment) {
@@ -277,8 +290,13 @@ function defaultHerdrCommand(arguments_) {
     const envelope = JSON.parse(output);
     return envelope.result ?? envelope;
   } catch {
+    if (arguments_[0] === "pane" && ["run", "rename", "send-text"].includes(arguments_[1])) return {};
     throw new Error(`Herdr returned invalid command output for: herdr ${arguments_.join(" ")}`);
   }
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", `'\\''`)}'`;
 }
 
 function isHttpUrl(value) {
