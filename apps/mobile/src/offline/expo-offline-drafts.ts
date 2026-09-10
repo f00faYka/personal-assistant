@@ -21,16 +21,16 @@ function createExpoOfflineDraftPersistence(): OfflineDraftPersistence {
       const manifest = manifestFile();
       if (manifest.exists) {
         const contents = await manifest.text();
-        recoverStagedAudioDeletions(directory, contents);
+        await recoverStagedAudioDeletions(directory, contents);
         return contents;
       }
       const manifestBackup = manifestBackupFile();
       if (manifestBackup.exists) {
         const contents = await manifestBackup.text();
-        recoverStagedAudioDeletions(directory, contents);
+        await recoverStagedAudioDeletions(directory, contents);
         return contents;
       }
-      recoverStagedAudioDeletions(directory, null);
+      await recoverStagedAudioDeletions(directory, null);
       return null;
     },
     async writeManifest(contents) {
@@ -38,20 +38,20 @@ function createExpoOfflineDraftPersistence(): OfflineDraftPersistence {
       let manifest = manifestFile();
       let manifestBackup = manifestBackupFile();
       const manifestNext = manifestNextFile();
-      if (!manifest.exists && manifestBackup.exists) manifestBackup.move(manifest);
+      if (!manifest.exists && manifestBackup.exists) await manifestBackup.move(manifest);
       manifest = manifestFile();
       manifestBackup = manifestBackupFile();
       if (manifestNext.exists) manifestNext.delete();
       manifestNext.write(contents);
       if (manifestBackup.exists) manifestBackup.delete();
-      if (manifest.exists) manifest.move(manifestBackup);
+      if (manifest.exists) await manifest.move(manifestBackup);
       try {
-        manifestNext.move(manifestFile());
+        await manifestNext.move(manifestFile());
       } catch (error) {
         const currentManifest = manifestFile();
         const currentBackup = manifestBackupFile();
         if (!currentManifest.exists && currentBackup.exists) {
-          try { currentBackup.move(currentManifest); } catch { /* readManifest can still recover the backup. */ }
+          try { await currentBackup.move(currentManifest); } catch { /* readManifest can still recover the backup. */ }
         }
         throw error;
       }
@@ -60,7 +60,7 @@ function createExpoOfflineDraftPersistence(): OfflineDraftPersistence {
       ensureDirectory();
       const destination = audioFile(directory, draftId);
       if (destination.exists) destination.delete();
-      new File(sourceUri).copy(destination);
+      await new File(sourceUri).copy(destination);
       return destination.uri;
     },
     async deleteAudio(draftId) {
@@ -72,10 +72,10 @@ function createExpoOfflineDraftPersistence(): OfflineDraftPersistence {
       const staged = stagedAudioFile(directory, draftId);
       if (!file.exists) return;
       if (staged.exists) staged.delete();
-      file.move(staged);
+      await file.move(staged);
     },
     async restoreAudioDeletion(draftId) {
-      restoreStagedAudio(directory, draftId);
+      await restoreStagedAudio(directory, draftId);
     },
     async commitAudioDeletion(draftId) {
       const staged = stagedAudioFile(directory, draftId);
@@ -92,15 +92,15 @@ function stagedAudioFile(directory: Directory, draftId: string): File {
   return new File(directory, `${encodeURIComponent(draftId)}.m4a.deleting`);
 }
 
-function restoreStagedAudio(directory: Directory, draftId: string): void {
+async function restoreStagedAudio(directory: Directory, draftId: string): Promise<void> {
   const staged = stagedAudioFile(directory, draftId);
   if (!staged.exists) return;
   const original = audioFile(directory, draftId);
   if (original.exists) staged.delete();
-  else staged.move(original);
+  else await staged.move(original);
 }
 
-function recoverStagedAudioDeletions(directory: Directory, contents: string | null): void {
+async function recoverStagedAudioDeletions(directory: Directory, contents: string | null): Promise<void> {
   if (!directory.exists) return;
   const retainedAudioUris = retainedAudioDraftUris(directory, contents);
   if (retainedAudioUris === null) return;
@@ -109,7 +109,7 @@ function recoverStagedAudioDeletions(directory: Directory, contents: string | nu
     const original = new File(entry.uri.slice(0, -".deleting".length));
     if (retainedAudioUris.has(original.uri)) {
       if (original.exists) entry.delete();
-      else entry.move(original);
+      else await entry.move(original);
     } else {
       entry.delete();
     }

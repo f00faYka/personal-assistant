@@ -5,6 +5,8 @@ const fakeFileSystem = vi.hoisted(() => ({
   failNextManifestPromotion: false,
   failNextAudioRestore: false,
   failNextStagedDelete: false,
+  delayNextCopy: false,
+  resolveCopy: null as (() => void) | null,
 }));
 
 vi.mock("expo-file-system", () => {
@@ -32,8 +34,14 @@ vi.mock("expo-file-system", () => {
       }
       fakeFileSystem.files.delete(this.uri);
     }
-    copy(destination: File) { fakeFileSystem.files.set(destination.uri, fakeFileSystem.files.get(this.uri) ?? "audio"); }
-    move(destination: File) {
+    async copy(destination: File) {
+      if (fakeFileSystem.delayNextCopy) {
+        fakeFileSystem.delayNextCopy = false;
+        await new Promise<void>((resolve) => { fakeFileSystem.resolveCopy = resolve; });
+      }
+      fakeFileSystem.files.set(destination.uri, fakeFileSystem.files.get(this.uri) ?? "audio");
+    }
+    async move(destination: File) {
       if (fakeFileSystem.failNextManifestPromotion && this.uri.endsWith("manifest.next.json") && destination.uri.endsWith("manifest.json")) {
         fakeFileSystem.failNextManifestPromotion = false;
         throw new Error("promotion interrupted");
@@ -61,6 +69,23 @@ describe("Expo Offline draft persistence", () => {
     fakeFileSystem.failNextManifestPromotion = false;
     fakeFileSystem.failNextAudioRestore = false;
     fakeFileSystem.failNextStagedDelete = false;
+    fakeFileSystem.delayNextCopy = false;
+    fakeFileSystem.resolveCopy = null;
+  });
+
+  test("waits for audio copy before saving the draft", async () => {
+    fakeFileSystem.files.set("file:///capture.m4a", "audio");
+    fakeFileSystem.delayNextCopy = true;
+    const store = createExpoOfflineDraftStore();
+    let settled = false;
+    const save = store.save({ draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "audio", uri: "file:///capture.m4a", contentType: "audio/m4a" } })
+      .finally(() => { settled = true; });
+
+    await vi.waitFor(() => expect(fakeFileSystem.resolveCopy).not.toBeNull());
+    expect(settled).toBe(false);
+    fakeFileSystem.resolveCopy?.();
+
+    await expect(save).resolves.toMatchObject({ draftId: "draft-1" });
   });
 
   test("keeps the last durable manifest when replacement is interrupted", async () => {
