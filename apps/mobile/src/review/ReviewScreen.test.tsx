@@ -253,21 +253,27 @@ describe("ReviewScreen", () => {
   });
 
   test("sets due information from an absent value", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T09:00:00.000Z"));
     const fetcher = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) }))
       .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "task-1", title: "Buy milk", dueAt: "2026-08-20T09:00:00.000Z", status: "open", version: 1 } }));
-    vi.stubGlobal("fetch", fetcher);
-    const renderer = await renderScreen(vi.fn());
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Set due information" }).props.onPress(); });
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Due date 2026-08-20" }).props.onPress(); });
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Choose due time" }).props.onPress(); });
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Due time" }).props.onChangeText("09:00"); });
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Done due time" }).props.onPress(); });
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
+    try {
+      vi.stubGlobal("fetch", fetcher);
+      const renderer = await renderScreen(vi.fn());
+      await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
+      await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Set due information" }).props.onPress(); });
+      await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Due date 2026-08-20" }).props.onPress(); });
+      await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Choose due time" }).props.onPress(); });
+      await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Due time" }).props.onChangeText("09:00"); });
+      await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Done due time" }).props.onPress(); });
+      await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
 
-    expect(fetcher).toHaveBeenLastCalledWith("http://api.test/tasks/task-1", expect.objectContaining({ body: JSON.stringify({ memberId: "member-1", expectedVersion: 0, dueAt: "2026-08-20T09:00:00.000Z" }) }));
-    renderer.unmount();
+      expect(fetcher).toHaveBeenLastCalledWith("http://api.test/tasks/task-1", expect.objectContaining({ body: JSON.stringify({ memberId: "member-1", expectedVersion: 0, dueAt: "2026-08-20T09:00:00.000Z" }) }));
+      renderer.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("saves changed date and time as one non-notifying due value", async () => {
