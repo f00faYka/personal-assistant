@@ -12,8 +12,12 @@ import { createOfflineDraftSyncClient } from "./src/offline/synchronize-offline-
 import { useMemo, useState } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AppShell, DigestSurface, FindSurface, MeSurface, type ShellTab } from "./src/AppShell";
+import { BrowserPreview } from "./src/web/BrowserPreview";
 
 export default function App() {
+  if (process.env.EXPO_PUBLIC_UI_FIXTURE === "true") {
+    return <SafeAreaProvider><BrowserPreview /></SafeAreaProvider>;
+  }
   const [detailUrl, setDetailUrl] = useState<string | null>(null);
   const [fixtureMode, setFixtureMode] = useState(process.env.EXPO_PUBLIC_REVIEW_FIXTURE === "task" || process.env.EXPO_PUBLIC_REVIEW_FIXTURE === "note");
   const [tab, setTab] = useState<ShellTab>("home");
