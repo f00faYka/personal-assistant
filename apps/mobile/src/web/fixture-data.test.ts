@@ -15,7 +15,7 @@ describe("browser UI fixture", () => {
     expect(first.tasks.some((task) => task.status === "completed")).toBe(true);
     expect(first.tasks.some((task) => !task.dueAt)).toBe(true);
     expect(first.tasks.some((task) => task.tagIds.length > 0 && task.entityIds.length > 0)).toBe(true);
-    expect(first.entities.map((entity) => entity.type)).toEqual(expect.arrayContaining(["Person", "Place", "Organization", "Object"]));
+    expect(first.entities.map((entity) => entity.type)).toEqual(expect.arrayContaining(["Person", "Place", "Project", "Organization", "Object"]));
   });
 
   test("reset recreates fresh data without sharing mutable rows", () => {

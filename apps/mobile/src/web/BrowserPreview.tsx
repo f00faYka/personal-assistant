@@ -4,13 +4,13 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Card, Chip, Heading, PrimaryButton, TaskRow, tokens } from "../design-system";
 import { ReviewScreen } from "../review/ReviewScreen";
 import { createReviewFixtureClient } from "../review/review";
-import { createBrowserFixtureData, type BrowserFixtureData, type BrowserFixtureEntity, type BrowserFixtureTag } from "./fixture-data";
+import { resetBrowserFixtureData, type BrowserFixtureData, type BrowserFixtureEntity, type BrowserFixtureTag } from "./fixture-data";
 
 type PreviewTab = "home" | "calendar" | "review" | "find" | "spaces" | "entity" | "tag";
 
 export function BrowserPreview() {
   const [tab, setTab] = useState<PreviewTab>("home");
-  const fixture = useMemo(createBrowserFixtureData, []);
+  const fixture = useMemo(resetBrowserFixtureData, []);
   const [reviewClient] = useState(() => createReviewFixtureClient("note", { kind: "note", id: fixture.notes[0]!.id, content: fixture.notes[0]!.content, reviewState: fixture.notes[0]!.reviewState, version: 0 }));
   const content = tab === "review"
     ? <ReviewScreen apiBaseUrl="http://127.0.0.1:3000" memberId={fixture.memberId} detailUrl="/captures/demo-capture-1/review" client={reviewClient} onBack={() => setTab("home")} />
@@ -43,7 +43,7 @@ function HomeSurface({ fixture, onOpenReview }: { readonly fixture: BrowserFixtu
 function CalendarSurface({ fixture }: { readonly fixture: BrowserFixtureData }) {
   const scheduled = fixture.tasks.filter((task) => task.dueAt);
   const undated = fixture.tasks.find((task) => !task.dueAt)!;
-  return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="September 15 — October 15, 2026">Calendar</Heading><Card tone="blue"><Text style={styles.cardEyebrow}>NEXT MONTH</Text><Text style={styles.cardTitle}>{scheduled.length} scheduled Tasks</Text><Text style={styles.cardDetail}>Dense days and quiet gaps are both represented in this fixture.</Text></Card><View style={styles.week}>{scheduled.slice(0, 6).map((task) => <Chip key={task.id}>{day(task.dueAt)} · {task.title}</Chip>)}</View><Text style={styles.sectionTitle}>Agenda</Text><Card>{scheduled.slice(0, 6).map((task, index) => <View key={task.id}>{index > 0 && <View style={styles.divider} />}<TaskRow title={task.title} detail={`${day(task.dueAt)} · ${spacePath(fixture, task.spaceId)}`} completed={task.status === "completed"} /></View>)}</Card><Card tone="orange"><Text style={styles.cardEyebrow}>UNDATED</Text><Text style={styles.cardTitle}>{undated.title}</Text><Text style={styles.cardDetail}>No due date · still visible outside the calendar.</Text></Card></ScrollView>;
+  return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="September 15 — October 15, 2026">Calendar</Heading><Card tone="blue"><Text style={styles.cardEyebrow}>NEXT MONTH</Text><Text style={styles.cardTitle}>{scheduled.length} scheduled Tasks</Text><Text style={styles.cardDetail}>Dense days and quiet gaps are both represented in this fixture.</Text></Card><View style={styles.week}>{scheduled.map((task) => <Chip key={task.id}>{day(task.dueAt)} · {task.title}</Chip>)}<Chip>Sep 17 · No scheduled Tasks</Chip><Chip>Sep 19 · No scheduled Tasks</Chip></View><Text style={styles.sectionTitle}>Agenda</Text><Card>{scheduled.map((task, index) => <View key={task.id}>{index > 0 && <View style={styles.divider} />}<TaskRow title={task.title} detail={`${day(task.dueAt)} · ${spacePath(fixture, task.spaceId)}`} completed={task.status === "completed"} /></View>)}</Card><Card tone="orange"><Text style={styles.cardEyebrow}>UNDATED</Text><Text style={styles.cardTitle}>{undated.title}</Text><Text style={styles.cardDetail}>No due date · still visible outside the calendar.</Text></Card></ScrollView>;
 }
 
 function FindSurface({ fixture }: { readonly fixture: BrowserFixtureData }) {
