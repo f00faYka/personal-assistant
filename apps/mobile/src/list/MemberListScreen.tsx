@@ -23,6 +23,7 @@ interface MemberListScreenProps {
   readonly captureSubmitter?: CaptureSubmitter;
   readonly offlineDraftStore?: OfflineDraftStore;
   readonly offlineDraftSyncClient?: OfflineDraftSyncClient;
+  readonly captureRequest?: number;
 }
 
 type CaptureState =
@@ -36,7 +37,7 @@ type TimelineItem =
   | { readonly kind: "server_item"; readonly item: MemberListItem };
 type AssignableItem = Extract<MemberListItem, { kind: "task" | "note" }>;
 
-export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceRecorder, recordingMetering, recordingInterrupted = false, captureSubmitter, offlineDraftStore, offlineDraftSyncClient }: MemberListScreenProps) {
+export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceRecorder, recordingMetering, recordingInterrupted = false, captureSubmitter, offlineDraftStore, offlineDraftSyncClient, captureRequest = 0 }: MemberListScreenProps) {
   const client = useMemo(() => createMemberItemsClient(apiBaseUrl), [apiBaseUrl]);
   const spacesClient = useMemo(() => createSpacesClient(apiBaseUrl), [apiBaseUrl]);
   const [state, setState] = useState<ListState>(initialListState);
@@ -168,6 +169,14 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       setCapture({ status: "error", message: error instanceof Error ? error.message : "Unable to start recording" });
     }
   }, [capture.status, voiceRecorder]);
+
+  const previousCaptureRequest = useRef(captureRequest);
+  useEffect(() => {
+    if (captureRequest !== previousCaptureRequest.current) {
+      previousCaptureRequest.current = captureRequest;
+      void startCapture();
+    }
+  }, [captureRequest, startCapture]);
 
   const stopCapture = useCallback(async () => {
     if (!voiceRecorder || capture.status !== "recording") return;
