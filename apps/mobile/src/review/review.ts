@@ -57,10 +57,10 @@ export function createReviewClient(apiBaseUrl: string): ReviewClient {
   };
 }
 
-export function createReviewFixtureClient(kind: "task" | "note"): ReviewClient {
-  let outcome: ReviewOutcome = kind === "task"
+export function createReviewFixtureClient(kind: "task" | "note", initialOutcome?: ReviewOutcome): ReviewClient {
+  let outcome: ReviewOutcome = initialOutcome ?? (kind === "task"
     ? { kind: "task", id: "demo-task-1", title: "Buy milk", status: "open", version: 0 }
-    : { kind: "note", id: "demo-note-1", content: "Call the dentist", reviewState: "needs_review", version: 0 };
+    : { kind: "note", id: "demo-note-1", content: "Call the dentist", reviewState: "needs_review", version: 0 });
   return {
     async get() {
       return { state: outcome.kind === "note" ? "needs_review" : "completed", capture: { id: "demo-capture-1", memberId: "member-1" }, source: { id: "demo-source-1" }, transcription: { status: "succeeded", text: "Demo source transcription" }, correction: null, interpretation: { id: "demo-interpretation-1", classification: outcome.kind === "task" ? "clear_supported" : "ambiguous" }, outcome, failure: null };

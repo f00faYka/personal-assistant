@@ -11,11 +11,11 @@ const seed: BrowserFixtureData = {
     { id: "space-home", name: "Home" }, { id: "space-health", name: "Health", parentId: "space-home" }, { id: "space-finance", name: "Finances", parentId: "space-home" },
     { id: "space-work", name: "Work" }, { id: "space-planning", name: "Planning", parentId: "space-work" }, { id: "space-launch", name: "Launch week", parentId: "space-planning" }, { id: "space-travel", name: "Travel" },
   ],
-  entities: [{ id: "entity-alex", name: "Alex", type: "Person" }, { id: "entity-dentist", name: "Oak Street Dental", type: "Organization" }, { id: "entity-studio", name: "Home studio", type: "Place" }, { id: "entity-passport", name: "Passport", type: "Object" }],
+  entities: [{ id: "entity-alex", name: "Alex", type: "Person" }, { id: "entity-dentist", name: "Oak Street Dental", type: "Organization" }, { id: "entity-launch", name: "Northstar launch", type: "Organization" }, { id: "entity-studio", name: "Home studio", type: "Place" }, { id: "entity-passport", name: "Passport", type: "Object" }],
   tags: [{ id: "tag-urgent", name: "urgent" }, { id: "tag-errand", name: "errand" }, { id: "tag-planning", name: "planning" }, { id: "tag-waiting", name: "waiting" }],
   tasks: [
     { id: "task-01", title: "Book dentist appointment", dueAt: "2026-09-15T09:30:00.000Z", status: "open", spaceId: "space-health", tagIds: ["tag-errand", "tag-urgent"], entityIds: ["entity-dentist"] },
-    { id: "task-02", title: "Prepare Q2 planning", dueAt: "2026-09-16T13:00:00.000Z", status: "open", spaceId: "space-planning", tagIds: ["tag-planning"], entityIds: ["entity-alex"] },
+    { id: "task-02", title: "Prepare Q2 planning", dueAt: "2026-09-15T13:00:00.000Z", status: "open", spaceId: "space-planning", tagIds: ["tag-planning"], entityIds: ["entity-alex"] },
     { id: "task-03", title: "Send project update", dueAt: "2026-09-18T16:00:00.000Z", status: "open", spaceId: "space-launch", tagIds: ["tag-waiting", "tag-planning"], entityIds: ["entity-alex"] },
     { id: "task-04", title: "Pack passport and adapters", dueAt: "2026-09-22T18:00:00.000Z", status: "open", spaceId: "space-travel", tagIds: ["tag-errand"], entityIds: ["entity-passport"] },
     { id: "task-05", title: "Buy studio cable", dueAt: "2026-09-26T11:00:00.000Z", status: "open", spaceId: "space-home", tagIds: ["tag-errand"], entityIds: ["entity-studio"] },

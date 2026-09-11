@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Card, Chip, Heading, PrimaryButton, TaskRow, tokens } from "../design-system";
@@ -10,8 +10,8 @@ type PreviewTab = "home" | "calendar" | "review" | "find" | "spaces" | "entity" 
 
 export function BrowserPreview() {
   const [tab, setTab] = useState<PreviewTab>("home");
-  const [fixture] = useState(createBrowserFixtureData);
-  const [reviewClient] = useState(() => createReviewFixtureClient("task"));
+  const fixture = useMemo(createBrowserFixtureData, []);
+  const [reviewClient] = useState(() => createReviewFixtureClient("note", { kind: "note", id: fixture.notes[0]!.id, content: fixture.notes[0]!.content, reviewState: fixture.notes[0]!.reviewState, version: 0 }));
   const content = tab === "review"
     ? <ReviewScreen apiBaseUrl="http://127.0.0.1:3000" memberId={fixture.memberId} detailUrl="/captures/demo-capture-1/review" client={reviewClient} onBack={() => setTab("home")} />
     : tab === "calendar" ? <CalendarSurface fixture={fixture} />
@@ -54,8 +54,8 @@ function SpacesSurface({ fixture }: { readonly fixture: BrowserFixtureData }) {
   return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="Structured hierarchy">Spaces</Heading>{fixture.spaces.filter((space) => !space.parentId).map((root) => <Card key={root.id}><Text style={styles.cardTitle}>{root.name}</Text>{fixture.spaces.filter((space) => space.parentId === root.id).map((child) => <View key={child.id} style={styles.treeRow}><Text style={styles.treeMarker}>↳</Text><View><Text style={styles.treeName}>{child.name}</Text>{fixture.spaces.filter((space) => space.parentId === child.id).map((leaf) => <Text key={leaf.id} style={styles.treeLeaf}>↳ {leaf.name}</Text>)}</View></View>)}</Card>)}</ScrollView>;
 }
 
-function EntitySurface({ fixture }: { readonly fixture: BrowserFixtureData }) { const entity = fixture.entities[0]!; return <MetadataSurface fixture={fixture} title="Entity" eyebrow="Alternate view" resource={entity} items={fixture.tasks.filter((task) => task.entityIds.includes(entity.id))} />; }
-function TagSurface({ fixture }: { readonly fixture: BrowserFixtureData }) { const tag = fixture.tags[0]!; return <MetadataSurface fixture={fixture} title="Tag" eyebrow="Cross-cutting view" resource={tag} items={fixture.tasks.filter((task) => task.tagIds.includes(tag.id))} />; }
+function EntitySurface({ fixture }: { readonly fixture: BrowserFixtureData }) { return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="Alternate views">Entities</Heading>{fixture.entities.map((entity) => <MetadataSurface key={entity.id} fixture={fixture} title="Entity" eyebrow={entity.type} resource={entity} items={fixture.tasks.filter((task) => task.entityIds.includes(entity.id))} />)}</ScrollView>; }
+function TagSurface({ fixture }: { readonly fixture: BrowserFixtureData }) { return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="Cross-cutting views">Tags</Heading>{fixture.tags.map((tag) => <MetadataSurface key={tag.id} fixture={fixture} title="Tag" eyebrow="Flat marker" resource={tag} items={fixture.tasks.filter((task) => task.tagIds.includes(tag.id))} />)}</ScrollView>; }
 function MetadataSurface({ fixture, title, eyebrow, resource, items }: { readonly fixture: BrowserFixtureData; readonly title: string; readonly eyebrow: string; readonly resource: BrowserFixtureEntity | BrowserFixtureTag; readonly items: BrowserFixtureData["tasks"] }) {
   return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow={eyebrow}>{title}</Heading><Card tone="lavender"><Text style={styles.cardEyebrow}>{"type" in resource ? resource.type : "TAG"}</Text><Text style={styles.cardTitle}>{resource.name}</Text><Text style={styles.cardDetail}>{items.length} linked Tasks</Text></Card><Text style={styles.sectionTitle}>Linked Tasks</Text><Card>{items.map((task, index) => <View key={task.id}>{index > 0 && <View style={styles.divider} />}<TaskRow title={task.title} detail={spacePath(fixture, task.spaceId)} completed={task.status === "completed"} /></View>)}</Card></ScrollView>;
 }

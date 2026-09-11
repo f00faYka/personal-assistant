@@ -26,4 +26,14 @@ describe("BrowserPreview", () => {
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Open Calendar" }).props.onPress(); });
     expect(renderer.root.findAll((node) => String(node.type) === "Text").some((node) => node.props.children === "Calendar")).toBe(true);
   });
+
+  test("exposes the structured fixture surfaces", () => {
+    let renderer!: ReturnType<typeof create>;
+    act(() => { renderer = create(<BrowserPreview />); });
+
+    for (const label of ["Spaces", "Entity", "Tag"]) {
+      act(() => { renderer.root.findByProps({ accessibilityLabel: `Open ${label}` }).props.onPress(); });
+      expect(String(renderer.root.findAll((node) => String(node.type) === "Text").map((node) => node.props.children).join(" "))).toContain(label === "Entity" ? "Northstar launch" : label === "Tag" ? "urgent" : "Launch week");
+    }
+  });
 });

@@ -11,9 +11,11 @@ describe("browser UI fixture", () => {
     expect(first.spaces.filter((space) => !space.parentId)).toHaveLength(3);
     expect(first.spaces.some((space) => space.parentId === "space-planning")).toBe(true);
     expect(first.tasks.filter((task) => task.dueAt)).toHaveLength(8);
+    expect(first.tasks.filter((task) => task.dueAt?.startsWith("2026-09-15"))).toHaveLength(2);
     expect(first.tasks.some((task) => task.status === "completed")).toBe(true);
     expect(first.tasks.some((task) => !task.dueAt)).toBe(true);
     expect(first.tasks.some((task) => task.tagIds.length > 0 && task.entityIds.length > 0)).toBe(true);
+    expect(first.entities.map((entity) => entity.type)).toEqual(expect.arrayContaining(["Person", "Place", "Organization", "Object"]));
   });
 
   test("reset recreates fresh data without sharing mutable rows", () => {
