@@ -25,7 +25,7 @@ vi.mock("react-native", async () => {
 vi.mock("react-native-safe-area-context", async () => {
   const React = await import("react");
   const host = (name: string) => (props: { readonly children?: React.ReactNode; readonly [key: string]: unknown }) => React.createElement(name, props, props.children);
-  return { SafeAreaProvider: host("SafeAreaProvider"), SafeAreaView: host("SafeAreaView") };
+  return { SafeAreaProvider: host("SafeAreaProvider"), SafeAreaView: host("SafeAreaView"), useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }) };
 });
 
 vi.mock("expo-audio", () => ({ RecordingPresets: { HIGH_QUALITY: {} }, useAudioRecorder: vi.fn(() => ({})), useAudioRecorderState: vi.fn(() => ({ metering: undefined, mediaServicesDidReset: false })) }));
