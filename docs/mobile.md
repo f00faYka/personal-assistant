@@ -14,7 +14,7 @@ npm run dev:all
 
 `mobile:start` opens the Expo development server for an iPhone simulator or a connected device. The initial screen reads `GET /items?memberId=<member-id>` from the API at `http://127.0.0.1:3000` and refreshes with pull-to-refresh. Configure `EXPO_PUBLIC_API_BASE_URL` and `EXPO_PUBLIC_MEMBER_ID` before starting when using a physical iPhone or a different local Member, for example `EXPO_PUBLIC_API_BASE_URL=http://192.168.1.20:3000 EXPO_PUBLIC_MEMBER_ID=member-1 npm run mobile:start`.
 
-To inspect the current Home, Calendar, Review, Find, navigation, scrolling, and fixed footer in a desktop browser, run `npm run mobile:web` from the repository root. The browser entry uses fixture data and displays a limitation banner: microphone recording, native storage, and backend actions are intentionally unavailable. This is a UI-only preview and does not replace the native iOS entry point.
+To inspect Home, Calendar, Review, Find, Spaces, Entity, and Tag surfaces in a desktop browser, run `npm run mobile:web` from the repository root. The browser entry uses the deterministic synthetic fixture in `apps/mobile/src/web/fixture-data.ts` and displays a limitation banner: microphone recording, native storage, and backend actions are intentionally unavailable. Reload the browser page to reset the fixture; it is an in-memory UI preview and cannot modify production data or the API database. Run `npm run mobile:test` to verify deterministic creation and reset behavior. This is a UI-only preview and does not replace the native iOS entry point.
 
 The list consumes the backend `MemberListItem` discriminators without changing their meaning:
 
