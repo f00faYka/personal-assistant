@@ -8,7 +8,7 @@ vi.mock("react-native", async () => {
 });
 vi.mock("react-native-safe-area-context", async () => {
   const React = await import("react");
-  return { SafeAreaView: (props: { readonly children?: React.ReactNode }) => React.createElement("SafeAreaView", props, props.children) };
+  return { SafeAreaView: (props: { readonly children?: React.ReactNode }) => React.createElement("SafeAreaView", props, props.children), useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }) };
 });
 
 import { AppShell } from "./AppShell";
