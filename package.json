@@ -27,6 +27,7 @@
     "mobile:typecheck": "npm run typecheck --workspace @personal-assistant/mobile",
     "mobile:test": "npm run test --workspace @personal-assistant/mobile",
     "mobile:start": "npm run start --workspace @personal-assistant/mobile",
+    "mobile:web": "npm run web --workspace @personal-assistant/mobile",
     "dev:all": "node scripts/start-dev.mjs"
   }
 }
