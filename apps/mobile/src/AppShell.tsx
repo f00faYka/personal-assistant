@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Card, Chip, Heading, ScreenLayout, TaskRow, tokens } from "./design-system";
 
-export type ShellTab = "home" | "find" | "digest" | "me";
+export type ShellTab = "home" | "find" | "calendar" | "me";
 
 interface AppShellProps {
   readonly tab: ShellTab;
@@ -18,7 +18,7 @@ export function AppShell({ tab, onTabChange, onCapture, children }: AppShellProp
     {navItem("home", "Home", tab, onTabChange)}
     {navItem("find", "Find", tab, onTabChange)}
     <Pressable accessibilityRole="button" accessibilityLabel="Start a voice Capture" onPress={onCapture} style={styles.capture}><SchematicMic /></Pressable>
-    {navItem("digest", "Digest", tab, onTabChange)}
+    {navItem("calendar", "Calendar", tab, onTabChange)}
     {navItem("me", "Me", tab, onTabChange)}
   </View></ScreenLayout></SafeAreaView>;
 }
@@ -29,7 +29,7 @@ function SchematicMic() {
 
 function navItem(tab: ShellTab, label: string, current: ShellTab, onTabChange: (tab: ShellTab) => void) {
   const active = current === tab;
-  return <Pressable accessibilityRole="button" accessibilityLabel={`Open ${label}`} accessibilityState={{ selected: active }} onPress={() => onTabChange(tab)} style={styles.navItem}>{tab === "home" ? <HomeIcon active={active} /> : tab === "find" ? <SearchIcon active={active} /> : tab === "digest" ? <DocumentStarIcon active={active} /> : <ProfileIcon active={active} />}<Text style={[styles.navLabel, active && styles.navActive]}>{label}</Text></Pressable>;
+  return <Pressable accessibilityRole="button" accessibilityLabel={`Open ${label}`} accessibilityState={{ selected: active }} onPress={() => onTabChange(tab)} style={styles.navItem}>{tab === "home" ? <HomeIcon active={active} /> : tab === "find" ? <SearchIcon active={active} /> : tab === "calendar" ? <CalendarIcon active={active} /> : <ProfileIcon active={active} />}<Text style={[styles.navLabel, active && styles.navActive]}>{label}</Text></Pressable>;
 }
 
 function HomeIcon({ active }: { readonly active: boolean }) {
@@ -40,8 +40,8 @@ function SearchIcon({ active }: { readonly active: boolean }) {
   return <View style={styles.searchIconMark} accessibilityElementsHidden><View style={[styles.searchLens, active && styles.iconBorderActive]} /><View style={[styles.searchHandle, active && styles.iconActive]} /></View>;
 }
 
-function DocumentStarIcon({ active }: { readonly active: boolean }) {
-  return <View style={styles.documentIcon} accessibilityElementsHidden><View style={[styles.documentPage, active && styles.iconBorderActive]}><Text style={[styles.documentStar, active && styles.navActive]}>✦</Text><View style={[styles.documentLine, active && styles.iconActive]} /><View style={[styles.documentLineShort, active && styles.iconActive]} /></View></View>;
+function CalendarIcon({ active }: { readonly active: boolean }) {
+  return <View style={styles.calendarIcon} accessibilityElementsHidden><View style={[styles.calendarFrame, active && styles.iconBorderActive]}><View style={[styles.calendarHeader, active && styles.iconActive]} /><View style={styles.calendarGrid}>{[0, 1, 2, 3].map((cell) => <View key={cell} style={[styles.calendarCell, active && styles.iconActive]} />)}</View></View></View>;
 }
 
 function ProfileIcon({ active }: { readonly active: boolean }) {
@@ -52,8 +52,8 @@ export function FindSurface() {
   return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="Universal search">Find</Heading><View style={styles.search}><Text style={styles.searchIcon}>⌕</Text><Text style={styles.searchPlaceholder}>Search everything</Text></View><View style={styles.chips}><Chip>Tasks</Chip><Chip>Captures</Chip><Chip>Notes</Chip><Chip>Spaces</Chip></View><Card tone="blue"><Text style={styles.cardEyebrow}>TASK</Text><Text style={styles.cardTitle}>Book dentist appointment</Text><Text style={styles.cardDetail}>Personal › Health · next week</Text></Card><Card><Text style={styles.cardEyebrow}>CAPTURE</Text><Text style={styles.cardTitle}>I need to book a dentist appointment…</Text><Text style={styles.cardDetail}>Audio Capture · yesterday</Text></Card></ScrollView>;
 }
 
-export function DigestSurface() {
-  return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="Tuesday, September 15">Your digest</Heading><Card tone="butter"><Text style={styles.cardEyebrow}>YOUR DAY</Text><Text style={styles.cardTitle}>A calm start with one important loop.</Text><Text style={styles.cardDetail}>Book the dentist appointment before lunch.</Text></Card><Text style={styles.sectionTitle}>Open loops</Text><Card><TaskRow title="Prepare Q2 planning" detail="Work · no due date" /></Card><Card tone="lavender"><Text style={styles.cardEyebrow}>CAPTURED YESTERDAY</Text><Text style={styles.cardTitle}>Send project update</Text><Text style={styles.cardDetail}>Needs review</Text></Card></ScrollView>;
+export function CalendarSurface() {
+  return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="Your scheduled work">Calendar</Heading><Card tone="blue"><Text style={styles.cardEyebrow}>UPCOMING</Text><Text style={styles.cardTitle}>See Tasks by date</Text><Text style={styles.cardDetail}>Scheduled work and undated items remain available from the full collection.</Text></Card><Text style={styles.sectionTitle}>Next up</Text><Card><TaskRow title="Book dentist appointment" detail="Today · 9:30 AM" /><View style={styles.divider} /><TaskRow title="Prepare Q2 planning" detail="Today · 1:00 PM" /></Card></ScrollView>;
 }
 
 export function MeSurface() {
@@ -80,11 +80,12 @@ const styles = StyleSheet.create({
   homeBody: { borderColor: tokens.colors.muted, borderRadius: 2, borderWidth: 2, height: 16, width: 21 },
   searchLens: { borderColor: tokens.colors.muted, borderRadius: 10, borderWidth: 2, height: 18, width: 18 },
   searchHandle: { backgroundColor: tokens.colors.muted, height: 2, left: 19, position: "absolute", top: 27, transform: [{ rotate: "45deg" }], width: 9 },
-  documentIcon: { alignItems: "center", height: 42, justifyContent: "center", width: 32 },
-  documentPage: { borderColor: tokens.colors.muted, borderRadius: 3, borderWidth: 2, height: 26, padding: 3, width: 21 },
-  documentStar: { color: tokens.colors.muted, fontSize: 10, fontWeight: "800", lineHeight: 11, textAlign: "center" },
-  documentLine: { backgroundColor: tokens.colors.muted, height: 2, marginTop: 3, width: 11 },
-  documentLineShort: { backgroundColor: tokens.colors.muted, height: 2, marginTop: 3, width: 7 },
+  calendarIcon: { alignItems: "center", height: 42, justifyContent: "center", width: 32 },
+  calendarFrame: { borderColor: tokens.colors.muted, borderRadius: 3, borderWidth: 2, height: 25, padding: 3, width: 24 },
+  calendarHeader: { backgroundColor: tokens.colors.muted, height: 3, marginBottom: 4, width: 14 },
+  calendarGrid: { flexDirection: "row", flexWrap: "wrap", gap: 2, width: 14 },
+  calendarCell: { backgroundColor: tokens.colors.muted, height: 3, width: 3 },
+  divider: { backgroundColor: tokens.colors.border, height: 1, marginVertical: 16 },
   profileIcon: { alignItems: "center", height: 42, justifyContent: "center", width: 32 },
   profileHead: { borderColor: tokens.colors.muted, borderRadius: 7, borderWidth: 2, height: 14, marginBottom: 2, width: 14 },
   profileBody: { borderColor: tokens.colors.muted, borderRadius: 10, borderWidth: 2, height: 13, width: 25 },
