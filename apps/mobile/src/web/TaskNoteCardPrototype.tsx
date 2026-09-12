@@ -63,7 +63,7 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
         <Pressable accessibilityRole="button" accessibilityLabel={`Open ${kind} ${title}`} onPressIn={() => { suppressPress.current = false; }}
           onPress={() => { if (!suppressPress.current) { if (revealed) setRevealed(false); else onOpen(); } }}
           delayLongPress={500} onLongPress={() => { suppressPress.current = true; setMenu(true); }} style={styles.body}>
-          <View style={styles.header}><ItemIcon note={note} /><Text style={styles.kindLabel}>{kind}</Text>{badge ? <Text numberOfLines={1} style={[styles.badge, note && styles.review, mutedBadge && styles.mutedBadge]}>{badge}</Text> : null}{onComplete ? <Pressable accessibilityRole="button" accessibilityLabel={`Complete visible Task ${title}`} onPress={complete} style={styles.visibleComplete}><Text style={styles.visibleCompleteText}>○</Text></Pressable> : null}</View>
+          <View style={styles.header}><ItemIcon note={note} />{badge ? <Text numberOfLines={1} style={[styles.badge, note && styles.review, mutedBadge && styles.mutedBadge]}>{badge}</Text> : null}</View>
           <Text numberOfLines={note ? 3 : 2} style={[styles.title, note && styles.preview, completed && styles.struck]}>{title}</Text>
           {metadata}
         </Pressable>
@@ -131,7 +131,7 @@ const styles = StyleSheet.create({
   clip: { overflow: "hidden", borderRadius: tokens.radius.card, backgroundColor: tokens.colors.green },
   card: { backgroundColor: tokens.colors.surface, borderColor: tokens.colors.border, borderRadius: tokens.radius.card, borderWidth: 1 },
   note: { backgroundColor: tokens.colors.lavender }, revealed: { transform: [{ translateX: -88 }] },
-  body: { padding: 16 }, header: { flexDirection: "row", alignItems: "center", gap: 10, paddingRight: 34, minHeight: 28, marginBottom: 10 }, kindLabel: { color: tokens.colors.muted, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 }, visibleComplete: { marginLeft: "auto", minHeight: 44, minWidth: 44, alignItems: "center", justifyContent: "center" }, visibleCompleteText: { color: tokens.colors.green, fontSize: 25 },
+  body: { padding: 16 }, header: { flexDirection: "row", alignItems: "center", gap: 10, paddingRight: 34, minHeight: 28, marginBottom: 10 },
   badge: { flexShrink: 1, overflow: "hidden", borderRadius: 10, backgroundColor: "#E3EEDD", color: tokens.colors.green, paddingHorizontal: 10, paddingVertical: 5, fontSize: 13, fontWeight: "600" },
   review: { backgroundColor: tokens.colors.butter, color: tokens.colors.ink }, mutedBadge: { backgroundColor: "#EEF0F1", color: tokens.colors.muted },
   title: { color: tokens.colors.ink, fontSize: 18, fontWeight: "700", lineHeight: 24 }, preview: { fontWeight: "400" }, struck: { textDecorationLine: "line-through", color: tokens.colors.muted },
