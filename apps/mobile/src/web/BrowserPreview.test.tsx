@@ -46,7 +46,7 @@ describe("approved card interactions", () => {
   test("menu completion never opens the body and holding only opens actions", () => {
     const onOpen = vi.fn(); const onComplete = vi.fn();
     let renderer!: ReturnType<typeof create>;
-    act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onOpen={onOpen} onComplete={onComplete} />); });
+    act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onPress={onOpen} onComplete={onComplete} />); });
     const body = renderer.root.findByProps({ accessibilityLabel: "Open Task Book dentist appointment" });
     act(() => { body.props.onLongPress(); body.props.onPress(); });
     expect(onOpen).not.toHaveBeenCalled();
@@ -57,11 +57,14 @@ describe("approved card interactions", () => {
   test("swiping reveals an action but does not complete or open details", () => {
     const onOpen = vi.fn(); const onComplete = vi.fn();
     let renderer!: ReturnType<typeof create>;
-    act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onOpen={onOpen} onComplete={onComplete} />); });
+    act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onPress={onOpen} onComplete={onComplete} />); });
     const swipe = renderer.root.findAll((node) => typeof node.props.onMoveShouldSetPanResponder === "function")[0]!;
     expect(swipe.props.onMoveShouldSetPanResponder({}, { dx: 3, dy: 60 })).toBe(false);
     expect(swipe.props.onMoveShouldSetPanResponder({}, { dx: -70, dy: 3 })).toBe(true);
-    act(() => { swipe.props.onPanResponderGrant(); swipe.props.onPanResponderRelease({}, { dx: -70 }); });
+    expect(swipe.props.onMoveShouldSetPanResponderCapture({}, { dx: -70, dy: 3 })).toBe(true);
+    act(() => { swipe.props.onPanResponderGrant(); swipe.props.onPanResponderMove({}, { dx: -70, dy: 0 }); });
+    expect(JSON.stringify(renderer.toJSON())).toContain("translateX");
+    act(() => { swipe.props.onPanResponderRelease({}, { dx: -70 }); });
     expect(onComplete).not.toHaveBeenCalled(); expect(onOpen).not.toHaveBeenCalled();
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Complete Task Book dentist appointment" }).props.onPress(); });
     expect(onComplete).toHaveBeenCalledOnce(); expect(onOpen).not.toHaveBeenCalled();
@@ -69,17 +72,17 @@ describe("approved card interactions", () => {
   test("pending and failed tasks expose no completion capability", () => {
     for (const saveState of ["pending", "error"] as const) {
       let renderer!: ReturnType<typeof create>;
-      act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" saveState={saveState} onOpen={vi.fn()} onComplete={vi.fn()} />); });
+      act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" saveState={saveState} onPress={vi.fn()} onComplete={vi.fn()} />); });
       act(() => { renderer.root.findByProps({ accessibilityLabel: "Actions for Task Book dentist appointment" }).props.onPress(); });
       expect(renderer.root.findAll((node) => String(node.props.accessibilityLabel).startsWith("Mark complete"))).toHaveLength(0);
     }
   });
   test("Note has review status and no date or completion; full tags open in details", () => {
     let renderer!: ReturnType<typeof create>; const onOpen = vi.fn();
-    act(() => { renderer = create(<NoteCard note={fixture.notes[0]!} fixture={fixture} onOpen={onOpen} />); });
+    act(() => { renderer = create(<NoteCard note={fixture.notes[0]!} fixture={fixture} onPress={onOpen} />); });
     const content = JSON.stringify(renderer.toJSON());
     expect(content).toContain("Needs review"); expect(content).not.toContain("No due date"); expect(content).not.toContain("Mark complete");
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Open Note Ask Alex about the launch hand-off" }).props.onPress(); });
-    expect(onOpen).toHaveBeenCalledWith(expect.stringContaining("#waiting"));
+    expect(onOpen).toHaveBeenCalledOnce();
   });
 });

@@ -7,11 +7,11 @@ import type { BrowserFixtureData, BrowserFixtureNote, BrowserFixtureTask } from 
 
 interface SharedProps {
   readonly fixture: BrowserFixtureData;
-  readonly onOpen: (label: string) => void;
+  readonly onPress: () => void;
 }
 export type CardSaveState = "saved" | "pending" | "error";
 
-export function TaskCard({ task, fixture, onOpen, onComplete, saveState = "saved", onRetry, timeZone, today }: SharedProps & {
+export function TaskCard({ task, fixture, onPress, onComplete, saveState = "saved", onRetry, timeZone, today }: SharedProps & {
   readonly task: BrowserFixtureTask;
   readonly onComplete?: () => void;
   readonly saveState?: CardSaveState;
@@ -22,46 +22,80 @@ export function TaskCard({ task, fixture, onOpen, onComplete, saveState = "saved
   const completed = task.status === "completed";
   const canComplete = !completed && saveState === "saved" && !!onComplete;
   return <CardFrame kind="Task" title={task.title} badge={formatDue(task.dueAt, timeZone, today)} mutedBadge={!task.dueAt}
-    completed={completed} onOpen={() => onOpen(detail(task.title, fixture, task.spaceId, task.tagIds))}
+    completed={completed} onPress={onPress}
     onComplete={canComplete ? onComplete : undefined}
     metadata={<Metadata fixture={fixture} spaceId={task.spaceId} tagIds={task.tagIds} />}
     status={saveState === "pending" ? <Text style={styles.pending} accessibilityLiveRegion="polite">Saving… · completion unavailable</Text> : saveState === "error" ? <View style={styles.errorRow}><Text style={styles.error} accessibilityRole="alert">Not saved · task still open</Text>{onRetry ? <Pressable accessibilityRole="button" accessibilityLabel={`Retry saving ${task.title}`} onPress={onRetry} style={styles.retry}><Text style={styles.error}>Retry</Text></Pressable> : null}</View> : completed ? <Text style={styles.completedLabel}>✓ Completed</Text> : null} />;
 }
 
-export function NoteCard({ note, fixture, onOpen }: SharedProps & { readonly note: BrowserFixtureNote }) {
+export function NoteCard({ note, fixture, onPress }: SharedProps & { readonly note: BrowserFixtureNote }) {
   return <CardFrame kind="Note" title={note.content} badge={note.reviewState === "needs_review" ? "Needs review" : undefined}
-    onOpen={() => onOpen(detail(note.content, fixture, note.spaceId, note.tagIds))}
+    onPress={onPress}
     metadata={<Metadata fixture={fixture} spaceId={note.spaceId} tagIds={note.tagIds} />} />;
 }
 
-function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, onOpen, onComplete, metadata, status }: {
+function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, onPress, onComplete, metadata, status }: {
   readonly kind: "Task" | "Note";
   readonly title: string;
   readonly badge?: string | undefined;
   readonly mutedBadge?: boolean;
   readonly completed?: boolean;
-  readonly onOpen: () => void;
+  readonly onPress: () => void;
   readonly onComplete?: (() => void) | undefined;
   readonly metadata: ReactNode;
   readonly status?: ReactNode;
 }) {
   const [revealed, setRevealed] = useState(false);
+  const [dragX, setDragX] = useState(0);
+  const pointerStartX = useRef<number | null>(null);
+  const pointerMoved = useRef(false);
   const [menu, setMenu] = useState(false);
   const suppressPress = useRef(false);
   const note = kind === "Note";
+  const shouldCaptureSwipe = (_: unknown, gesture: { readonly dx: number; readonly dy: number }) =>
+    !!onComplete && Math.abs(gesture.dx) > 14 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5;
   const swipe = PanResponder.create({
-    onMoveShouldSetPanResponder: (_, gesture) => !!onComplete && Math.abs(gesture.dx) > 14 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
-    onPanResponderGrant: () => { suppressPress.current = true; },
-    onPanResponderRelease: (_, gesture) => { if (gesture.dx < -40) setRevealed(true); else if (gesture.dx > 40) setRevealed(false); },
-    onPanResponderTerminate: () => { suppressPress.current = true; },
+    onMoveShouldSetPanResponder: shouldCaptureSwipe,
+    onMoveShouldSetPanResponderCapture: shouldCaptureSwipe,
+    onPanResponderGrant: () => { suppressPress.current = true; setDragX(0); },
+    onPanResponderMove: (_, gesture) => { setDragX(Math.max(-88, Math.min(0, gesture.dx))); },
+    onPanResponderRelease: (_, gesture) => {
+      setRevealed(gesture.dx < -40 || (revealed && gesture.dx <= 40));
+      setDragX(0);
+    },
+    onPanResponderTerminate: () => { suppressPress.current = true; setDragX(0); },
   });
   const complete = () => { setRevealed(false); setMenu(false); onComplete?.(); };
+  type PointerGesture = { readonly nativeEvent: { readonly clientX: number } };
+  const pointerHandlers = {
+    onPointerDown: (event: PointerGesture) => { pointerStartX.current = event.nativeEvent.clientX; pointerMoved.current = false; },
+    onPointerMove: (event: PointerGesture) => {
+      if (pointerStartX.current === null || !onComplete) return;
+      const dx = event.nativeEvent.clientX - pointerStartX.current;
+      if (Math.abs(dx) <= 14) return;
+      pointerMoved.current = true;
+      setDragX(Math.max(-88, Math.min(0, dx)));
+    },
+    onPointerUp: (event: PointerGesture) => {
+      if (pointerStartX.current === null || !onComplete) return;
+      const dx = event.nativeEvent.clientX - pointerStartX.current;
+      if (pointerMoved.current) setRevealed(dx < -40 || (revealed && dx <= 40));
+      pointerStartX.current = null;
+      pointerMoved.current = false;
+      setDragX(0);
+    },
+    onPointerCancel: () => { pointerStartX.current = null; pointerMoved.current = false; setDragX(0); },
+  };
   return <View style={styles.wrapper}>
     <View style={styles.clip}>
       {revealed && onComplete ? <Pressable accessibilityRole="button" accessibilityLabel={`Complete Task ${title}`} onPress={complete} style={styles.swipeAction}><Text style={styles.swipeCheck}>✓</Text><Text style={styles.swipeText}>Complete</Text></Pressable> : null}
-      <View {...swipe.panHandlers} style={[styles.card, note && styles.note, revealed && !!onComplete && styles.revealed]}>
+      <View
+        {...swipe.panHandlers}
+        {...pointerHandlers}
+        style={[styles.card, note && styles.note, onComplete && { transform: [{ translateX: revealed ? -88 : dragX }] }]}
+      >
         <Pressable accessibilityRole="button" accessibilityLabel={`Open ${kind} ${title}`} onPressIn={() => { suppressPress.current = false; }}
-          onPress={() => { if (!suppressPress.current) { if (revealed) setRevealed(false); else onOpen(); } }}
+          onPress={() => { if (!suppressPress.current) { if (revealed) setRevealed(false); else onPress(); } }}
           delayLongPress={500} onLongPress={() => { suppressPress.current = true; setMenu(true); }} style={styles.body}>
           <View style={styles.header}><ItemIcon note={note} />{badge ? <Text numberOfLines={1} style={[styles.badge, note && styles.review, mutedBadge && styles.mutedBadge]}>{badge}</Text> : null}</View>
           <Text numberOfLines={note ? 3 : 2} style={[styles.title, note && styles.preview, completed && styles.struck]}>{title}</Text>
@@ -77,7 +111,7 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
         <View accessibilityViewIsModal style={styles.menu}>
           <Text numberOfLines={2} style={styles.menuTitle}>{title}</Text>
           {onComplete ? <Pressable accessibilityRole="button" onPress={complete} accessibilityLabel={`Mark complete ${title}`} style={styles.menuAction}><Text style={styles.menuText}>✓  Mark complete</Text></Pressable> : null}
-          <Pressable accessibilityRole="button" onPress={() => { setMenu(false); onOpen(); }} style={styles.menuAction}><Text style={styles.menuText}>Edit {kind.toLowerCase()}</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={() => { setMenu(false); onPress(); }} style={styles.menuAction}><Text style={styles.menuText}>Edit {kind.toLowerCase()}</Text></Pressable>
           <Pressable accessibilityRole="button" onPress={() => setMenu(false)} style={styles.menuAction}><Text style={styles.meta}>Cancel</Text></Pressable>
         </View>
       </View>
@@ -113,10 +147,6 @@ function spacePath(fixture: BrowserFixtureData, id?: string): string {
   while (current && !visited.has(current.id)) { visited.add(current.id); names.unshift(current.name); current = fixture.spaces.find((space) => space.id === current?.parentId); }
   return names.join(" › ") || "No Space";
 }
-function detail(title: string, fixture: BrowserFixtureData, spaceId: string | undefined, tagIds: readonly string[]): string {
-  const tags = tagIds.flatMap((id) => { const tag = fixture.tags.find((entry) => entry.id === id); return tag ? [`#${tag.name}`] : []; });
-  return [title, spacePath(fixture, spaceId), ...tags].join("\n");
-}
 function formatDue(value: string | undefined, timeZone: string, today: string): string {
   if (!value) return "No due date";
   const date = new Date(value);
@@ -130,7 +160,7 @@ const styles = StyleSheet.create({
   wrapper: { marginHorizontal: tokens.spacing.lg, marginBottom: 12 },
   clip: { overflow: "hidden", borderRadius: tokens.radius.card, backgroundColor: tokens.colors.green },
   card: { backgroundColor: tokens.colors.surface, borderColor: tokens.colors.border, borderRadius: tokens.radius.card, borderWidth: 1 },
-  note: { backgroundColor: tokens.colors.lavender }, revealed: { transform: [{ translateX: -88 }] },
+  note: { backgroundColor: tokens.colors.lavender },
   body: { padding: 16 }, header: { flexDirection: "row", alignItems: "center", gap: 10, paddingRight: 34, minHeight: 28, marginBottom: 10 },
   badge: { flexShrink: 1, overflow: "hidden", borderRadius: 10, backgroundColor: "#E3EEDD", color: tokens.colors.green, paddingHorizontal: 10, paddingVertical: 5, fontSize: 13, fontWeight: "600" },
   review: { backgroundColor: tokens.colors.butter, color: tokens.colors.ink }, mutedBadge: { backgroundColor: "#EEF0F1", color: tokens.colors.muted },

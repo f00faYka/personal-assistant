@@ -16,14 +16,15 @@ export function BrowserPreview() {
   const [selectedDetail, setSelectedDetail] = useState<string | null>(null);
   const [saveStates, setSaveStates] = useState<Readonly<Record<string, CardSaveState>>>({ "task-02": "pending", "task-03": "error" });
   const [reviewClient] = useState(() => createReviewFixtureClient("note", { kind: "note", id: fixture.notes[0]!.id, content: fixture.notes[0]!.content, reviewState: fixture.notes[0]!.reviewState, version: 0 }));
+  const openDetail = (title: string, spaceId: string | undefined, tagIds: readonly string[]) => setSelectedDetail([title, spacePath(fixture, spaceId), ...tagNames(fixture, tagIds).split(" ")].join("\n"));
   const content = tab === "review"
     ? <ReviewScreen apiBaseUrl="http://127.0.0.1:3000" memberId={fixture.memberId} detailUrl="/captures/demo-capture-1/review" client={reviewClient} onBack={() => setTab("home")} />
-    : tab === "calendar" ? <CalendarSurface fixture={fixture} saveStates={saveStates} onRetry={(id) => setSaveStates((current) => ({ ...current, [id]: "saved" }))} onOpen={setSelectedDetail} onComplete={(id) => setFixture((current) => ({ ...current, tasks: current.tasks.map((task) => task.id === id ? { ...task, status: "completed" } : task) }))} />
+    : tab === "calendar" ? <CalendarSurface fixture={fixture} saveStates={saveStates} onRetry={(id) => setSaveStates((current) => ({ ...current, [id]: "saved" }))} onPress={(title, spaceId, tagIds) => openDetail(title, spaceId, tagIds)} onComplete={(id) => setFixture((current) => ({ ...current, tasks: current.tasks.map((task) => task.id === id ? { ...task, status: "completed" } : task) }))} />
     : tab === "find" ? <FindSurface fixture={fixture} />
     : tab === "spaces" ? <SpacesSurface fixture={fixture} />
     : tab === "entity" ? <EntitySurface fixture={fixture} />
     : tab === "tag" ? <TagSurface fixture={fixture} />
-    : <HomeSurface fixture={fixture} saveStates={saveStates} onRetry={(id) => setSaveStates((current) => ({ ...current, [id]: "saved" }))} onOpen={setSelectedDetail} onComplete={(id) => setFixture((current) => ({ ...current, tasks: current.tasks.map((task) => task.id === id ? { ...task, status: "completed" } : task) }))} />;
+    : <HomeSurface fixture={fixture} saveStates={saveStates} onRetry={(id) => setSaveStates((current) => ({ ...current, [id]: "saved" }))} onPress={(title, spaceId, tagIds) => openDetail(title, spaceId, tagIds)} onComplete={(id) => setFixture((current) => ({ ...current, tasks: current.tasks.map((task) => task.id === id ? { ...task, status: "completed" } : task) }))} />;
   const shellTab: ShellTab = tab === "review" || tab === "spaces" || tab === "entity" || tab === "tag" ? "home" : tab;
   return <View style={styles.root}>
     <View style={styles.notice} accessibilityRole="alert"><Text style={styles.noticeTitle}>AI Assistant · #172 card prototype</Text><Text style={styles.noticeText}>Due-badge cards · in-memory fixtures</Text></View>
@@ -35,26 +36,26 @@ export function BrowserPreview() {
 interface CardSurfaceProps {
   readonly fixture: BrowserFixtureData;
   readonly saveStates: Readonly<Record<string, CardSaveState>>;
-  readonly onOpen: (label: string) => void;
+  readonly onPress: (title: string, spaceId: string | undefined, tagIds: readonly string[]) => void;
   readonly onComplete: (id: string) => void;
   readonly onRetry: (id: string) => void;
 }
 const fixtureToday = "2026-09-15";
 const fixtureTimeZone = "Europe/Warsaw";
 
-function HomeSurface({ fixture, saveStates, onOpen, onComplete, onRetry }: CardSurfaceProps) {
+function HomeSurface({ fixture, saveStates, onPress, onComplete, onRetry }: CardSurfaceProps) {
   return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="Tuesday, September 15">Good morning</Heading>
     {fixture.tasks.map((task, index) => <View key={task.id}>
-      <TaskCard task={task} fixture={fixture} timeZone={fixtureTimeZone} today={fixtureToday} saveState={saveStates[task.id] ?? "saved"} onOpen={onOpen} onComplete={() => onComplete(task.id)} onRetry={() => onRetry(task.id)} />
-      {fixture.notes[index] ? <NoteCard note={fixture.notes[index]} fixture={fixture} onOpen={onOpen} /> : null}
+      <TaskCard task={task} fixture={fixture} timeZone={fixtureTimeZone} today={fixtureToday} saveState={saveStates[task.id] ?? "saved"} onPress={() => onPress(task.title, task.spaceId, task.tagIds)} onComplete={() => onComplete(task.id)} onRetry={() => onRetry(task.id)} />
+      {fixture.notes[index] ? <NoteCard note={fixture.notes[index]} fixture={fixture} onPress={() => onPress(fixture.notes[index]!.content, fixture.notes[index]!.spaceId, fixture.notes[index]!.tagIds)} /> : null}
     </View>)}
   </ScrollView>;
 }
 
-function CalendarSurface({ fixture, saveStates, onOpen, onComplete, onRetry }: CardSurfaceProps) {
+function CalendarSurface({ fixture, saveStates, onPress, onComplete, onRetry }: CardSurfaceProps) {
   const scheduled = fixture.tasks.filter((task) => task.dueAt);
   const undated = fixture.tasks.find((task) => !task.dueAt)!;
-  return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="September 15 — October 15, 2026">Calendar</Heading><Card tone="blue"><Text style={styles.cardEyebrow}>NEXT MONTH</Text><Text style={styles.cardTitle}>{scheduled.length} scheduled Tasks</Text><Text style={styles.cardDetail}>Dense days and quiet gaps are both represented in this fixture.</Text></Card><View style={styles.week}>{scheduled.map((task) => <Chip key={task.id}>{day(task.dueAt)} · {task.title}</Chip>)}<Chip>Sep 17 · No scheduled Tasks</Chip><Chip>Sep 19 · No scheduled Tasks</Chip></View><Text style={styles.sectionTitle}>Agenda</Text>{scheduled.map((task) => <TaskCard key={task.id} task={task} fixture={fixture} timeZone={fixtureTimeZone} today={fixtureToday} saveState={saveStates[task.id] ?? "saved"} onOpen={onOpen} onComplete={() => onComplete(task.id)} onRetry={() => onRetry(task.id)} />)}<NoteCard note={fixture.notes[1]!} fixture={fixture} onOpen={onOpen} /><Card tone="orange"><Text style={styles.cardEyebrow}>UNDATED</Text><Text style={styles.cardTitle}>{undated.title}</Text><Text style={styles.cardDetail}>No due date · still visible outside the calendar.</Text></Card></ScrollView>;
+  return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="September 15 — October 15, 2026">Calendar</Heading><Card tone="blue"><Text style={styles.cardEyebrow}>NEXT MONTH</Text><Text style={styles.cardTitle}>{scheduled.length} scheduled Tasks</Text><Text style={styles.cardDetail}>Dense days and quiet gaps are both represented in this fixture.</Text></Card><View style={styles.week}>{scheduled.map((task) => <Chip key={task.id}>{day(task.dueAt)} · {task.title}</Chip>)}<Chip>Sep 17 · No scheduled Tasks</Chip><Chip>Sep 19 · No scheduled Tasks</Chip></View><Text style={styles.sectionTitle}>Agenda</Text>{scheduled.map((task) => <TaskCard key={task.id} task={task} fixture={fixture} timeZone={fixtureTimeZone} today={fixtureToday} saveState={saveStates[task.id] ?? "saved"} onPress={() => onPress(task.title, task.spaceId, task.tagIds)} onComplete={() => onComplete(task.id)} onRetry={() => onRetry(task.id)} />)}<NoteCard note={fixture.notes[1]!} fixture={fixture} onPress={() => onPress(fixture.notes[1]!.content, fixture.notes[1]!.spaceId, fixture.notes[1]!.tagIds)} /><Card tone="orange"><Text style={styles.cardEyebrow}>UNDATED</Text><Text style={styles.cardTitle}>{undated.title}</Text><Text style={styles.cardDetail}>No due date · still visible outside the calendar.</Text></Card></ScrollView>;
 }
 
 function FindSurface({ fixture }: { readonly fixture: BrowserFixtureData }) {
