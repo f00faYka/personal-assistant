@@ -73,6 +73,7 @@ describe("approved card interactions", () => {
     expect(swipe.props.onMoveShouldSetPanResponder({}, { dx: 3, dy: 60 })).toBe(false);
     expect(swipe.props.onMoveShouldSetPanResponder({}, { dx: -70, dy: 3 })).toBe(true);
     expect(swipe.props.onMoveShouldSetPanResponderCapture({}, { dx: -70, dy: 3 })).toBe(true);
+    expect(swipe.props.onPanResponderTerminationRequest()).toBe(false);
     act(() => { swipe.props.onPanResponderGrant(); swipe.props.onPanResponderMove({}, { dx: -70, dy: 0 }); });
     expect(JSON.stringify(renderer.toJSON())).toContain("translateX");
     act(() => { swipe.props.onPanResponderRelease({}, { dx: -70 }); });

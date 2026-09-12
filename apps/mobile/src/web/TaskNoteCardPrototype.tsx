@@ -58,6 +58,7 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
   const swipe = PanResponder.create({
     onMoveShouldSetPanResponder: shouldCaptureSwipe,
     onMoveShouldSetPanResponderCapture: shouldCaptureSwipe,
+    onPanResponderTerminationRequest: () => false,
     onPanResponderGrant: () => { suppressPress.current = true; swipeDx.current = 0; setDragX(0); },
     onPanResponderMove: (_, gesture) => { swipeDx.current = gesture.dx; setDragX(Math.max(-88, Math.min(0, gesture.dx))); },
     onPanResponderRelease: (_, gesture) => {
