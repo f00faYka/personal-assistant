@@ -6,7 +6,7 @@ vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 vi.mock("react-native", async () => {
   const React = await import("react");
   const host = (name: string) => (props: { readonly children?: React.ReactNode; readonly [key: string]: unknown }) => React.createElement(name, props, props.children);
-  return { Modal: (props: { visible: boolean; children?: React.ReactNode }) => props.visible ? React.createElement("Modal", props, props.children) : null, PanResponder: { create: (handlers: object) => ({ panHandlers: handlers }) }, Pressable: host("Pressable"), ScrollView: host("ScrollView"), StyleSheet: { create: <T,>(styles: T): T => styles }, Text: host("Text"), View: host("View") };
+  return { Dimensions: { get: () => ({ width: 1024 }) }, Modal: (props: { visible: boolean; children?: React.ReactNode }) => props.visible ? React.createElement("Modal", props, props.children) : null, PanResponder: { create: (handlers: object) => ({ panHandlers: handlers }) }, Pressable: host("Pressable"), ScrollView: host("ScrollView"), StyleSheet: { create: <T,>(styles: T): T => styles }, Text: host("Text"), View: host("View") };
 });
 vi.mock("react-native-safe-area-context", async () => {
   const React = await import("react");
@@ -65,7 +65,7 @@ describe("approved card interactions", () => {
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Open Task Book dentist appointment" }).props.onLongPress(); });
     expect(renderer.root.findByProps({ accessibilityLabel: "Mark complete Book dentist appointment" })).toBeDefined();
   });
-  test("swiping reveals an action but does not complete or open details", () => {
+  test("a full left swipe moves the card off-screen and completes it", () => {
     const onOpen = vi.fn(); const onComplete = vi.fn();
     let renderer!: ReturnType<typeof create>;
     act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onPress={onOpen} onSetCompleted={(completed) => onComplete(completed)} />); });
@@ -74,11 +74,9 @@ describe("approved card interactions", () => {
     expect(swipe.props.onMoveShouldSetPanResponder({}, { dx: -70, dy: 3 })).toBe(true);
     expect(swipe.props.onMoveShouldSetPanResponderCapture({}, { dx: -70, dy: 3 })).toBe(true);
     expect(swipe.props.onPanResponderTerminationRequest()).toBe(false);
-    act(() => { swipe.props.onPanResponderGrant(); swipe.props.onPanResponderMove({}, { dx: -70, dy: 0 }); });
+    act(() => { swipe.props.onPanResponderGrant(); swipe.props.onPanResponderMove({}, { dx: -260, dy: 0 }); });
     expect(JSON.stringify(renderer.toJSON())).toContain("translateX");
-    act(() => { swipe.props.onPanResponderRelease({}, { dx: -70 }); });
-    expect(onComplete).not.toHaveBeenCalled(); expect(onOpen).not.toHaveBeenCalled();
-    act(() => { renderer.root.findByProps({ accessibilityLabel: "Complete Task Book dentist appointment" }).props.onPress(); });
+    act(() => { swipe.props.onPanResponderRelease({}, { dx: -260 }); });
     expect(onComplete).toHaveBeenCalledOnce(); expect(onOpen).not.toHaveBeenCalled();
   });
   test("pending and failed tasks expose no completion capability", () => {

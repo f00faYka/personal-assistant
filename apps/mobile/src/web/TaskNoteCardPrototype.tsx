@@ -1,6 +1,6 @@
 /** Disposable, fixture-only implementation of the approved due-badge card direction. */
 import { useRef, useState } from "react";
-import { Modal, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
+import { Dimensions, Modal, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 import type { ReactNode } from "react";
 import { tokens } from "../design-system";
 import type { BrowserFixtureData, BrowserFixtureNote, BrowserFixtureTask } from "./fixture-data";
@@ -47,8 +47,8 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
   readonly metadata: ReactNode;
   readonly status?: ReactNode;
 }) {
-  const [revealed, setRevealed] = useState(false);
   const [dragX, setDragX] = useState(0);
+  const [swipedAway, setSwipedAway] = useState(false);
   const swipeDx = useRef(0);
   const [menu, setMenu] = useState(false);
   const suppressPress = useRef(false);
@@ -60,26 +60,25 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
     onMoveShouldSetPanResponderCapture: shouldCaptureSwipe,
     onPanResponderTerminationRequest: () => false,
     onPanResponderGrant: () => { suppressPress.current = true; swipeDx.current = 0; setDragX(0); },
-    onPanResponderMove: (_, gesture) => { swipeDx.current = gesture.dx; setDragX(Math.max(-88, Math.min(0, gesture.dx))); },
+    onPanResponderMove: (_, gesture) => { swipeDx.current = gesture.dx; setDragX(Math.max(-Dimensions.get("window").width, Math.min(0, gesture.dx))); },
     onPanResponderRelease: (_, gesture) => {
       const dx = swipeDx.current || gesture.dx;
-      setRevealed(dx < -40 || (revealed && dx <= 40));
+      if (dx < -120) { setSwipedAway(true); onComplete?.(); }
       swipeDx.current = 0;
       setDragX(0);
     },
     onPanResponderTerminate: () => { suppressPress.current = true; swipeDx.current = 0; setDragX(0); },
   });
-  const complete = () => { setRevealed(false); setMenu(false); onComplete?.(); };
+  const complete = () => { setMenu(false); onComplete?.(); };
   const toggleCompleted = () => { setMenu(false); onSetCompleted?.(!completed); };
   return <View style={styles.wrapper}>
     <View style={styles.clip}>
-      {revealed && onComplete ? <Pressable accessibilityRole="button" accessibilityLabel={`Complete Task ${title}`} onPress={complete} style={styles.swipeAction}><Text style={styles.swipeCheck}>✓</Text><Text style={styles.swipeText}>Complete</Text></Pressable> : null}
       <View
         {...swipe.panHandlers}
-        style={[styles.card, note && styles.note, onComplete && { transform: [{ translateX: revealed ? -88 : dragX }] }]}
+        style={[styles.card, note && styles.note, onComplete && { transform: [{ translateX: swipedAway ? -Dimensions.get("window").width : dragX }] }]}
       >
         <Pressable accessibilityRole="button" accessibilityLabel={`Open ${kind} ${title}`} onPressIn={() => { suppressPress.current = false; }}
-          onPress={() => { if (!suppressPress.current) { if (revealed) setRevealed(false); else onPress(); } }}
+          onPress={() => { if (!suppressPress.current) onPress(); }}
           delayLongPress={500} onLongPress={() => { suppressPress.current = true; setMenu(true); }} style={styles.body}>
           <View style={styles.header}><ItemIcon note={note} />{badge ? <Text numberOfLines={1} style={[styles.badge, note && styles.review, mutedBadge && styles.mutedBadge]}>{badge}</Text> : null}</View>
           <Text numberOfLines={note ? 3 : 2} style={[styles.title, note && styles.preview, completed && styles.struck]}>{title}</Text>
@@ -156,7 +155,6 @@ const styles = StyleSheet.create({
   clipboardTop: { position: "absolute", top: -4, left: 4, width: 8, height: 5, backgroundColor: tokens.colors.surface, borderColor: tokens.colors.green, borderWidth: 1.5, borderRadius: 2 },
   fold: { position: "absolute", top: 0, right: 0, width: 6, height: 6, borderBottomWidth: 1.5, borderLeftWidth: 1.5, borderColor: tokens.colors.green },
   iconLine: { height: 1.5, backgroundColor: tokens.colors.green }, shortLine: { width: 6 },
-  swipeAction: { position: "absolute", top: 0, bottom: 0, right: 0, width: 88, alignItems: "center", justifyContent: "center", gap: 6 }, swipeCheck: { color: "#FFFFFF", fontSize: 26 }, swipeText: { color: "#FFFFFF", fontSize: 12, fontWeight: "600" },
   pending: { backgroundColor: tokens.colors.butter, color: "#71521C", padding: 12, fontSize: 12 },
   errorRow: { backgroundColor: "#FFF0EA", paddingLeft: 14, paddingRight: 6, flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }, error: { color: "#9B392B", fontSize: 12 }, retry: { minHeight: 44, paddingHorizontal: 8, justifyContent: "center" }, completedLabel: { paddingHorizontal: 16, paddingBottom: 12, color: tokens.colors.green, fontSize: 12 },
   modalRoot: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }, backdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(36,34,31,0.18)" },
