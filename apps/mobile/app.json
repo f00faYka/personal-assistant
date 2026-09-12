@@ -1,12 +1,12 @@
 {
   "expo": {
-    "name": "Wayfinder",
-    "slug": "wayfinder",
+    "name": "AI Assistant",
+    "slug": "ai-assistant",
     "version": "0.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "ios": { "supportsTablet": false },
     "web": { "bundler": "metro" },
-    "plugins": [["expo-audio", { "microphonePermission": "Allow Wayfinder to record voice Captures." }]]
+    "plugins": [["expo-audio", { "microphonePermission": "Allow AI Assistant to record voice Captures." }]]
   }
 }

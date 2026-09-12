@@ -23,8 +23,8 @@ describe("AppShell", () => {
     const find = (label: string) => renderer.root.findAllByType(Pressable).find((node) => node.props.accessibilityLabel === label);
     expect(find("Open Home")?.props.accessibilityState).toEqual({ selected: true });
     expect(find("Start a voice Capture")).toBeDefined();
-    act(() => { find("Open Digest")?.props.onPress(); find("Start a voice Capture")?.props.onPress(); });
-    expect(onTabChange).toHaveBeenCalledWith("digest");
+    act(() => { find("Open Calendar")?.props.onPress(); find("Start a voice Capture")?.props.onPress(); });
+    expect(onTabChange).toHaveBeenCalledWith("calendar");
     expect(onCapture).toHaveBeenCalledOnce();
   });
 });

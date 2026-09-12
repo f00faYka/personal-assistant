@@ -11,7 +11,7 @@ vi.mock("react-native", async () => {
 vi.mock("react-native-safe-area-context", async () => {
   const React = await import("react");
   const host = (name: string) => (props: { readonly children?: React.ReactNode; readonly [key: string]: unknown }) => React.createElement(name, props, props.children);
-  return { SafeAreaView: host("SafeAreaView") };
+  return { SafeAreaView: host("SafeAreaView"), useSafeAreaInsets: () => ({ bottom: 0 }) };
 });
 
 import { BrowserPreview } from "./BrowserPreview";
@@ -22,18 +22,17 @@ describe("BrowserPreview", () => {
     act(() => { renderer = create(<BrowserPreview />); });
 
     expect(renderer.root.findAllByProps({ accessibilityRole: "alert" }).length).toBeGreaterThan(0);
-    expect(renderer.root.findByProps({ accessibilityLabel: "Start a voice Capture" }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ accessibilityLabel: "Start a voice Capture" }).props.disabled).toBeUndefined();
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Open Calendar" }).props.onPress(); });
     expect(renderer.root.findAll((node) => String(node.type) === "Text").some((node) => node.props.children === "Calendar")).toBe(true);
   });
 
-  test("exposes the structured fixture surfaces", () => {
+  test("uses the shared shell destinations", () => {
     let renderer!: ReturnType<typeof create>;
     act(() => { renderer = create(<BrowserPreview />); });
 
-    for (const label of ["Spaces", "Entity", "Tag"]) {
-      act(() => { renderer.root.findByProps({ accessibilityLabel: `Open ${label}` }).props.onPress(); });
-      expect(String(renderer.root.findAll((node) => String(node.type) === "Text").map((node) => node.props.children).join(" "))).toContain(label === "Entity" ? "Northstar launch" : label === "Tag" ? "urgent" : "Launch week");
+    for (const label of ["Home", "Find", "Calendar", "Me"]) {
+      expect(renderer.root.findByProps({ accessibilityLabel: `Open ${label}` })).toBeDefined();
     }
   });
 });

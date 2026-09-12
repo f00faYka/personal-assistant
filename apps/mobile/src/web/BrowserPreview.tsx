@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { AppShell, type ShellTab } from "../AppShell";
 import { Card, Chip, Heading, PrimaryButton, TaskRow, tokens } from "../design-system";
 import { ReviewScreen } from "../review/ReviewScreen";
 import { createReviewFixtureClient } from "../review/review";
 import { resetBrowserFixtureData, type BrowserFixtureData, type BrowserFixtureEntity, type BrowserFixtureTag } from "./fixture-data";
 
-type PreviewTab = "home" | "calendar" | "review" | "find" | "spaces" | "entity" | "tag";
+type PreviewTab = ShellTab | "review" | "spaces" | "entity" | "tag";
 
 export function BrowserPreview() {
   const [tab, setTab] = useState<PreviewTab>("home");
@@ -20,18 +21,11 @@ export function BrowserPreview() {
     : tab === "entity" ? <EntitySurface fixture={fixture} />
     : tab === "tag" ? <TagSurface fixture={fixture} />
     : <HomeSurface fixture={fixture} onOpenReview={() => setTab("review")} />;
+  const shellTab: ShellTab = tab === "review" || tab === "spaces" || tab === "entity" || tab === "tag" ? "home" : tab;
   return <View style={styles.root}>
-    <View style={styles.notice} accessibilityRole="alert"><Text style={styles.noticeTitle}>Browser preview · deterministic fixture</Text><Text style={styles.noticeText}>Synthetic data only. Reload this page to reset it; microphone, storage, and backend actions are disabled.</Text></View>
-    <View style={styles.content}>{content}</View>
-    <ScrollView horizontal contentContainerStyle={styles.footer} accessibilityLabel="Browser preview navigation">
-      {(["home", "calendar", "review", "find", "spaces", "entity", "tag"] as const).map((item) => navItem(item, item[0]!.toUpperCase() + item.slice(1), tab, setTab))}
-      <Pressable accessibilityRole="button" accessibilityLabel="Start a voice Capture" disabled style={styles.capture}><Text style={styles.captureIcon}>●</Text></Pressable>
-    </ScrollView>
+    <View style={styles.notice} accessibilityRole="alert"><Text style={styles.noticeTitle}>AI Assistant browser preview</Text><Text style={styles.noticeText}>Deterministic fixture data. Reload to reset the preview; native capabilities use local adapters.</Text></View>
+    <AppShell tab={shellTab} onTabChange={setTab} onCapture={() => setTab("review")}><View style={styles.content}>{content}</View></AppShell>
   </View>;
-}
-
-function navItem(tab: PreviewTab, label: string, current: PreviewTab, onSelect: (tab: PreviewTab) => void) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={`Open ${label}`} accessibilityState={{ selected: current === tab }} onPress={() => onSelect(tab)} style={styles.navItem}><Text style={[styles.navIcon, current === tab && styles.navActive]}>{tab === "home" ? "⌂" : tab === "calendar" ? "▦" : tab === "review" ? "✓" : tab === "find" ? "⌕" : tab === "spaces" ? "▤" : tab === "entity" ? "◉" : "#"}</Text><Text style={[styles.navLabel, current === tab && styles.navActive]}>{label}</Text></Pressable>;
 }
 
 function HomeSurface({ fixture, onOpenReview }: { readonly fixture: BrowserFixtureData; readonly onOpenReview: () => void }) {
@@ -66,5 +60,5 @@ function day(value?: string): string { return value ? new Date(value).toLocaleDa
 function formatTime(value?: string): string { return value ? new Date(value).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "UTC" }) : "no due time"; }
 
 const styles = StyleSheet.create({
-  root: { backgroundColor: tokens.colors.background, flex: 1 }, content: { flex: 1, maxWidth: 760, width: "100%", alignSelf: "center" }, notice: { backgroundColor: tokens.colors.green, paddingHorizontal: tokens.spacing.lg, paddingVertical: tokens.spacing.sm }, noticeTitle: { color: tokens.colors.lime, fontSize: 12, fontWeight: "800", letterSpacing: 1, textTransform: "uppercase" }, noticeText: { color: "#FFFFFF", fontSize: 13, lineHeight: 18, marginTop: 3 }, surface: { paddingBottom: tokens.spacing.lg }, footer: { alignItems: "center", backgroundColor: tokens.colors.surface, borderTopColor: tokens.colors.border, borderTopWidth: 1, minHeight: 76, paddingHorizontal: 8 }, navItem: { alignItems: "center", minWidth: 70, paddingVertical: 5 }, navIcon: { color: tokens.colors.muted, fontSize: 22, lineHeight: 25 }, navLabel: { color: tokens.colors.muted, fontSize: 12, fontWeight: "700", marginTop: 2 }, navActive: { color: tokens.colors.green }, capture: { alignItems: "center", backgroundColor: tokens.colors.lime, borderColor: tokens.colors.green, borderRadius: 30, borderWidth: 2, height: 60, justifyContent: "center", marginHorizontal: 10, marginTop: -28, opacity: 0.55, width: 60 }, captureIcon: { color: tokens.colors.green, fontSize: 24 }, cardEyebrow: { color: tokens.colors.muted, fontSize: 11, fontWeight: "800", letterSpacing: 1.2, marginBottom: 8 }, cardTitle: { color: tokens.colors.ink, fontSize: 19, fontWeight: "700", lineHeight: 25 }, cardDetail: { color: tokens.colors.muted, fontSize: 14, lineHeight: 20, marginTop: 7 }, sectionTitle: { color: tokens.colors.ink, fontSize: 20, fontWeight: "800", marginHorizontal: tokens.spacing.lg, marginVertical: 8 }, divider: { backgroundColor: tokens.colors.border, height: 1, marginVertical: 16 }, week: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: tokens.spacing.lg, paddingBottom: tokens.spacing.md }, search: { alignItems: "center", backgroundColor: tokens.colors.surface, borderColor: tokens.colors.border, borderRadius: tokens.radius.control, borderWidth: 1, flexDirection: "row", marginHorizontal: tokens.spacing.lg, padding: tokens.spacing.md }, searchIcon: { color: tokens.colors.ink, fontSize: 24, marginRight: 10 }, searchPlaceholder: { color: tokens.colors.muted, fontSize: 16 }, treeRow: { flexDirection: "row", gap: 8, marginTop: 14 }, treeMarker: { color: tokens.colors.green, fontSize: 18 }, treeName: { color: tokens.colors.ink, fontSize: 16, fontWeight: "700" }, treeLeaf: { color: tokens.colors.muted, fontSize: 14, marginTop: 6 },
+  root: { backgroundColor: tokens.colors.background, flex: 1 }, content: { flex: 1, maxWidth: 760, width: "100%", alignSelf: "center" }, notice: { backgroundColor: tokens.colors.green, paddingHorizontal: tokens.spacing.lg, paddingVertical: tokens.spacing.sm }, noticeTitle: { color: tokens.colors.lime, fontSize: 12, fontWeight: "800", letterSpacing: 1, textTransform: "uppercase" }, noticeText: { color: "#FFFFFF", fontSize: 13, lineHeight: 18, marginTop: 3 }, surface: { paddingBottom: tokens.spacing.lg }, cardEyebrow: { color: tokens.colors.muted, fontSize: 11, fontWeight: "800", letterSpacing: 1.2, marginBottom: 8 }, cardTitle: { color: tokens.colors.ink, fontSize: 19, fontWeight: "700", lineHeight: 25 }, cardDetail: { color: tokens.colors.muted, fontSize: 14, lineHeight: 20, marginTop: 7 }, sectionTitle: { color: tokens.colors.ink, fontSize: 20, fontWeight: "800", marginHorizontal: tokens.spacing.lg, marginVertical: 8 }, divider: { backgroundColor: tokens.colors.border, height: 1, marginVertical: 16 }, week: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: tokens.spacing.lg, paddingBottom: tokens.spacing.md }, search: { alignItems: "center", backgroundColor: tokens.colors.surface, borderColor: tokens.colors.border, borderRadius: tokens.radius.control, borderWidth: 1, flexDirection: "row", marginHorizontal: tokens.spacing.lg, padding: tokens.spacing.md }, searchIcon: { color: tokens.colors.ink, fontSize: 24, marginRight: 10 }, searchPlaceholder: { color: tokens.colors.muted, fontSize: 16 }, treeRow: { flexDirection: "row", gap: 8, marginTop: 14 }, treeMarker: { color: tokens.colors.green, fontSize: 18 }, treeName: { color: tokens.colors.ink, fontSize: 16, fontWeight: "700" }, treeLeaf: { color: tokens.colors.muted, fontSize: 14, marginTop: 6 },
 });
