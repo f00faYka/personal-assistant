@@ -1,4 +1,5 @@
 import { MemberListScreen } from "./src/list/MemberListScreen";
+import { Pressable } from "react-native";
 import { useAudioRecorder, useAudioRecorderState, RecordingPresets } from "expo-audio";
 import { createCaptureSubmitter } from "./src/capture/voice-capture";
 import { createExpoVoiceRecorder, readRecordedAudioAsBase64 } from "./src/capture/expo-voice-recorder";
@@ -13,6 +14,8 @@ import { useMemo, useState } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AppShell, CalendarSurface, FindSurface, MeSurface, type ShellTab } from "./src/AppShell";
 import { BrowserPreview } from "./src/web/BrowserPreview";
+import { SelectedDayTaskScreen } from "./src/day/SelectedDayTaskScreen";
+import { TaskRow } from "./src/design-system";
 
 export default function App() {
   if (process.env.EXPO_PUBLIC_UI_FIXTURE === "true") {
@@ -22,6 +25,7 @@ export default function App() {
   const [fixtureMode, setFixtureMode] = useState(process.env.EXPO_PUBLIC_REVIEW_FIXTURE === "task" || process.env.EXPO_PUBLIC_REVIEW_FIXTURE === "note");
   const [tab, setTab] = useState<ShellTab>("home");
   const [captureRequest, setCaptureRequest] = useState(0);
+  const [showToday, setShowToday] = useState(false);
   const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:3000";
   const recorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
   const recorderState = useAudioRecorderState(recorder, 150);
@@ -32,9 +36,14 @@ export default function App() {
   const openCapture = () => { setTab("home"); setCaptureRequest((request) => request + 1); };
   const content = detailUrl || fixtureMode
     ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} detailUrl={detailUrl ?? "/captures/demo-capture-1/review"} {...(!fixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(fixtureMode ? { client: createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => { setDetailUrl(null); setFixtureMode(false); }} />
+    : showToday ? <SelectedDayTaskScreen apiBaseUrl={apiBaseUrl} memberId={memberId} selectedDate={new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Warsaw" }).format(new Date()) as `${number}-${number}-${number}`} timeZone="Europe/Warsaw" renderTask={(task) => <PressableTaskRow title={task.title} detailUrl={task.detailUrl} onOpenDetail={setDetailUrl} />} />
     : tab === "find" ? <FindSurface />
     : tab === "calendar" ? <CalendarSurface />
     : tab === "me" ? <MeSurface />
-    : <MemberListScreen apiBaseUrl={apiBaseUrl} memberId={memberId} onOpenDetail={setDetailUrl} voiceRecorder={createExpoVoiceRecorder(recorder)} recordingMetering={recorderState.metering} recordingInterrupted={recorderState.mediaServicesDidReset} captureSubmitter={createCaptureSubmitter(apiBaseUrl, readRecordedAudioAsBase64)} offlineDraftStore={offlineDraftStore} offlineDraftSyncClient={offlineDraftSyncClient} captureRequest={captureRequest} />;
-  return <SafeAreaProvider><AppShell tab={tab} onTabChange={setTab} onCapture={openCapture}>{content}</AppShell></SafeAreaProvider>;
+    : <MemberListScreen apiBaseUrl={apiBaseUrl} memberId={memberId} home={tab === "home" && process.env.NODE_ENV !== "test"} onOpenToday={() => setShowToday(true)} onOpenDetail={setDetailUrl} voiceRecorder={createExpoVoiceRecorder(recorder)} recordingMetering={recorderState.metering} recordingInterrupted={recorderState.mediaServicesDidReset} captureSubmitter={createCaptureSubmitter(apiBaseUrl, readRecordedAudioAsBase64)} offlineDraftStore={offlineDraftStore} offlineDraftSyncClient={offlineDraftSyncClient} captureRequest={captureRequest} />;
+  return <SafeAreaProvider><AppShell tab={tab} onTabChange={(nextTab) => { setTab(nextTab); setShowToday(false); }} onCapture={openCapture}>{content}</AppShell></SafeAreaProvider>;
+}
+
+function PressableTaskRow({ title, detailUrl, onOpenDetail }: { readonly title: string; readonly detailUrl: string; readonly onOpenDetail: (url: string) => void }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={`Open Task ${title}`} onPress={() => onOpenDetail(detailUrl)}><TaskRow title={title} detail="Scheduled today" /></Pressable>;
 }
