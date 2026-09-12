@@ -47,8 +47,6 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
 }) {
   const [revealed, setRevealed] = useState(false);
   const [dragX, setDragX] = useState(0);
-  const pointerStartX = useRef<number | null>(null);
-  const pointerMoved = useRef(false);
   const [menu, setMenu] = useState(false);
   const suppressPress = useRef(false);
   const note = kind === "Note";
@@ -66,32 +64,11 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
     onPanResponderTerminate: () => { suppressPress.current = true; setDragX(0); },
   });
   const complete = () => { setRevealed(false); setMenu(false); onComplete?.(); };
-  type PointerGesture = { readonly nativeEvent: { readonly clientX: number } };
-  const pointerHandlers = {
-    onPointerDown: (event: PointerGesture) => { pointerStartX.current = event.nativeEvent.clientX; pointerMoved.current = false; },
-    onPointerMove: (event: PointerGesture) => {
-      if (pointerStartX.current === null || !onComplete) return;
-      const dx = event.nativeEvent.clientX - pointerStartX.current;
-      if (Math.abs(dx) <= 14) return;
-      pointerMoved.current = true;
-      setDragX(Math.max(-88, Math.min(0, dx)));
-    },
-    onPointerUp: (event: PointerGesture) => {
-      if (pointerStartX.current === null || !onComplete) return;
-      const dx = event.nativeEvent.clientX - pointerStartX.current;
-      if (pointerMoved.current) setRevealed(dx < -40 || (revealed && dx <= 40));
-      pointerStartX.current = null;
-      pointerMoved.current = false;
-      setDragX(0);
-    },
-    onPointerCancel: () => { pointerStartX.current = null; pointerMoved.current = false; setDragX(0); },
-  };
   return <View style={styles.wrapper}>
     <View style={styles.clip}>
       {revealed && onComplete ? <Pressable accessibilityRole="button" accessibilityLabel={`Complete Task ${title}`} onPress={complete} style={styles.swipeAction}><Text style={styles.swipeCheck}>✓</Text><Text style={styles.swipeText}>Complete</Text></Pressable> : null}
       <View
         {...swipe.panHandlers}
-        {...pointerHandlers}
         style={[styles.card, note && styles.note, onComplete && { transform: [{ translateX: revealed ? -88 : dragX }] }]}
       >
         <Pressable accessibilityRole="button" accessibilityLabel={`Open ${kind} ${title}`} onPressIn={() => { suppressPress.current = false; }}

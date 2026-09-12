@@ -54,6 +54,17 @@ describe("approved card interactions", () => {
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Mark complete Book dentist appointment" }).props.onPress(); });
     expect(onComplete).toHaveBeenCalledOnce(); expect(onOpen).not.toHaveBeenCalled();
   });
+  test("dots and long press both expose the complete action", () => {
+    const onComplete = vi.fn();
+    let renderer!: ReturnType<typeof create>;
+    act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onPress={vi.fn()} onComplete={onComplete} />); });
+    const actions = renderer.root.findByProps({ accessibilityLabel: "Actions for Task Book dentist appointment" });
+    act(() => { actions.props.onPress(); });
+    expect(renderer.root.findByProps({ accessibilityLabel: "Mark complete Book dentist appointment" })).toBeDefined();
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Dismiss card actions" }).props.onPress(); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Open Task Book dentist appointment" }).props.onLongPress(); });
+    expect(renderer.root.findByProps({ accessibilityLabel: "Mark complete Book dentist appointment" })).toBeDefined();
+  });
   test("swiping reveals an action but does not complete or open details", () => {
     const onOpen = vi.fn(); const onComplete = vi.fn();
     let renderer!: ReturnType<typeof create>;
