@@ -69,6 +69,7 @@ describe("approved card interactions", () => {
     const onOpen = vi.fn(); const onComplete = vi.fn();
     let renderer!: ReturnType<typeof create>;
     act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onPress={onOpen} onSetCompleted={(completed) => onComplete(completed)} />); });
+    expect(renderer.root.findAll((node) => String(node.type) === "View").some((node) => node.props.style?.overflow === "visible")).toBe(true);
     const swipe = renderer.root.findAll((node) => typeof node.props.onMoveShouldSetPanResponder === "function")[0]!;
     expect(swipe.props.onMoveShouldSetPanResponder({}, { dx: 3, dy: 60 })).toBe(false);
     expect(swipe.props.onMoveShouldSetPanResponder({}, { dx: -70, dy: 3 })).toBe(true);

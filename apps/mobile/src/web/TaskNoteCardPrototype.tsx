@@ -141,7 +141,8 @@ function formatDue(value: string | undefined, timeZone: string, today: string): 
 
 const styles = StyleSheet.create({
   wrapper: { marginHorizontal: tokens.spacing.lg, marginBottom: 12 },
-  clip: { overflow: "hidden", borderRadius: tokens.radius.card, backgroundColor: tokens.colors.green },
+  // The card must be allowed to leave this wrapper during a full-dismiss swipe.
+  clip: { overflow: "visible", borderRadius: tokens.radius.card, backgroundColor: tokens.colors.green },
   card: { backgroundColor: tokens.colors.surface, borderColor: tokens.colors.border, borderRadius: tokens.radius.card, borderWidth: 1 },
   note: { backgroundColor: tokens.colors.lavender },
   body: { padding: 16 }, header: { flexDirection: "row", alignItems: "center", gap: 10, paddingRight: 34, minHeight: 28, marginBottom: 10 },
