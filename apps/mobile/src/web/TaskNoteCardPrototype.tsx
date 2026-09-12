@@ -11,19 +11,20 @@ interface SharedProps {
 }
 export type CardSaveState = "saved" | "pending" | "error";
 
-export function TaskCard({ task, fixture, onPress, onComplete, saveState = "saved", onRetry, timeZone, today }: SharedProps & {
+export function TaskCard({ task, fixture, onPress, onSetCompleted, saveState = "saved", onRetry, timeZone, today }: SharedProps & {
   readonly task: BrowserFixtureTask;
-  readonly onComplete?: () => void;
+  readonly onSetCompleted?: (completed: boolean) => void;
   readonly saveState?: CardSaveState;
   readonly onRetry?: () => void;
   readonly timeZone: string;
   readonly today: string;
 }) {
   const completed = task.status === "completed";
-  const canComplete = !completed && saveState === "saved" && !!onComplete;
+  const canComplete = !completed && saveState === "saved" && !!onSetCompleted;
   return <CardFrame kind="Task" title={task.title} badge={formatDue(task.dueAt, timeZone, today)} mutedBadge={!task.dueAt}
     completed={completed} onPress={onPress}
-    onComplete={canComplete ? onComplete : undefined}
+    onComplete={canComplete ? () => onSetCompleted?.(true) : undefined}
+    onSetCompleted={completed && saveState === "saved" ? onSetCompleted : undefined}
     metadata={<Metadata fixture={fixture} spaceId={task.spaceId} tagIds={task.tagIds} />}
     status={saveState === "pending" ? <Text style={styles.pending} accessibilityLiveRegion="polite">Saving… · completion unavailable</Text> : saveState === "error" ? <View style={styles.errorRow}><Text style={styles.error} accessibilityRole="alert">Not saved · task still open</Text>{onRetry ? <Pressable accessibilityRole="button" accessibilityLabel={`Retry saving ${task.title}`} onPress={onRetry} style={styles.retry}><Text style={styles.error}>Retry</Text></Pressable> : null}</View> : completed ? <Text style={styles.completedLabel}>✓ Completed</Text> : null} />;
 }
@@ -34,7 +35,7 @@ export function NoteCard({ note, fixture, onPress }: SharedProps & { readonly no
     metadata={<Metadata fixture={fixture} spaceId={note.spaceId} tagIds={note.tagIds} />} />;
 }
 
-function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, onPress, onComplete, metadata, status }: {
+function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, onPress, onComplete, onSetCompleted, metadata, status }: {
   readonly kind: "Task" | "Note";
   readonly title: string;
   readonly badge?: string | undefined;
@@ -42,11 +43,13 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
   readonly completed?: boolean;
   readonly onPress: () => void;
   readonly onComplete?: (() => void) | undefined;
+  readonly onSetCompleted?: ((completed: boolean) => void) | undefined;
   readonly metadata: ReactNode;
   readonly status?: ReactNode;
 }) {
   const [revealed, setRevealed] = useState(false);
   const [dragX, setDragX] = useState(0);
+  const swipeDx = useRef(0);
   const [menu, setMenu] = useState(false);
   const suppressPress = useRef(false);
   const note = kind === "Note";
@@ -55,15 +58,18 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
   const swipe = PanResponder.create({
     onMoveShouldSetPanResponder: shouldCaptureSwipe,
     onMoveShouldSetPanResponderCapture: shouldCaptureSwipe,
-    onPanResponderGrant: () => { suppressPress.current = true; setDragX(0); },
-    onPanResponderMove: (_, gesture) => { setDragX(Math.max(-88, Math.min(0, gesture.dx))); },
+    onPanResponderGrant: () => { suppressPress.current = true; swipeDx.current = 0; setDragX(0); },
+    onPanResponderMove: (_, gesture) => { swipeDx.current = gesture.dx; setDragX(Math.max(-88, Math.min(0, gesture.dx))); },
     onPanResponderRelease: (_, gesture) => {
-      setRevealed(gesture.dx < -40 || (revealed && gesture.dx <= 40));
+      const dx = swipeDx.current || gesture.dx;
+      setRevealed(dx < -40 || (revealed && dx <= 40));
+      swipeDx.current = 0;
       setDragX(0);
     },
-    onPanResponderTerminate: () => { suppressPress.current = true; setDragX(0); },
+    onPanResponderTerminate: () => { suppressPress.current = true; swipeDx.current = 0; setDragX(0); },
   });
   const complete = () => { setRevealed(false); setMenu(false); onComplete?.(); };
+  const toggleCompleted = () => { setMenu(false); onSetCompleted?.(!completed); };
   return <View style={styles.wrapper}>
     <View style={styles.clip}>
       {revealed && onComplete ? <Pressable accessibilityRole="button" accessibilityLabel={`Complete Task ${title}`} onPress={complete} style={styles.swipeAction}><Text style={styles.swipeCheck}>✓</Text><Text style={styles.swipeText}>Complete</Text></Pressable> : null}
@@ -87,7 +93,7 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
         <Pressable accessibilityRole="button" accessibilityLabel="Dismiss card actions" onPress={() => setMenu(false)} style={styles.backdrop} />
         <View accessibilityViewIsModal style={styles.menu}>
           <Text numberOfLines={2} style={styles.menuTitle}>{title}</Text>
-          {onComplete ? <Pressable accessibilityRole="button" onPress={complete} accessibilityLabel={`Mark complete ${title}`} style={styles.menuAction}><Text style={styles.menuText}>✓  Mark complete</Text></Pressable> : null}
+          {onComplete ? <Pressable accessibilityRole="button" onPress={complete} accessibilityLabel={`Mark complete ${title}`} style={styles.menuAction}><Text style={styles.menuText}>✓  Mark complete</Text></Pressable> : onSetCompleted ? <Pressable accessibilityRole="button" onPress={toggleCompleted} accessibilityLabel={`Mark incomplete ${title}`} style={styles.menuAction}><Text style={styles.menuText}>↶  Mark incomplete</Text></Pressable> : null}
           <Pressable accessibilityRole="button" onPress={() => { setMenu(false); onPress(); }} style={styles.menuAction}><Text style={styles.menuText}>Edit {kind.toLowerCase()}</Text></Pressable>
           <Pressable accessibilityRole="button" onPress={() => setMenu(false)} style={styles.menuAction}><Text style={styles.meta}>Cancel</Text></Pressable>
         </View>

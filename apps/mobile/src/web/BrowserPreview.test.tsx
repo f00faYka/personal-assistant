@@ -46,7 +46,7 @@ describe("approved card interactions", () => {
   test("menu completion never opens the body and holding only opens actions", () => {
     const onOpen = vi.fn(); const onComplete = vi.fn();
     let renderer!: ReturnType<typeof create>;
-    act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onPress={onOpen} onComplete={onComplete} />); });
+    act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onPress={onOpen} onSetCompleted={(completed) => onComplete(completed)} />); });
     const body = renderer.root.findByProps({ accessibilityLabel: "Open Task Book dentist appointment" });
     act(() => { body.props.onLongPress(); body.props.onPress(); });
     expect(onOpen).not.toHaveBeenCalled();
@@ -57,7 +57,7 @@ describe("approved card interactions", () => {
   test("dots and long press both expose the complete action", () => {
     const onComplete = vi.fn();
     let renderer!: ReturnType<typeof create>;
-    act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onPress={vi.fn()} onComplete={onComplete} />); });
+    act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onPress={vi.fn()} onSetCompleted={(completed) => onComplete(completed)} />); });
     const actions = renderer.root.findByProps({ accessibilityLabel: "Actions for Task Book dentist appointment" });
     act(() => { actions.props.onPress(); });
     expect(renderer.root.findByProps({ accessibilityLabel: "Mark complete Book dentist appointment" })).toBeDefined();
@@ -68,7 +68,7 @@ describe("approved card interactions", () => {
   test("swiping reveals an action but does not complete or open details", () => {
     const onOpen = vi.fn(); const onComplete = vi.fn();
     let renderer!: ReturnType<typeof create>;
-    act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onPress={onOpen} onComplete={onComplete} />); });
+    act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onPress={onOpen} onSetCompleted={(completed) => onComplete(completed)} />); });
     const swipe = renderer.root.findAll((node) => typeof node.props.onMoveShouldSetPanResponder === "function")[0]!;
     expect(swipe.props.onMoveShouldSetPanResponder({}, { dx: 3, dy: 60 })).toBe(false);
     expect(swipe.props.onMoveShouldSetPanResponder({}, { dx: -70, dy: 3 })).toBe(true);
@@ -83,10 +83,18 @@ describe("approved card interactions", () => {
   test("pending and failed tasks expose no completion capability", () => {
     for (const saveState of ["pending", "error"] as const) {
       let renderer!: ReturnType<typeof create>;
-      act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" saveState={saveState} onPress={vi.fn()} onComplete={vi.fn()} />); });
+      act(() => { renderer = create(<TaskCard task={fixture.tasks[0]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" saveState={saveState} onPress={vi.fn()} onSetCompleted={vi.fn()} />); });
       act(() => { renderer.root.findByProps({ accessibilityLabel: "Actions for Task Book dentist appointment" }).props.onPress(); });
       expect(renderer.root.findAll((node) => String(node.props.accessibilityLabel).startsWith("Mark complete"))).toHaveLength(0);
     }
+  });
+  test("completed tasks offer mark incomplete in the actions menu", () => {
+    const onSetCompleted = vi.fn();
+    let renderer!: ReturnType<typeof create>;
+    act(() => { renderer = create(<TaskCard task={fixture.tasks[6]!} fixture={fixture} timeZone="Europe/Warsaw" today="2026-09-15" onPress={vi.fn()} onSetCompleted={onSetCompleted} />); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Actions for Task Confirm hotel booking" }).props.onPress(); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Mark incomplete Confirm hotel booking" }).props.onPress(); });
+    expect(onSetCompleted).toHaveBeenCalledWith(false);
   });
   test("Note has review status and no date or completion; full tags open in details", () => {
     let renderer!: ReturnType<typeof create>; const onOpen = vi.fn();
