@@ -7,14 +7,18 @@ import { createWaveformBars } from "../capture/audio-waveform";
 import { shouldPersistOfflineDraft } from "../http/request-error";
 import type { OfflineDraft, OfflineDraftStore } from "../offline/offline-drafts";
 import type { OfflineDraftSynchronizationResult, OfflineDraftSyncClient } from "../offline/synchronize-offline-drafts";
-import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, paginationStateFromError, type ListState, type MemberListItem, type SearchFilters } from "./member-items";
+import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, paginationStateFromError, type ListState, type MemberItemsClient, type MemberListItem, type SearchFilters } from "./member-items";
 import { beginPreview, expirePreview, resolvePreview, savePreview, timeOutPreview, type PreviewItem, type PreviewState } from "../preview/result-preview";
 import { SpacePanel } from "../spaces/SpacePanel";
 import { createSpacesClient, type Space } from "../spaces/spaces";
 import { createMetadataClient, type Entity, type Tag } from "../review/metadata";
+import { loadCompleteMemberItems, localDateKey } from "../day/selected-day";
+import { TaskCard } from "../web/TaskNoteCardPrototype";
+import type { BrowserFixtureTask } from "../web/fixture-data";
 
 interface MemberListScreenProps {
   readonly apiBaseUrl: string;
+  readonly client?: MemberItemsClient;
   readonly memberId: string;
   readonly onOpenDetail?: (detailUrl: string) => void;
   readonly voiceRecorder?: VoiceRecorder;
@@ -24,6 +28,8 @@ interface MemberListScreenProps {
   readonly offlineDraftStore?: OfflineDraftStore;
   readonly offlineDraftSyncClient?: OfflineDraftSyncClient;
   readonly captureRequest?: number;
+  readonly home?: boolean;
+  readonly onOpenToday?: () => void;
 }
 
 type CaptureState =
@@ -37,10 +43,12 @@ type TimelineItem =
   | { readonly kind: "server_item"; readonly item: MemberListItem };
 type AssignableItem = Extract<MemberListItem, { kind: "task" | "note" }>;
 
-export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceRecorder, recordingMetering, recordingInterrupted = false, captureSubmitter, offlineDraftStore, offlineDraftSyncClient, captureRequest = 0 }: MemberListScreenProps) {
-  const client = useMemo(() => createMemberItemsClient(apiBaseUrl), [apiBaseUrl]);
+export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId, onOpenDetail, voiceRecorder, recordingMetering, recordingInterrupted = false, captureSubmitter, offlineDraftStore, offlineDraftSyncClient, captureRequest = 0, home = false, onOpenToday }: MemberListScreenProps) {
+  const client = useMemo(() => providedClient ?? createMemberItemsClient(apiBaseUrl), [apiBaseUrl, providedClient]);
   const spacesClient = useMemo(() => createSpacesClient(apiBaseUrl), [apiBaseUrl]);
   const [state, setState] = useState<ListState>(initialListState);
+  const [completeHomeItems, setCompleteHomeItems] = useState<readonly MemberListItem[]>([]);
+  const [homeLoadStatus, setHomeLoadStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [capture, setCapture] = useState<CaptureState>({ status: "idle" });
@@ -247,6 +255,20 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
   useEffect(() => { void startFreshLoad(); }, [startFreshLoad]);
 
   useEffect(() => {
+    if (!home) return;
+    let cancelled = false;
+    setHomeLoadStatus("loading");
+    void loadCompleteMemberItems(client, memberId).then((result) => {
+      if (cancelled) return;
+      setCompleteHomeItems(result.items);
+      setHomeLoadStatus("ready");
+    }).catch(() => {
+      if (!cancelled) setHomeLoadStatus("error");
+    });
+    return () => { cancelled = true; };
+  }, [client, home, memberId]);
+
+  useEffect(() => {
     if (!offlineDraftStore) return;
     let cancelled = false;
     void offlineDraftStore.list(memberId).then((drafts) => {
@@ -346,6 +368,12 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
     finally { setAssigningItemId(null); }
   }, [memberId, refresh, spacesClient]);
 
+  const setTaskCompleted = useCallback((taskId: string, completed: boolean) => {
+    const state = completed ? "completed" : "open";
+    setCompleteHomeItems((items) => items.map((item) => item.id === taskId && item.kind === "task" ? { ...item, state } : item));
+    setState((current) => ({ ...current, items: current.items.map((item) => item.id === taskId && item.kind === "task" ? { ...item, state } : item) } as ListState));
+  }, []);
+
   useEffect(() => {
     if (capture.status !== "recording") {
       setRecordingElapsedSeconds(0);
@@ -365,15 +393,18 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       ...state.items.map((item): TimelineItem => ({ kind: "server_item", item })),
     ];
 
+  const homeDate = localDateKey(new Date(), "Europe/Warsaw");
+  const homeItems = (home ? completeHomeItems : state.items).filter((item): item is Extract<MemberListItem, { kind: "task" }> => item.kind === "task" && item.dueAt !== undefined && localDateKey(item.dueAt, "Europe/Warsaw") === homeDate);
+  const homeTimelineItems: readonly TimelineItem[] = homeItems.map((item): TimelineItem => ({ kind: "server_item", item }));
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.header}>
+      {home ? <HomeHeader taskCount={homeItems.length} loading={homeLoadStatus === "loading"} /> : <View style={styles.header}>
         <Text style={styles.eyebrow}>D · SUMMARY TIMELINE</Text>
         <Text style={styles.title}>Your items</Text>
         {voiceRecorder && capture.status === "idle" ? <Pressable accessibilityRole="button" accessibilityLabel="Record a voice Capture" onPress={() => void startCapture()} style={styles.captureButton}><Text style={styles.captureButtonText}>Record a Capture</Text></Pressable> : null}
-      </View>
-      <SpacePanel client={spacesClient} memberId={memberId} selectedSpaceId={selectedSpaceId} onSelect={setSelectedSpaceId} onSpacesChanged={setSpaces} />
-      <SearchFilterPanel open={searchOpen} text={searchText} filters={filters} options={filterOptions} onOpen={openSearch} onTextChange={setSearchText} onApplyText={() => applyFilters(withTextFilter(filters, searchText))} onApply={applyFilters} onClear={clearFilters} onRetry={openSearch} />
+      </View>}
+      {!home ? <><SpacePanel client={spacesClient} memberId={memberId} selectedSpaceId={selectedSpaceId} onSelect={setSelectedSpaceId} onSpacesChanged={setSpaces} />
+      <SearchFilterPanel open={searchOpen} text={searchText} filters={filters} options={filterOptions} onOpen={openSearch} onTextChange={setSearchText} onApplyText={() => applyFilters(withTextFilter(filters, searchText))} onApply={applyFilters} onClear={clearFilters} onRetry={openSearch} /></> : null}
       {spaceError && failedAssignment ? <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{spaceError}</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry Space assignment" onPress={() => void assignItem(failedAssignment.item, failedAssignment.spaceId)}><Text style={styles.retryText}>Retry assignment</Text></Pressable></View> : null}
       {voiceRecorder && capture.status !== "idle" ? <CapturePanel state={capture} recordingElapsedSeconds={recordingElapsedSeconds} recordingMetering={recordingMetering} recordingInterrupted={recordingInterrupted} onStop={() => void stopCapture()} onCancel={() => void cancelCapture()} onSubmit={(audio) => void submitCapture(audio)} /> : null}
       {preview ? <ResultPreview state={preview} onSave={saveResultPreview} onOpenReview={onOpenDetail} /> : null}
@@ -383,9 +414,10 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
       {state.status === "error" && timelineItems.length === 0 ? <ErrorState message={state.message} onRetry={() => void refresh()} /> : null}
       {state.status === "ready" && timelineItems.length === 0 ? <EmptyState searching={hasSearch} onRefresh={() => void refresh()} /> : null}
       {state.status === "error" && timelineItems.length > 0 ? <ErrorBanner message={state.message} onRetry={() => void refresh()} /> : null}
-      {timelineItems.length > 0 ? (
+      {home ? <View style={homeStyles.homeSection}><View style={homeStyles.homeSectionHeader}><View><Text style={homeStyles.homeSectionTitle}>Today’s tasks</Text><Text style={homeStyles.homeSectionDetail}>{homeLoadStatus === "loading" ? "Loading tasks…" : `${homeItems.length} remaining`}</Text></View><Pressable accessibilityRole="button" accessibilityLabel="Open all tasks for today" onPress={onOpenToday}><Text style={homeStyles.homeLink}>All for today ↗</Text></Pressable></View>{homeItems.length === 0 && homeLoadStatus === "ready" ? <Text style={styles.stateText}>Nothing scheduled today.</Text> : null}</View> : null}
+      {(home ? homeTimelineItems.length > 0 : timelineItems.length > 0) ? (
         <FlatList
-          data={timelineItems}
+          data={home ? homeTimelineItems : timelineItems}
           keyExtractor={(entry) => entry.kind === "offline_draft" ? `offline:${entry.draft.draftId}` : `${entry.item.kind}:${entry.item.id}`}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
           onEndReached={state.status === "ready" && state.nextCursor && !loadingMore ? () => void load(false, state.nextCursor ?? undefined) : undefined}
@@ -394,11 +426,21 @@ export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceReco
           contentContainerStyle={styles.list}
           renderItem={({ item: entry }) => entry.kind === "offline_draft"
             ? <OfflineDraftCard draft={entry.draft} sync={offlineDraftSync[entry.draft.draftId]} deleting={deletingDraftId === entry.draft.draftId} onDelete={() => void deleteOfflineDraft(entry.draft.draftId)} onSync={() => retryOfflineDraft(entry.draft.draftId)} />
+            : home && entry.item.kind === "task" ? <TaskCard task={toCardTask(entry.item)} fixture={cardFixture} timeZone="Europe/Warsaw" today={homeDate} onPress={() => onOpenDetail?.(entry.item.detailUrl)} onSetCompleted={(completed) => setTaskCompleted(entry.item.id, completed)} />
             : <ListCard item={entry.item} spaces={spaces} assigning={assigningItemId === entry.item.id} onAssign={(item, spaceId) => void assignItem(item, spaceId)} onPress={onOpenDetail} />}
         />
       ) : null}
     </SafeAreaView>
   );
+}
+
+const cardFixture = { memberId: "member", spaces: [], entities: [], tags: [], tasks: [], notes: [] } as const;
+function toCardTask(item: Extract<MemberListItem, { kind: "task" }>): BrowserFixtureTask {
+  return { id: item.id, title: item.title, ...(item.dueAt ? { dueAt: item.dueAt } : {}), status: item.state, ...(item.spaceId ? { spaceId: item.spaceId } : {}), tagIds: [], entityIds: [] };
+}
+
+function HomeHeader({ taskCount, loading }: { readonly taskCount: number; readonly loading: boolean }) {
+  return <View style={homeStyles.homeHeader}><View style={homeStyles.homeDigestLabel}><Text style={homeStyles.homeEyebrow}>TODAY AT A GLANCE</Text><Text style={homeStyles.homePrepared}>PREPARED DIGEST</Text></View><Text style={homeStyles.homeDigestTitle}>Your day, at a glance.</Text><Text style={homeStyles.homeDigestText}>{loading ? "Preparing today’s tasks…" : `${taskCount} ${taskCount === 1 ? "task" : "tasks"} scheduled for today`}</Text><Text style={homeStyles.homeDigestArrow}>↗</Text></View>;
 }
 
 function ResultPreview({ state, onSave, onOpenReview }: { readonly state: PreviewState; readonly onSave: () => void; readonly onOpenReview: ((detailUrl: string) => void) | undefined }) {
@@ -547,6 +589,10 @@ function formatDate(value: string): string { const date = new Date(value); retur
 function formatDuration(totalSeconds: number): string { const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, "0"); const seconds = (totalSeconds % 60).toString().padStart(2, "0"); return `${minutes}:${seconds}`; }
 
 const cardTitleStyle = { color: "#24221F", fontSize: 18, fontWeight: "600" as const, lineHeight: 24 };
+
+const homeStyles = StyleSheet.create({
+  homeHeader: { backgroundColor: "#173B2F", borderRadius: 26, marginHorizontal: 16, marginBottom: 18, padding: 22 }, homeDigestLabel: { flexDirection: "row", justifyContent: "space-between" }, homeEyebrow: { color: "#D7F04A", fontSize: 10, fontWeight: "700", letterSpacing: 1.6 }, homePrepared: { color: "#B8C9BF", fontSize: 9 }, homeDigestTitle: { color: "#FFFFFF", fontSize: 31, fontWeight: "600", marginVertical: 18 }, homeDigestText: { color: "#D2DFD7", fontSize: 14, lineHeight: 20, paddingRight: 28 }, homeDigestArrow: { color: "#D7F04A", fontSize: 28, position: "absolute", right: 22, bottom: 18 }, homeSection: { marginHorizontal: 16, marginBottom: 8 }, homeSectionHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" }, homeSectionTitle: { color: "#24221F", fontSize: 20, fontWeight: "700" }, homeSectionDetail: { color: "#716B64", fontSize: 13, marginTop: 4 }, homeLink: { color: "#173B2F", fontSize: 13, fontWeight: "700" },
+});
 
 const styles = StyleSheet.create({
   filterToggle: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, marginHorizontal: 16, marginBottom: 12, padding: 12 }, filterToggleText: { color: "#5D5146", fontSize: 15, fontWeight: "600", textAlign: "center" }, filterPanel: { backgroundColor: "#FFFDF9", borderColor: "#E5E0D8", borderRadius: 14, borderWidth: 1, marginHorizontal: 16, marginBottom: 12, padding: 14 }, searchRow: { alignItems: "center", flexDirection: "row", gap: 8 }, searchInput: { borderColor: "#B9A895", borderRadius: 10, borderWidth: 1, color: "#24221F", flex: 1, minHeight: 44, paddingHorizontal: 12 }, filterButton: { backgroundColor: "#24221F", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12 }, filterButtonText: { color: "#FFFFFF", fontWeight: "700" }, filterSummary: { color: "#5D5146", fontSize: 13, marginTop: 10 }, filterStatus: { alignItems: "center", flexDirection: "row", gap: 8, marginTop: 12 }, filterError: { backgroundColor: "#FCE8DF", borderRadius: 8, marginTop: 12, padding: 10 }, filterHeading: { color: "#8B7355", fontSize: 12, fontWeight: "700", marginTop: 14, textTransform: "uppercase" }, filterOption: { color: "#5D5146", fontSize: 15, paddingVertical: 7 }, filterMuted: { color: "#908A82", fontSize: 14, paddingVertical: 7 }, clearFilters: { borderColor: "#B9A895", borderRadius: 10, borderWidth: 1, marginTop: 14, padding: 10 }, clearFiltersText: { color: "#8C3D25", fontSize: 14, fontWeight: "700", textAlign: "center" },
