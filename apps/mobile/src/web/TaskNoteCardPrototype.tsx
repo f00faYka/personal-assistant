@@ -1,4 +1,4 @@
-/** Disposable, fixture-only implementation of the approved due-badge card direction. */
+/** Shared Task and Note card presentation used by the real client and UI fixtures. */
 import { useRef, useState } from "react";
 import { Dimensions, Modal, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 import type { ReactNode } from "react";

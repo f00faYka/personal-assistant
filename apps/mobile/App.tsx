@@ -1,5 +1,4 @@
 import { MemberListScreen } from "./src/list/MemberListScreen";
-import { Pressable } from "react-native";
 import { useAudioRecorder, useAudioRecorderState, RecordingPresets } from "expo-audio";
 import { createCaptureSubmitter } from "./src/capture/voice-capture";
 import { createExpoVoiceRecorder, readRecordedAudioAsBase64 } from "./src/capture/expo-voice-recorder";
@@ -14,7 +13,8 @@ import { useMemo, useState } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AppShell, CalendarSurface, FindSurface, MeSurface, type ShellTab } from "./src/AppShell";
 import { SelectedDayTaskScreen } from "./src/day/SelectedDayTaskScreen";
-import { TaskRow } from "./src/design-system";
+import { TaskCard } from "./src/web/TaskNoteCardPrototype";
+import type { BrowserFixtureTask } from "./src/web/fixture-data";
 import { createStaticMemberItemsClient, type MemberListItem } from "./src/list/member-items";
 import { createBrowserFixtureData } from "./src/web/fixture-data";
 
@@ -45,8 +45,11 @@ export default function App() {
 }
 
 function PressableTaskRow({ title, detailUrl, onOpenDetail }: { readonly title: string; readonly detailUrl: string; readonly onOpenDetail: (url: string) => void }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={`Open Task ${title}`} onPress={() => onOpenDetail(detailUrl)}><TaskRow title={title} detail="Scheduled today" /></Pressable>;
+  const task: BrowserFixtureTask = { id: detailUrl, title, status: "open", tagIds: [], entityIds: [] };
+  return <TaskCard task={task} fixture={cardFixture} timeZone="Europe/Warsaw" today={new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Warsaw" }).format(new Date())} onPress={() => onOpenDetail(detailUrl)} />;
 }
+
+const cardFixture = { memberId: "member", spaces: [], entities: [], tags: [], tasks: [], notes: [] } as const;
 
 function fixtureDueAt(value: string | undefined, index: number): string | undefined {
   if (!value || index > 1) return value;

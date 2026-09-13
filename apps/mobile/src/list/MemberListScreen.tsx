@@ -13,7 +13,8 @@ import { SpacePanel } from "../spaces/SpacePanel";
 import { createSpacesClient, type Space } from "../spaces/spaces";
 import { createMetadataClient, type Entity, type Tag } from "../review/metadata";
 import { loadCompleteMemberItems, localDateKey } from "../day/selected-day";
-import { TaskRow } from "../design-system";
+import { TaskCard } from "../web/TaskNoteCardPrototype";
+import type { BrowserFixtureTask } from "../web/fixture-data";
 
 interface MemberListScreenProps {
   readonly apiBaseUrl: string;
@@ -419,12 +420,17 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
           contentContainerStyle={styles.list}
           renderItem={({ item: entry }) => entry.kind === "offline_draft"
             ? <OfflineDraftCard draft={entry.draft} sync={offlineDraftSync[entry.draft.draftId]} deleting={deletingDraftId === entry.draft.draftId} onDelete={() => void deleteOfflineDraft(entry.draft.draftId)} onSync={() => retryOfflineDraft(entry.draft.draftId)} />
-            : home ? <Pressable accessibilityRole="button" accessibilityLabel={`Open Task ${entry.item.kind === "task" ? entry.item.title : "Task"}`} onPress={() => onOpenDetail?.(entry.item.detailUrl)}><TaskRow title={entry.item.kind === "task" ? entry.item.title : "Task"} detail="Scheduled today" /></Pressable>
+            : home && entry.item.kind === "task" ? <TaskCard task={toCardTask(entry.item)} fixture={cardFixture} timeZone="Europe/Warsaw" today={homeDate} onPress={() => onOpenDetail?.(entry.item.detailUrl)} />
             : <ListCard item={entry.item} spaces={spaces} assigning={assigningItemId === entry.item.id} onAssign={(item, spaceId) => void assignItem(item, spaceId)} onPress={onOpenDetail} />}
         />
       ) : null}
     </SafeAreaView>
   );
+}
+
+const cardFixture = { memberId: "member", spaces: [], entities: [], tags: [], tasks: [], notes: [] } as const;
+function toCardTask(item: Extract<MemberListItem, { kind: "task" }>): BrowserFixtureTask {
+  return { id: item.id, title: item.title, ...(item.dueAt ? { dueAt: item.dueAt } : {}), status: item.state, ...(item.spaceId ? { spaceId: item.spaceId } : {}), tagIds: [], entityIds: [] };
 }
 
 function HomeHeader({ taskCount, loading }: { readonly taskCount: number; readonly loading: boolean }) {
