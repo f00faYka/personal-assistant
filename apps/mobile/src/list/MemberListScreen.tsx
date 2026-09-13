@@ -368,6 +368,12 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
     finally { setAssigningItemId(null); }
   }, [memberId, refresh, spacesClient]);
 
+  const setTaskCompleted = useCallback((taskId: string, completed: boolean) => {
+    const state = completed ? "completed" : "open";
+    setCompleteHomeItems((items) => items.map((item) => item.id === taskId && item.kind === "task" ? { ...item, state } : item));
+    setState((current) => ({ ...current, items: current.items.map((item) => item.id === taskId && item.kind === "task" ? { ...item, state } : item) } as ListState));
+  }, []);
+
   useEffect(() => {
     if (capture.status !== "recording") {
       setRecordingElapsedSeconds(0);
@@ -420,7 +426,7 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
           contentContainerStyle={styles.list}
           renderItem={({ item: entry }) => entry.kind === "offline_draft"
             ? <OfflineDraftCard draft={entry.draft} sync={offlineDraftSync[entry.draft.draftId]} deleting={deletingDraftId === entry.draft.draftId} onDelete={() => void deleteOfflineDraft(entry.draft.draftId)} onSync={() => retryOfflineDraft(entry.draft.draftId)} />
-            : home && entry.item.kind === "task" ? <TaskCard task={toCardTask(entry.item)} fixture={cardFixture} timeZone="Europe/Warsaw" today={homeDate} onPress={() => onOpenDetail?.(entry.item.detailUrl)} />
+            : home && entry.item.kind === "task" ? <TaskCard task={toCardTask(entry.item)} fixture={cardFixture} timeZone="Europe/Warsaw" today={homeDate} onPress={() => onOpenDetail?.(entry.item.detailUrl)} onSetCompleted={(completed) => setTaskCompleted(entry.item.id, completed)} />
             : <ListCard item={entry.item} spaces={spaces} assigning={assigningItemId === entry.item.id} onAssign={(item, spaceId) => void assignItem(item, spaceId)} onPress={onOpenDetail} />}
         />
       ) : null}
