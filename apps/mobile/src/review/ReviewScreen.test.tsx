@@ -55,7 +55,7 @@ describe("ReviewScreen", () => {
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Accept selected suggestions" }).props.onPress(); });
 
     expect(organizationProposalClient.decide).toHaveBeenCalledWith("proposal-1", "accepted", "member-1", ["candidate-space"]);
-    expect(textContent(renderer)).toContain("No organization suggestions need review.");
+    expect(textContent(renderer)).toContain("No AI suggestions need review.");
     renderer.unmount();
   });
 
@@ -81,7 +81,7 @@ describe("ReviewScreen", () => {
 
     expect(organizationProposalClient.decide).toHaveBeenCalledWith("proposal-1", "dismissed", "member-1", undefined);
     expect(textContent(renderer)).toContain("Call");
-    expect(textContent(renderer)).toContain("No organization suggestions need review.");
+    expect(textContent(renderer)).toContain("No AI suggestions need review.");
     renderer.unmount();
   });
 
@@ -92,9 +92,9 @@ describe("ReviewScreen", () => {
     const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
 
     expect(textContent(renderer)).toContain("proposals unavailable");
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry organization suggestions" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry AI suggestions" }).props.onPress(); });
 
-    expect(textContent(renderer)).toContain("No organization suggestions need review.");
+    expect(textContent(renderer)).toContain("No AI suggestions need review.");
     expect(list).toHaveBeenCalledTimes(2);
     renderer.unmount();
   });
@@ -228,7 +228,7 @@ describe("ReviewScreen", () => {
     vi.stubGlobal("fetch", fetcher);
     const renderer = await renderScreen(vi.fn());
 
-    expect(textContent(renderer)).toContain("Remind At:");
+    expect(textContent(renderer)).toContain("DUE DATE");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
     expect(renderer.root.findByProps({ accessibilityLabel: "Choose due date" })).toBeTruthy();
     expect(renderer.root.findByProps({ accessibilityLabel: "Choose due time" })).toBeTruthy();
@@ -363,6 +363,7 @@ describe("ReviewScreen", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 2 }, { transcription: { status: "succeeded", text: "Call the dentist tomorrow" } }) })));
     const renderer = await renderScreen(vi.fn());
 
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Toggle source and review history" }).props.onPress(); });
     expect(textContent(renderer)).toContain("Original transcription");
     expect(textContent(renderer)).toContain("Call the dentist tomorrow");
     expect(textContent(renderer)).toContain("Call the dentist");
@@ -373,6 +374,7 @@ describe("ReviewScreen", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Позвони врачу", reviewState: "none", version: 2 }, { transcription: { status: "succeeded", text: "Позвони врачу завтра", language: "ru" } }) })));
     const renderer = await renderScreen(vi.fn());
 
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Toggle source and review history" }).props.onPress(); });
     expect(textContent(renderer)).toContain("Original transcription");
     expect(textContent(renderer)).toContain("ru");
     expect(textContent(renderer)).toContain("Позвони врачу завтра");
@@ -485,6 +487,7 @@ describe("ReviewScreen", () => {
     const onBack = vi.fn();
     const renderer = await renderScreen(onBack, { offlineDraftStore });
 
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Toggle source and review history" }).props.onPress(); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Convert saved Note to Task" }).props.onPress(); });
 
     expect(textContent(renderer)).toContain("Needs review");

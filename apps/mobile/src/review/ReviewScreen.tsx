@@ -4,8 +4,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { createOfflineDraftId, type OfflineDraftStore } from "../offline/offline-drafts";
 import { shouldPersistOfflineDraft } from "../http/request-error";
+import { TaskNoteDetailScreen, type TaskNoteDetailDraft, type TaskNoteDetailItem, type TaskNoteDetailMetadata } from "../detail/TaskNoteDetailScreen";
 import { entityTypes, type Entity, type EntityType, type MetadataClient, type MetadataItemKind, type MetadataLinks, type Tag } from "./metadata";
-import { createReviewClient, type ReviewClient, type ReviewContract, type ReviewOutcome } from "./review";
+import { createReviewClient, type ReviewClient, type ReviewContract } from "./review";
 import type { OrganizationProposal, OrganizationProposalCandidate, OrganizationProposalClient } from "./organization-proposals";
 import type { Space, SpacesClient } from "../spaces/spaces";
 
@@ -19,20 +20,19 @@ interface ReviewScreenProps {
   readonly metadataClient?: MetadataClient;
   readonly organizationProposalClient?: OrganizationProposalClient;
   readonly spacesClient?: SpacesClient;
+  readonly detailMetadata?: TaskNoteDetailMetadata;
 }
 
 type ReviewStatus = { readonly status: "loading" } | { readonly status: "error"; readonly message: string } | { readonly status: "ready"; readonly review: ReviewContract };
-type Draft = { readonly title?: string; readonly dueAt?: string | null; readonly content?: string };
 type PendingMetadataMutation = { readonly label: string; readonly operation: () => Promise<void> };
+type DetailMetadataState = { readonly itemId: string; readonly itemKind: MetadataItemKind; readonly selectedSpaceId: string | null; readonly spaces: readonly { readonly id: string; readonly label: string }[]; readonly tags: readonly { readonly id: string; readonly label: string; readonly selected: boolean }[]; readonly error: string | null };
 
-export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: providedClient, offlineDraftStore, metadataClient: providedMetadataClient, organizationProposalClient: providedOrganizationProposalClient, spacesClient: providedSpacesClient }: ReviewScreenProps) {
+export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: providedClient, offlineDraftStore, metadataClient: providedMetadataClient, organizationProposalClient: providedOrganizationProposalClient, spacesClient: providedSpacesClient, detailMetadata }: ReviewScreenProps) {
   const client = useMemo(() => providedClient ?? createReviewClient(apiBaseUrl), [apiBaseUrl, providedClient]);
   const metadataClient = useMemo(() => providedMetadataClient ?? null, [providedMetadataClient]);
   const organizationProposalClient = useMemo(() => providedOrganizationProposalClient ?? null, [providedOrganizationProposalClient]);
   const spacesClient = useMemo(() => providedSpacesClient ?? null, [providedSpacesClient]);
   const [state, setState] = useState<ReviewStatus>({ status: "loading" });
-  const [draft, setDraft] = useState<Draft>({});
-  const [editing, setEditing] = useState<"title" | "dueAt" | "content" | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
@@ -40,6 +40,7 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
   const [converting, setConverting] = useState(false);
   const [conversionError, setConversionError] = useState<string | null>(null);
   const [conversionNotice, setConversionNotice] = useState<string | null>(null);
+  const [loadedDetailMetadata, setLoadedDetailMetadata] = useState<DetailMetadataState | null>(null);
   const savingInFlight = useRef(false);
   const completionInFlight = useRef(false);
   const conversionInFlight = useRef(false);
@@ -50,7 +51,6 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     try {
       const review = await client.get(detailUrl);
       setState({ status: "ready", review });
-      setDraft(review.outcome?.kind === "task" ? { title: review.outcome.title, dueAt: review.outcome.dueAt ?? null } : review.outcome ? { content: review.outcome.content } : {});
     } catch (error) {
       setState({ status: "error", message: error instanceof Error ? error.message : "Unable to load review" });
     }
@@ -69,9 +69,50 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
 
   useEffect(() => { void load(); }, [load]);
 
-  const save = useCallback(async () => {
+  const loadDetailMetadata = useCallback(async (itemId: string, itemKind: MetadataItemKind) => {
+    if (!metadataClient || !spacesClient) return;
+    try {
+      const [nextLinks, nextTags, nextSpaces] = await Promise.all([metadataClient.listLinks(itemId, itemKind, memberId), metadataClient.listTags(memberId), spacesClient.list(memberId)]);
+      const activeSpaces = nextSpaces.filter((space) => !space.archivedAt);
+      const views = await Promise.all(activeSpaces.map((space) => spacesClient.read(memberId, space.id, "flat")));
+      const assigned = views.find((view) => view.items.some((entry) => entry.itemId === itemId && entry.itemKind === itemKind));
+      setLoadedDetailMetadata({ itemId, itemKind, selectedSpaceId: assigned?.space.id ?? null, spaces: activeSpaces.map((space) => ({ id: space.id, label: spacePath(nextSpaces, space.id) })), tags: nextTags.map((tag) => ({ id: tag.id, label: tag.name, selected: nextLinks.tags.some((linked) => linked.id === tag.id) })), error: null });
+    } catch (cause) {
+      setLoadedDetailMetadata({ itemId, itemKind, selectedSpaceId: null, spaces: [], tags: [], error: cause instanceof Error ? cause.message : "Unable to load item properties" });
+    }
+  }, [memberId, metadataClient, spacesClient]);
+
+  useEffect(() => {
+    const outcome = state.status === "ready" ? state.review.outcome : null;
+    if (!detailMetadata && outcome && metadataClient && spacesClient) void loadDetailMetadata(outcome.id, outcome.kind);
+    else if (!outcome) setLoadedDetailMetadata(null);
+  }, [detailMetadata, loadDetailMetadata, metadataClient, spacesClient, state.status, state.status === "ready" ? state.review.outcome?.id : null, state.status === "ready" ? state.review.outcome?.kind : null]);
+
+  const liveMetadata = loadedDetailMetadata && state.status === "ready" && state.review.outcome?.id === loadedDetailMetadata.itemId && state.review.outcome.kind === loadedDetailMetadata.itemKind ? loadedDetailMetadata : null;
+  const resolvedDetailMetadata = detailMetadata ?? (liveMetadata ? {
+    selectedSpaceId: liveMetadata.selectedSpaceId,
+    spaces: liveMetadata.spaces,
+    tags: liveMetadata.tags,
+    error: liveMetadata.error,
+    onSpaceChange: async (spaceId: string | null) => {
+      if (!spacesClient) return;
+      try { await spacesClient.assign(liveMetadata.itemId, liveMetadata.itemKind, memberId, spaceId); setLoadedDetailMetadata({ ...liveMetadata, selectedSpaceId: spaceId, error: null }); }
+      catch (cause) { setLoadedDetailMetadata({ ...liveMetadata, error: cause instanceof Error ? cause.message : "Unable to update Space" }); }
+    },
+    onTagToggle: async (tagId: string) => {
+      if (!metadataClient) return;
+      const tag = liveMetadata.tags.find((candidate) => candidate.id === tagId);
+      if (!tag) return;
+      try {
+        const links = tag.selected ? await metadataClient.unlinkTag(liveMetadata.itemId, liveMetadata.itemKind, tagId, memberId) : await metadataClient.linkTag(liveMetadata.itemId, liveMetadata.itemKind, tagId, memberId);
+        setLoadedDetailMetadata({ ...liveMetadata, tags: liveMetadata.tags.map((candidate) => ({ ...candidate, selected: links.tags.some((linked) => linked.id === candidate.id) })), error: null });
+      } catch (cause) { setLoadedDetailMetadata({ ...liveMetadata, error: cause instanceof Error ? cause.message : "Unable to update Tags" }); }
+    },
+  } satisfies TaskNoteDetailMetadata : undefined);
+
+  const save = useCallback(async (nextDraft: TaskNoteDetailDraft) => {
     if (state.status !== "ready" || !state.review.outcome || savingInFlight.current) return;
-    if (state.review.outcome.kind === "task" && draft.dueAt !== null && draft.dueAt !== undefined && !isValidIsoDate(draft.dueAt)) {
+    if (state.review.outcome.kind === "task" && nextDraft.dueAt !== null && !isValidIsoDate(nextDraft.dueAt)) {
       setSaveError("Due information must be a valid date and time");
       return;
     }
@@ -82,16 +123,16 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     try {
       if (outcome.kind === "task") {
         const changes: { title?: string; dueAt?: string | null } = {};
-        if (draft.title !== outcome.title && draft.title !== undefined) changes.title = draft.title;
-        if (draft.dueAt !== outcome.dueAt) changes.dueAt = draft.dueAt ?? null;
+        if (nextDraft.text !== outcome.title) changes.title = nextDraft.text;
+        if (nextDraft.dueAt !== (outcome.dueAt ?? null)) changes.dueAt = nextDraft.dueAt;
         if (Object.keys(changes).length > 0) await client.updateTask(outcome.id, memberId, outcome.version, changes);
-      } else if (draft.content !== outcome.content) {
-        await client.updateNote(outcome.id, memberId, outcome.version, draft.content ?? "");
+      } else if (nextDraft.text !== outcome.content) {
+        await client.updateNote(outcome.id, memberId, outcome.version, nextDraft.text);
       }
       onBack();
     } catch (error) {
       const saveMessage = error instanceof Error ? error.message : "Unable to save review";
-      const text = draft.content ?? "";
+      const text = nextDraft.text;
       if (outcome.kind === "note" && text !== outcome.content && offlineDraftStore && shouldPersistOfflineDraft(error)) {
         if (textDraftIdentity.current?.text !== text) {
           textDraftIdentity.current = { draftId: createOfflineDraftId(), capturedAt: new Date().toISOString(), text };
@@ -109,15 +150,13 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
       }
       const refreshed = await refreshReviewVersion();
       if (outcome.kind === "note" && refreshed?.outcome?.kind === "task" && refreshed.outcome.id === outcome.id) {
-        setDraft({ title: refreshed.outcome.title, dueAt: refreshed.outcome.dueAt ?? null });
-        setEditing(null);
         setSaveError("This Note was converted to a Task elsewhere. The review was refreshed.");
       }
     } finally {
       savingInFlight.current = false;
       setSaving(false);
     }
-  }, [client, draft, memberId, offlineDraftStore, onBack, refreshReviewVersion, state]);
+  }, [client, memberId, offlineDraftStore, onBack, refreshReviewVersion, state]);
 
   const complete = useCallback(async () => {
     if (state.status !== "ready" || state.review.outcome?.kind !== "task" || state.review.outcome.status !== "open" || completionInFlight.current) return;
@@ -136,6 +175,31 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
     }
   }, [client, memberId, onBack, refreshReviewVersion, state]);
 
+  const changeStatus = useCallback(async () => {
+    if (state.status !== "ready" || state.review.outcome?.kind !== "task" || completionInFlight.current) return;
+    if (state.review.outcome.status === "completed") {
+      if (!client.reopenTask) {
+        setCompletionError("Reopening is not available until the backend reopening contract is implemented.");
+        return;
+      }
+      completionInFlight.current = true;
+      setCompleting(true);
+      setCompletionError(null);
+      try {
+        const task = await client.reopenTask(state.review.outcome.id, memberId, state.review.outcome.version);
+        setState({ status: "ready", review: { ...state.review, outcome: task } });
+      } catch (error) {
+        setCompletionError(error instanceof Error ? error.message : "Unable to reopen Task");
+        await refreshReviewVersion();
+      } finally {
+        completionInFlight.current = false;
+        setCompleting(false);
+      }
+      return;
+    }
+    await complete();
+  }, [client, complete, memberId, refreshReviewVersion, state]);
+
   const convertNoteToTask = useCallback(async () => {
     if (state.status !== "ready" || state.review.outcome?.kind !== "note" || conversionInFlight.current) return;
     conversionInFlight.current = true;
@@ -147,15 +211,11 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
       const task = await client.convertNoteToTask(note.id, memberId, note.version);
       if (task.id !== note.id) throw new Error("Conversion response did not preserve item identity");
       setState({ status: "ready", review: { ...state.review, state: "completed", outcome: task } });
-      setDraft({ title: task.title, dueAt: task.dueAt ?? null });
-      setEditing(null);
       setConversionNotice("Converted to Task. Identity and provenance were kept.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "conversion failed";
       const refreshed = await refreshReviewVersion();
       if (refreshed?.outcome?.kind === "task" && refreshed.outcome.id === note.id) {
-        setDraft({ title: refreshed.outcome.title, dueAt: refreshed.outcome.dueAt ?? null });
-        setEditing(null);
         setConversionNotice("Conversion confirmed after refreshing.");
       } else {
         setConversionError(`Unable to convert Note: ${message}`);
@@ -168,31 +228,14 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
 
   if (state.status === "loading") return <ReviewShell onBack={onBack}><ActivityIndicator accessibilityLabel="Loading review" /><Text style={styles.stateText}>Loading review…</Text></ReviewShell>;
   if (state.status === "error") return <ReviewShell onBack={onBack}><Text style={styles.title}>Couldn’t load review</Text><Text style={styles.stateText}>{state.message}</Text><Button label="Try again" onPress={() => void load()} /></ReviewShell>;
-  return <ReviewShell onBack={onBack}>
-    <Text style={styles.eyebrow}>DETAILED REVIEW</Text>
+  return <ReviewShell onBack={onBack} showBack={false}>
     <ReviewStateBanner review={state.review} />
     {state.review.state === "failed" ? <Button label="Refresh processing status" onPress={() => void load()} /> : null}
-    <Text style={styles.title}>{state.review.outcome?.kind === "task" ? "Task" : state.review.outcome?.kind === "note" ? "Note" : state.review.state === "failed" ? "Processing failed" : "Processing"}</Text>
-    <Text style={styles.stateText}>Original source and processing history remain separate from editable result fields.</Text>
-    {state.review.outcome ? <ReviewFields outcome={state.review.outcome} draft={draft} editing={editing} onEdit={setEditing} onChange={setDraft} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}
+    {state.review.outcome ? <TaskNoteDetailScreen item={detailItem(state.review, resolvedDetailMetadata)} {...(resolvedDetailMetadata ? { metadata: resolvedDetailMetadata } : {})} onBack={onBack} onSave={(nextDraft) => void save(nextDraft)} onChangeStatus={() => void changeStatus()} onConvert={state.review.outcome.kind === "note" ? () => void convertNoteToTask() : undefined} saving={saving} statusBusy={completing} converting={converting} error={saveError ?? completionError ?? conversionError} notice={conversionNotice} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}
     {state.review.outcome && metadataClient ? <MetadataControls client={metadataClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> : null}
     {state.review.outcome && spacesClient ? <SpaceAssignmentControls client={spacesClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> : null}
     {state.review.outcome && organizationProposalClient ? <OrganizationProposalControls client={organizationProposalClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> : null}
-    <Text style={styles.sectionTitle}>Source and provenance</Text>
-    <Text style={styles.provenance}>Capture {state.review.capture.id} · source {state.review.source.id}</Text>
-    {state.review.transcription ? <><Text style={styles.fieldLabel}>Original transcription{state.review.transcription.language ? ` · ${state.review.transcription.language}` : ""}</Text><Text style={styles.originalText}>{state.review.transcription.text ?? `Status: ${state.review.transcription.status}`}</Text></> : <Text style={styles.provenance}>Original transcription · pending</Text>}
-    {state.review.outcome ? <>
-      {state.review.outcome.kind === "task" && state.review.outcome.status === "open" ? <Button label={completing ? "Completing…" : "Complete task"} onPress={() => void complete()} disabled={completing || saving || converting} /> : null}
-      {state.review.outcome.kind === "note" || state.review.outcome.status === "open" ? <Button label={saving ? "Saving…" : "Save"} onPress={() => void save()} disabled={saving || completing || converting} /> : null}
-      {state.review.outcome.kind === "note" ? <>
-        <Text style={styles.stateText}>Conversion requires a connection. The saved Note becomes a Task while keeping its identity and provenance.</Text>
-        <Button label={converting ? "Converting…" : "Convert saved Note to Task"} onPress={() => void convertNoteToTask()} disabled={saving || completing || converting} />
-      </> : null}
-    </> : null}
-    {saveError ? <Text accessibilityRole="alert" style={styles.error}>{saveError}</Text> : null}
-    {completionError ? <Text accessibilityRole="alert" style={styles.error}>{completionError}</Text> : null}
-    {conversionError ? <Text accessibilityRole="alert" style={styles.error}>{conversionError}</Text> : null}
-    {conversionNotice ? <Text accessibilityRole="alert" style={styles.success}>{conversionNotice}</Text> : null}
+    {!state.review.outcome ? <><Text style={styles.sectionTitle}>Source and provenance</Text><Text style={styles.provenance}>Capture {state.review.capture.id} · source {state.review.source.id}</Text>{state.review.transcription ? <><Text style={styles.fieldLabel}>Original transcription{state.review.transcription.language ? ` · ${state.review.transcription.language}` : ""}</Text><Text style={styles.originalText}>{state.review.transcription.text ?? `Status: ${state.review.transcription.status}`}</Text></> : <Text style={styles.provenance}>Original transcription · pending</Text>}</> : null}
   </ReviewShell>;
 }
 
@@ -260,7 +303,7 @@ function OrganizationProposalControls({ client, memberId, itemId, itemKind }: { 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try { setProposals(await client.list(itemId, itemKind, memberId)); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load organization proposals"); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load AI suggestions"); }
     finally { setLoading(false); }
   }, [client, itemId, itemKind, memberId]);
   useEffect(() => { void load(); }, [load]);
@@ -276,11 +319,11 @@ function OrganizationProposalControls({ client, memberId, itemId, itemKind }: { 
     finally { setInFlight(null); }
   };
 
-  if (loading) return <View style={styles.organization}><Text style={styles.sectionTitle}>Organization suggestions</Text><Text style={styles.stateText}>Loading suggestions…</Text></View>;
+  if (loading) return <View style={styles.organization}><Text style={styles.sectionTitle}>AI suggestions</Text><Text style={styles.stateText}>Loading suggestions…</Text></View>;
   return <View style={styles.organization}>
-    <Text style={styles.sectionTitle}>Organization suggestions</Text>
-    {error ? <><Text accessibilityRole="alert" style={styles.error}>{error}</Text><Button label="Retry organization suggestions" onPress={() => void load()} /></> : null}
-    {!error && proposals.filter((proposal) => proposal.state === "pending" && proposal.candidates.some((candidate) => candidate.state === "pending")).length === 0 ? <Text style={styles.stateText}>No organization suggestions need review.</Text> : null}
+    <Text style={styles.sectionTitle}>AI suggestions</Text>
+    {error ? <><Text accessibilityRole="alert" style={styles.error}>{error}</Text><Button label="Retry AI suggestions" onPress={() => void load()} /></> : null}
+    {!error && proposals.filter((proposal) => proposal.state === "pending" && proposal.candidates.some((candidate) => candidate.state === "pending")).length === 0 ? <Text style={styles.stateText}>No AI suggestions need review.</Text> : null}
     {!error ? proposals.filter((proposal) => proposal.state === "pending" && proposal.candidates.some((candidate) => candidate.state === "pending")).map((proposal) => <View key={proposal.id} style={styles.proposalCard}>
       <Text style={styles.proposalMeta}>Suggested by {proposal.modelVersion} · rules {proposal.rulesVersion}</Text>
       {proposal.candidates.filter((candidate) => candidate.state === "pending").map((candidate) => <ProposalCandidateRow key={candidate.id} candidate={candidate} selected={(selected[proposal.id] ?? proposal.candidates.filter((item) => item.state === "pending" && item.confidenceBand !== "low").map((item) => item.id)).includes(candidate.id)} disabled={inFlight !== null} onToggle={() => setSelected((current) => ({ ...current, [proposal.id]: (current[proposal.id] ?? proposal.candidates.filter((item) => item.state === "pending" && item.confidenceBand !== "low").map((item) => item.id)).includes(candidate.id) ? (current[proposal.id] ?? []).filter((id) => id !== candidate.id) : [...(current[proposal.id] ?? proposal.candidates.filter((item) => item.state === "pending" && item.confidenceBand !== "low").map((item) => item.id)), candidate.id] }))} />)}
@@ -550,91 +593,31 @@ function ReviewStateBanner({ review }: { readonly review: ReviewContract }) {
   return <Text accessibilityRole="alert" style={styles.reviewState}>Processing · No result is available yet.</Text>;
 }
 
-function ReviewFields({ outcome, draft, editing, onEdit, onChange }: { readonly outcome: ReviewOutcome; readonly draft: Draft; readonly editing: "title" | "dueAt" | "content" | null; readonly onEdit: (field: "title" | "dueAt" | "content") => void; readonly onChange: (draft: Draft) => void }) {
-  if (outcome.kind === "note") return <EditableField field="content" label="Note" value={draft.content ?? ""} editing={editing} onEdit={onEdit} onChange={(value) => onChange({ content: value })} multiline />;
-  const editable = outcome.status === "open";
-  return <><EditableField field="title" label="Title" value={draft.title ?? ""} editing={editing} onEdit={onEdit} onChange={(value) => onChange({ ...draft, title: value })} editable={editable} /><DueInformation value={draft.dueAt ?? null} editing={editing === "dueAt"} editable={editable} onEdit={() => onEdit("dueAt")} onChange={(dueAt) => onChange({ ...draft, dueAt })} /></>;
+function detailItem(review: ReviewContract, metadata?: TaskNoteDetailMetadata): TaskNoteDetailItem {
+  const outcome = review.outcome;
+  if (!outcome) throw new Error("Cannot render detail without an outcome");
+  const space = metadata?.selectedSpaceId === null ? "No Space" : metadata?.spaces.find((candidate) => candidate.id === metadata.selectedSpaceId)?.label ?? "No Space";
+  const tags = metadata?.tags.filter((tag) => tag.selected).map((tag) => `#${tag.label}`) ?? [];
+  const interpretation = review.interpretation?.classification?.replaceAll("_", " ") ?? "Saved result";
+  const transcription = review.transcription?.text ? { text: review.transcription.text, ...(review.transcription.language ? { language: review.transcription.language } : {}) } : undefined;
+  if (outcome.kind === "task") return { kind: "task", id: outcome.id, title: outcome.title, status: outcome.status, dueAt: outcome.dueAt ?? null, space, tags, source: `Capture ${review.capture.id} · source ${review.source.id}`, interpretation, ...(transcription ? { transcription } : {}) };
+  return { kind: "note", id: outcome.id, content: outcome.content, reviewState: outcome.reviewState === "needs_review" ? "needs_review" : "saved", space, tags, source: `Capture ${review.capture.id} · source ${review.source.id}`, interpretation, ...(transcription ? { transcription } : {}) };
 }
 
-function DueInformation({ value, editing, editable, onEdit, onChange }: { readonly value: string | null; readonly editing: boolean; readonly editable: boolean; readonly onEdit: () => void; readonly onChange: (value: string | null) => void }) {
-  const initial = parseDue(value) ?? new Date();
-  const [picker, setPicker] = useState<"date" | "time" | null>(null);
-  const [timeError, setTimeError] = useState<string | null>(null);
-  const [hasDue, setHasDue] = useState(() => value !== null);
-  const [draftDate, setDraftDate] = useState(() => initial);
-  const [draftTime, setDraftTime] = useState(() => formatTime(initial));
-  const display = value && isValidIsoDate(value) ? formatDue(value) : value ?? "Not set";
-
-  if (!editing) return editable ? <Pressable style={styles.field} accessibilityRole="button" accessibilityLabel="Edit Due information" onPress={onEdit}><Text style={styles.fieldLabel}>Remind At:</Text><Text style={styles.value}>{display}</Text></Pressable> : <View style={styles.field}><Text style={styles.fieldLabel}>Remind At:</Text><Text style={styles.value}>{display}</Text></View>;
-
-  const commitDate = (date: Date) => {
-    const [hour, minute] = draftTime.split(":").map(Number);
-    const next = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), hour, minute));
-    setDraftDate(next);
-    setHasDue(true);
-    onChange(next.toISOString());
-    setPicker(null);
-  };
-  const commitTime = (time: string) => {
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
-      setTimeError("Enter a valid time between 00:00 and 23:59");
-      return;
-    }
-    setTimeError(null);
-    const [hour, minute] = time.split(":").map(Number);
-    const next = new Date(Date.UTC(draftDate.getUTCFullYear(), draftDate.getUTCMonth(), draftDate.getUTCDate(), hour, minute));
-    setDraftTime(time);
-    setDraftDate(next);
-    setHasDue(true);
-    onChange(next.toISOString());
-    setPicker(null);
-  };
-  return <View style={styles.field}><Text style={styles.fieldLabel}>Remind At:</Text>{hasDue ? <View style={styles.dueBubbles}><Pressable accessibilityRole="button" accessibilityLabel="Choose due date" onPress={() => setPicker("date")} style={styles.dueBubble}><Text style={styles.dueBubbleText}>{formatDateBubble(draftDate)}</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Choose due time" onPress={() => setPicker("time")} style={styles.dueBubble}><Text style={styles.dueBubbleText}>{draftTime}</Text></Pressable></View> : <Text style={styles.value}>Not set</Text>}<Pressable accessibilityRole="button" accessibilityLabel={hasDue ? "Change due information" : "Set due information"} onPress={() => setPicker("date")}><Text style={styles.clearDue}>{hasDue ? "Change due information" : "Set due information"}</Text></Pressable>{hasDue ? <Pressable accessibilityRole="button" accessibilityLabel="Clear due information" onPress={() => { onChange(null); setHasDue(false); setPicker(null); }}><Text style={styles.clearDue}>Clear due information</Text></Pressable> : null}{timeError ? <Text accessibilityRole="alert" style={styles.error}>{timeError}</Text> : null}{picker === "date" ? <DatePicker value={draftDate} onCancel={() => setPicker(null)} onDone={commitDate} /> : null}{picker === "time" ? <TimePicker value={draftTime} onCancel={() => setPicker(null)} onDone={commitTime} /> : null}</View>;
-}
-
-function DatePicker({ value, onCancel, onDone }: { readonly value: Date; readonly onCancel: () => void; readonly onDone: (value: Date) => void }) {
-  const [month, setMonth] = useState(() => new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), 1)));
-  const days = new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() + 1, 0)).getUTCDate();
-  const firstDay = new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth(), 1)).getUTCDay();
-  return <View style={styles.pickerPanel}><View style={styles.pickerHeader}><Pressable accessibilityRole="button" accessibilityLabel="Cancel due date" onPress={onCancel}><Text>Cancel</Text></Pressable><Text style={styles.pickerTitle}>Date</Text><Pressable accessibilityRole="button" accessibilityLabel="Done due date" onPress={() => onDone(value)}><Text>Done</Text></Pressable></View><View style={styles.monthRow}><Pressable accessibilityRole="button" accessibilityLabel="Previous due month" onPress={() => setMonth(new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() - 1, 1)))}><Text>‹</Text></Pressable><Text>{month.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}</Text><Pressable accessibilityRole="button" accessibilityLabel="Next due month" onPress={() => setMonth(new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() + 1, 1)))}><Text>›</Text></Pressable></View><View style={styles.calendarGrid}>{Array.from({ length: firstDay }, (_, index) => <View key={`empty-${index}`} style={styles.calendarDay} />)}{Array.from({ length: days }, (_, index) => { const day = index + 1; const selected = value.getUTCFullYear() === month.getUTCFullYear() && value.getUTCMonth() === month.getUTCMonth() && value.getUTCDate() === day; return <Pressable key={day} accessibilityRole="button" accessibilityLabel={`Due date ${month.getUTCFullYear()}-${pad(month.getUTCMonth() + 1)}-${pad(day)}`} onPress={() => onDone(new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth(), day, value.getUTCHours(), value.getUTCMinutes())))} style={[styles.calendarDay, selected && styles.calendarDaySelected]}><Text>{day}</Text></Pressable>; })}</View></View>;
-}
-
-function TimePicker({ value, onCancel, onDone }: { readonly value: string; readonly onCancel: () => void; readonly onDone: (value: string) => void }) {
-  const [draft, setDraft] = useState(value);
-  return <View style={styles.pickerPanel}><View style={styles.pickerHeader}><Pressable accessibilityRole="button" accessibilityLabel="Cancel due time" onPress={onCancel}><Text>Cancel</Text></Pressable><Text style={styles.pickerTitle}>Time</Text><Pressable accessibilityRole="button" accessibilityLabel="Done due time" onPress={() => onDone(draft)}><Text>Done</Text></Pressable></View><TextInput accessibilityLabel="Due time" value={draft} onChangeText={setDraft} keyboardType="numbers-and-punctuation" style={styles.input} /><Text style={styles.pickerHint}>Use 24-hour time, for example 09:00.</Text></View>;
-}
-
-function EditableField({ field, label, value, editing, onEdit, onChange, multiline = false, editable = true }: { readonly field: "title" | "dueAt" | "content"; readonly label: string; readonly value: string; readonly editing: string | null; readonly onEdit: (field: "title" | "dueAt" | "content") => void; readonly onChange: (value: string) => void; readonly multiline?: boolean; readonly editable?: boolean }) {
-  return <View style={styles.field}><Text style={styles.fieldLabel}>{label}</Text>{editing === field && editable ? <TextInput accessibilityLabel={label} autoFocus value={value} multiline={multiline} onChangeText={onChange} style={styles.input} /> : editable ? <Pressable accessibilityRole="button" accessibilityLabel={`Edit ${label}`} onPress={() => onEdit(field)}><Text style={styles.value}>{value}</Text></Pressable> : <Text style={styles.value}>{value}</Text>}</View>;
-}
-
-function parseDue(value: string | null): Date | null {
-  return value && isValidIsoDate(value) ? new Date(value) : null;
+function spacePath(spaces: readonly Space[], spaceId: string): string {
+  const space = spaces.find((candidate) => candidate.id === spaceId);
+  if (!space) return "No Space";
+  return space.parentId ? `${spacePath(spaces, space.parentId)} > ${space.name}` : space.name;
 }
 
 function isValidIsoDate(value: string): boolean {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?Z$/.exec(value);
   if (!match) return false;
   const date = new Date(value);
-  return !Number.isNaN(date.getTime())
-    && date.getUTCFullYear() === Number(match[1])
-    && date.getUTCMonth() + 1 === Number(match[2])
-    && date.getUTCDate() === Number(match[3])
-    && date.getUTCHours() === Number(match[4])
-    && date.getUTCMinutes() === Number(match[5])
-    && (match[6] === undefined || date.getUTCSeconds() === Number(match[6]));
+  return !Number.isNaN(date.getTime()) && date.getUTCFullYear() === Number(match[1]) && date.getUTCMonth() + 1 === Number(match[2]) && date.getUTCDate() === Number(match[3]) && date.getUTCHours() === Number(match[4]) && date.getUTCMinutes() === Number(match[5]);
 }
 
-function formatDue(value: string): string {
-  const date = new Date(value);
-  return `${formatDateBubble(date)} · ${formatTime(date)}`;
-}
-
-function formatDateBubble(value: Date): string { return `${value.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`; }
-function formatTime(value: Date): string { return `${pad(value.getUTCHours())}:${pad(value.getUTCMinutes())}`; }
-function pad(value: number): string { return String(value).padStart(2, "0"); }
-
-function ReviewShell({ children, onBack }: { readonly children: ReactNode; readonly onBack: () => void }) { return <SafeAreaView style={styles.safeArea}><Pressable accessibilityRole="button" accessibilityLabel="Back to items" onPress={onBack}><Text style={styles.back}>‹ Items</Text></Pressable><ScrollView contentContainerStyle={styles.content}>{children}</ScrollView></SafeAreaView>; }
+function ReviewShell({ children, onBack, showBack = true }: { readonly children: ReactNode; readonly onBack: () => void; readonly showBack?: boolean }) { return <SafeAreaView style={styles.safeArea}>{showBack ? <Pressable accessibilityRole="button" accessibilityLabel="Back to items" onPress={onBack}><Text style={styles.back}>‹ Items</Text></Pressable> : null}<ScrollView contentContainerStyle={styles.content}>{children}</ScrollView></SafeAreaView>; }
 function Button({ label, onPress, disabled = false }: { readonly label: string; readonly onPress: () => void; readonly disabled?: boolean }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress} style={styles.button}><Text style={styles.buttonText}>{label}</Text></Pressable>; }
 
 const styles = StyleSheet.create({ safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, content: { padding: 24 }, back: { color: "#7A5C36", fontSize: 16, paddingHorizontal: 24, paddingTop: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 32, fontWeight: "700", marginTop: 6 }, stateText: { color: "#716B64", fontSize: 15, lineHeight: 22, marginTop: 8 }, reviewState: { color: "#8C3D25", fontSize: 15, fontWeight: "600", lineHeight: 22, marginTop: 18 }, field: { marginTop: 24 }, fieldLabel: { color: "#8B7355", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, value: { color: "#24221F", fontSize: 19, lineHeight: 27, marginTop: 5 }, originalText: { color: "#716B64", fontSize: 16, lineHeight: 24, marginTop: 5 }, input: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", fontSize: 19, lineHeight: 27, paddingVertical: 5 }, editInput: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", flex: 1, fontSize: 16, paddingVertical: 5 }, sectionTitle: { color: "#24221F", fontSize: 17, fontWeight: "700", marginTop: 32 }, provenance: { color: "#716B64", fontSize: 14, lineHeight: 21, marginTop: 6 }, metadata: { borderTopColor: "#D8CFC2", borderTopWidth: 1, marginTop: 30, paddingTop: 4 }, organization: { borderTopColor: "#D8CFC2", borderTopWidth: 1, marginTop: 30, paddingTop: 4 }, proposalCard: { backgroundColor: "#FFF8E8", borderColor: "#D5B98D", borderRadius: 14, borderWidth: 1, marginTop: 14, padding: 14 }, proposalCandidate: { borderBottomColor: "#E5D8C3", borderBottomWidth: 1, paddingBottom: 10, paddingTop: 8 }, proposalMeta: { color: "#716B64", fontSize: 13 }, proposalConfidence: { color: "#7A5C36", fontSize: 13, marginTop: 4 }, proposalActions: { flexDirection: "row", flexWrap: "wrap", gap: 10 }, metadataRow: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" }, metadataValue: { color: "#24221F", flex: 1, fontSize: 16, marginTop: 18 }, typeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 }, typeOption: { borderColor: "#B9A895", borderRadius: 10, borderWidth: 1, padding: 8 }, typeSelected: { backgroundColor: "#D5B98D", borderColor: "#8B7355", borderRadius: 10, borderWidth: 1, padding: 8 }, button: { alignSelf: "flex-start", backgroundColor: "#24221F", borderRadius: 12, marginTop: 24, paddingHorizontal: 20, paddingVertical: 12 }, buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, error: { color: "#A33B31", fontSize: 14, marginTop: 12 }, success: { color: "#356445", fontSize: 14, marginTop: 12 }, dueBubbles: { flexDirection: "row", gap: 8, marginTop: 10 }, dueBubble: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 }, dueBubbleText: { color: "#24221F", fontSize: 16 }, clearDue: { color: "#8C3D25", fontSize: 14, marginTop: 12 }, pickerPanel: { backgroundColor: "#EFEAE2", borderRadius: 16, marginTop: 14, padding: 16 }, pickerHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" }, pickerTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, pickerHint: { color: "#716B64", fontSize: 13, marginTop: 8 }, monthRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginVertical: 18 }, calendarGrid: { flexDirection: "row", flexWrap: "wrap" }, calendarDay: { alignItems: "center", justifyContent: "center", minHeight: 38, width: "14.285%" }, calendarDaySelected: { backgroundColor: "#D5B98D", borderRadius: 19 } });

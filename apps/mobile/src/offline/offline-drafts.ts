@@ -17,6 +17,16 @@ export interface OfflineDraftStore {
   remove(memberId: string, draftId: string): Promise<void>;
 }
 
+/** In-memory adapter for the same UI when the app is started with fixture data. */
+export function createMemoryOfflineDraftStore(): OfflineDraftStore {
+  let drafts: OfflineDraft[] = [];
+  return {
+    async list(memberId) { return drafts.filter((draft) => draft.memberId === memberId); },
+    async save(draft) { drafts = [...drafts.filter((current) => current.draftId !== draft.draftId), draft]; return draft; },
+    async remove(memberId, draftId) { drafts = drafts.filter((draft) => draft.memberId !== memberId || draft.draftId !== draftId); },
+  };
+}
+
 export interface OfflineDraftPersistence {
   readManifest(): Promise<string | null>;
   writeManifest(contents: string): Promise<void>;
