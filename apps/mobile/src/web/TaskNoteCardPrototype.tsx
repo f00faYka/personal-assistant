@@ -3,16 +3,16 @@ import { useRef, useState } from "react";
 import { Dimensions, Modal, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 import type { ReactNode } from "react";
 import { tokens } from "../design-system";
-import type { BrowserFixtureData, BrowserFixtureNote, BrowserFixtureTask } from "./fixture-data";
 
 interface SharedProps {
-  readonly fixture: BrowserFixtureData;
   readonly onPress: () => void;
 }
 export type CardSaveState = "saved" | "pending" | "error";
+export type TaskCardData = { readonly id: string; readonly title: string; readonly dueAt?: string; readonly status: "open" | "completed"; readonly space?: string; readonly tags?: readonly string[] };
+export type NoteCardData = { readonly id: string; readonly content: string; readonly reviewState: "none" | "needs_review"; readonly space?: string; readonly tags?: readonly string[] };
 
-export function TaskCard({ task, fixture, onPress, onSetCompleted, saveState = "saved", onRetry, timeZone, today }: SharedProps & {
-  readonly task: BrowserFixtureTask;
+export function TaskCard({ task, onPress, onSetCompleted, saveState = "saved", onRetry, timeZone, today }: SharedProps & {
+  readonly task: TaskCardData;
   readonly onSetCompleted?: (completed: boolean) => void;
   readonly saveState?: CardSaveState;
   readonly onRetry?: () => void;
@@ -25,14 +25,14 @@ export function TaskCard({ task, fixture, onPress, onSetCompleted, saveState = "
     completed={completed} onPress={onPress}
     onComplete={canComplete ? () => onSetCompleted?.(true) : undefined}
     onSetCompleted={completed && saveState === "saved" ? onSetCompleted : undefined}
-    metadata={<Metadata fixture={fixture} spaceId={task.spaceId} tagIds={task.tagIds} />}
+    metadata={<Metadata space={task.space} tags={task.tags ?? []} />}
     status={saveState === "pending" ? <Text style={styles.pending} accessibilityLiveRegion="polite">Saving… · completion unavailable</Text> : saveState === "error" ? <View style={styles.errorRow}><Text style={styles.error} accessibilityRole="alert">Not saved · task still open</Text>{onRetry ? <Pressable accessibilityRole="button" accessibilityLabel={`Retry saving ${task.title}`} onPress={onRetry} style={styles.retry}><Text style={styles.error}>Retry</Text></Pressable> : null}</View> : completed ? <Text style={styles.completedLabel}>✓ Completed</Text> : null} />;
 }
 
-export function NoteCard({ note, fixture, onPress }: SharedProps & { readonly note: BrowserFixtureNote }) {
+export function NoteCard({ note, onPress }: SharedProps & { readonly note: NoteCardData }) {
   return <CardFrame kind="Note" title={note.content} badge={note.reviewState === "needs_review" ? "Needs review" : undefined}
     onPress={onPress}
-    metadata={<Metadata fixture={fixture} spaceId={note.spaceId} tagIds={note.tagIds} />} />;
+    metadata={<Metadata space={note.space} tags={note.tags ?? []} />} />;
 }
 
 function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, onPress, onComplete, onSetCompleted, metadata, status }: {
@@ -107,29 +107,21 @@ function ItemIcon({ note }: { readonly note: boolean }) {
   return <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.icon, note && styles.noteIcon]}>{note ? <View style={styles.fold} /> : <View style={styles.clipboardTop} />}<View style={styles.iconLine} /><View style={styles.iconLine} /><View style={[styles.iconLine, styles.shortLine]} /></View>;
 }
 
-function Metadata({ fixture, spaceId, tagIds }: { readonly fixture: BrowserFixtureData; readonly spaceId: string | undefined; readonly tagIds: readonly string[] }) {
+function Metadata({ space, tags }: { readonly space: string | undefined; readonly tags: readonly string[] }) {
   const [width, setWidth] = useState(0);
-  const space = spacePath(fixture, spaceId);
   // Tags have their own bounded row, independent of the Space path length.
-  const first = fixture.tags.find((tag) => tag.id === tagIds[0]);
-  const showTag = !!first && width >= Math.min(first.name.length * 7 + 24, 106) + (tagIds.length > 1 ? 42 : 0);
-  const remaining = tagIds.length - (showTag && first ? 1 : 0);
+  const first = tags[0];
+  const showTag = !!first && width >= Math.min(first.length * 7 + 24, 106) + (tags.length > 1 ? 42 : 0);
+  const remaining = tags.length - (showTag && first ? 1 : 0);
   return <View onLayout={(event) => setWidth(event.nativeEvent.layout.width)} style={styles.metadata}>
-    <Text numberOfLines={1} style={styles.space}>{space}</Text>
-    {tagIds.length > 0 ? <View style={styles.tagRow}>
-      {showTag && first ? <Text numberOfLines={1} style={styles.tag}>#{first.name}</Text> : null}
+    <Text numberOfLines={1} style={styles.space}>{space ?? "No Space"}</Text>
+    {tags.length > 0 ? <View style={styles.tagRow}>
+      {showTag && first ? <Text numberOfLines={1} style={styles.tag}>{first}</Text> : null}
       {remaining > 0 ? <Text style={styles.tag} accessibilityLabel={`${remaining} more tags`}>+{remaining}</Text> : null}
     </View> : null}
   </View>;
 }
 
-function spacePath(fixture: BrowserFixtureData, id?: string): string {
-  const names: string[] = [];
-  const visited = new Set<string>();
-  let current = fixture.spaces.find((space) => space.id === id);
-  while (current && !visited.has(current.id)) { visited.add(current.id); names.unshift(current.name); current = fixture.spaces.find((space) => space.id === current?.parentId); }
-  return names.join(" › ") || "No Space";
-}
 function formatDue(value: string | undefined, timeZone: string, today: string): string {
   if (!value) return "No due date";
   const date = new Date(value);

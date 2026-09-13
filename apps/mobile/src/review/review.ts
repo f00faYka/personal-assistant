@@ -28,6 +28,8 @@ export interface ReviewClient {
   get(detailUrl: string): Promise<ReviewContract>;
   updateTask(taskId: string, memberId: string, expectedVersion: number, changes: { readonly title?: string; readonly dueAt?: string | null }): Promise<ReviewOutcome>;
   completeTask(taskId: string, memberId: string, expectedVersion: number): Promise<ReviewOutcome>;
+  /** Optional until the backend reopening contract is available. */
+  reopenTask?: (taskId: string, memberId: string, expectedVersion: number) => Promise<Extract<ReviewOutcome, { readonly kind: "task" }>>;
   updateNote(noteId: string, memberId: string, expectedVersion: number, content: string): Promise<ReviewOutcome>;
   convertNoteToTask(noteId: string, memberId: string, expectedVersion: number): Promise<Extract<ReviewOutcome, { readonly kind: "task" }>>;
 }
@@ -67,12 +69,23 @@ export function createReviewFixtureClient(kind: "task" | "note", initialOutcome?
     },
     async updateTask(_taskId, _memberId, _expectedVersion, changes) {
       if (outcome.kind !== "task") throw new Error("Demo fixture is a Note");
-      outcome = { ...outcome, ...(changes.title === undefined ? {} : { title: changes.title }), ...(changes.dueAt === undefined || changes.dueAt === null ? {} : { dueAt: changes.dueAt }), version: outcome.version + 1 };
+      const next = { ...outcome, ...(changes.title === undefined ? {} : { title: changes.title }) };
+      if (changes.dueAt === null) {
+        const { dueAt: _dueAt, ...withoutDueAt } = next;
+        outcome = { ...withoutDueAt, version: outcome.version + 1 };
+      } else {
+        outcome = { ...next, ...(changes.dueAt === undefined ? {} : { dueAt: changes.dueAt }), version: outcome.version + 1 };
+      }
       return outcome;
     },
     async completeTask() {
       if (outcome.kind !== "task") throw new Error("Demo fixture is a Note");
       outcome = { ...outcome, status: "completed", version: outcome.version + 1 };
+      return outcome;
+    },
+    async reopenTask() {
+      if (outcome.kind !== "task") throw new Error("Demo fixture is a Note");
+      outcome = { ...outcome, status: "open", version: outcome.version + 1 };
       return outcome;
     },
     async updateNote(_noteId, _memberId, _expectedVersion, content) {

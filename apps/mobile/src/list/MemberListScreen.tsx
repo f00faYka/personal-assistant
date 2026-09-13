@@ -426,7 +426,7 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
           contentContainerStyle={styles.list}
           renderItem={({ item: entry }) => entry.kind === "offline_draft"
             ? <OfflineDraftCard draft={entry.draft} sync={offlineDraftSync[entry.draft.draftId]} deleting={deletingDraftId === entry.draft.draftId} onDelete={() => void deleteOfflineDraft(entry.draft.draftId)} onSync={() => retryOfflineDraft(entry.draft.draftId)} />
-            : home && entry.item.kind === "task" ? <TaskCard task={toCardTask(entry.item)} fixture={cardFixture} timeZone="Europe/Warsaw" today={homeDate} onPress={() => onOpenDetail?.(entry.item.detailUrl)} onSetCompleted={(completed) => setTaskCompleted(entry.item.id, completed)} />
+            : home && entry.item.kind === "task" ? <TaskCard task={toCardTask(entry.item)} timeZone="Europe/Warsaw" today={homeDate} onPress={() => onOpenDetail?.(entry.item.detailUrl)} onSetCompleted={(completed) => setTaskCompleted(entry.item.id, completed)} />
             : <ListCard item={entry.item} spaces={spaces} assigning={assigningItemId === entry.item.id} onAssign={(item, spaceId) => void assignItem(item, spaceId)} onPress={onOpenDetail} />}
         />
       ) : null}
@@ -434,9 +434,8 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
   );
 }
 
-const cardFixture = { memberId: "member", spaces: [], entities: [], tags: [], tasks: [], notes: [] } as const;
 function toCardTask(item: Extract<MemberListItem, { kind: "task" }>): BrowserFixtureTask {
-  return { id: item.id, title: item.title, ...(item.dueAt ? { dueAt: item.dueAt } : {}), status: item.state, ...(item.spaceId ? { spaceId: item.spaceId } : {}), tagIds: [], entityIds: [] };
+  return { id: item.id, title: item.title, ...(item.dueAt ? { dueAt: item.dueAt } : {}), status: item.state, tagIds: [], entityIds: [] };
 }
 
 function HomeHeader({ taskCount, loading }: { readonly taskCount: number; readonly loading: boolean }) {
