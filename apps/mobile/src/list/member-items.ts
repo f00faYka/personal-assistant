@@ -42,6 +42,14 @@ export interface MemberItemsClient {
   search(memberId: string, filters: SearchFilters, cursor?: string): Promise<MemberItemsPage>;
 }
 
+/** In-memory API adapter used by the explicit UI fixture mode. */
+export function createStaticMemberItemsClient(items: readonly MemberListItem[]): MemberItemsClient {
+  return {
+    async list() { return { items, nextCursor: null }; },
+    async search() { return { items, nextCursor: null }; },
+  };
+}
+
 export interface SearchFilters {
   readonly text?: string;
   readonly spaceId?: string;

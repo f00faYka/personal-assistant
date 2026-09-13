@@ -7,7 +7,7 @@ import { createWaveformBars } from "../capture/audio-waveform";
 import { shouldPersistOfflineDraft } from "../http/request-error";
 import type { OfflineDraft, OfflineDraftStore } from "../offline/offline-drafts";
 import type { OfflineDraftSynchronizationResult, OfflineDraftSyncClient } from "../offline/synchronize-offline-drafts";
-import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, paginationStateFromError, type ListState, type MemberListItem, type SearchFilters } from "./member-items";
+import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, paginationStateFromError, type ListState, type MemberItemsClient, type MemberListItem, type SearchFilters } from "./member-items";
 import { beginPreview, expirePreview, resolvePreview, savePreview, timeOutPreview, type PreviewItem, type PreviewState } from "../preview/result-preview";
 import { SpacePanel } from "../spaces/SpacePanel";
 import { createSpacesClient, type Space } from "../spaces/spaces";
@@ -17,6 +17,7 @@ import { TaskRow } from "../design-system";
 
 interface MemberListScreenProps {
   readonly apiBaseUrl: string;
+  readonly client?: MemberItemsClient;
   readonly memberId: string;
   readonly onOpenDetail?: (detailUrl: string) => void;
   readonly voiceRecorder?: VoiceRecorder;
@@ -41,8 +42,8 @@ type TimelineItem =
   | { readonly kind: "server_item"; readonly item: MemberListItem };
 type AssignableItem = Extract<MemberListItem, { kind: "task" | "note" }>;
 
-export function MemberListScreen({ apiBaseUrl, memberId, onOpenDetail, voiceRecorder, recordingMetering, recordingInterrupted = false, captureSubmitter, offlineDraftStore, offlineDraftSyncClient, captureRequest = 0, home = false, onOpenToday }: MemberListScreenProps) {
-  const client = useMemo(() => createMemberItemsClient(apiBaseUrl), [apiBaseUrl]);
+export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId, onOpenDetail, voiceRecorder, recordingMetering, recordingInterrupted = false, captureSubmitter, offlineDraftStore, offlineDraftSyncClient, captureRequest = 0, home = false, onOpenToday }: MemberListScreenProps) {
+  const client = useMemo(() => providedClient ?? createMemberItemsClient(apiBaseUrl), [apiBaseUrl, providedClient]);
   const spacesClient = useMemo(() => createSpacesClient(apiBaseUrl), [apiBaseUrl]);
   const [state, setState] = useState<ListState>(initialListState);
   const [completeHomeItems, setCompleteHomeItems] = useState<readonly MemberListItem[]>([]);
