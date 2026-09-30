@@ -33,6 +33,19 @@ describe("TaskNoteDetailScreen", () => {
     expect(onStatus).toHaveBeenCalledOnce();
   });
 
+  test("cancels Note edits without saving the draft", () => {
+    const onSave = vi.fn();
+    let renderer!: ReturnType<typeof create>;
+    act(() => { renderer = create(<TaskNoteDetailScreen item={note} onBack={vi.fn()} onSave={onSave} onConvert={vi.fn()} />); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Note" }).props.onPress(); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Note" }).props.onChangeText("Changed Note"); });
+    expect(JSON.stringify(renderer.toJSON())).toContain("Changed Note");
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Cancel Note editing" }).props.onPress(); });
+    expect(onSave).not.toHaveBeenCalled();
+    expect(JSON.stringify(renderer.toJSON())).toContain("Call the dentist");
+    expect(JSON.stringify(renderer.toJSON())).not.toContain("Changed Note");
+  });
+
   test("edits date and time through the shared due editor", () => {
     const onSave = vi.fn();
     let renderer!: ReturnType<typeof create>;
