@@ -125,6 +125,42 @@ describe("production interpretation runtime", () => {
     });
   });
 
+  test.each([
+    {
+      transcriptionText: "Remind me today at 5 o'clock to call the office.",
+      rawOutput: { action: "create_task", title: "Call the office", schedule: { date: "today", hour: 5 } },
+      dueAt: "2026-08-23T03:00:00.000Z",
+    },
+    {
+      transcriptionText: "Remind me today to call those at 11.",
+      rawOutput: { action: "create_task", title: "Call those", schedule: { date: "today", hour: 11 } },
+      dueAt: "2026-08-23T09:00:00.000Z",
+    },
+    {
+      transcriptionText: "напомни сегодня в 12 позвонить на тариус",
+      rawOutput: { action: "create_task", title: "Позвонить на тариус", schedule: { date: "сегодня", hour: 12 } },
+      dueAt: "2026-08-23T10:00:00.000Z",
+    },
+  ])("materializes the spoken schedule as one Task: $transcriptionText", async ({ transcriptionText, rawOutput, dueAt }) => {
+    const directory = await mkdtemp(join(tmpdir(), "personal-assistant-interpretation-spoken-schedule-"));
+    directories.push(directory);
+    const harness = await createHarness(directory, new DeterministicInterpretationProvider(rawOutput), 3, transcriptionText, "Europe/Warsaw");
+    harnesses.push(harness);
+
+    const response = await harness.application.inject({
+      method: "POST",
+      url: "/captures",
+      payload: { ...submission(), capturedAt: "2026-08-23T12:00:00.000Z" },
+    });
+    const captureId = response.json<{ capture: { id: string } }>().capture.id;
+    const item = await waitForItem(harness, captureId);
+
+    expect(item).toMatchObject({ kind: "task", captureId, dueAt });
+    expect((await waitForReviewState(harness, captureId, "completed")).interpretation).toMatchObject({
+      classification: "clear_supported",
+    });
+  });
+
   test("incomplete Task output remains a Needs review Note without materializing a Task", async () => {
     const directory = await mkdtemp(join(tmpdir(), "personal-assistant-interpretation-malformed-"));
     directories.push(directory);
@@ -340,6 +376,7 @@ async function createHarness(
   interpretationProvider: InterpretationProvider,
   interpretationMaxAttempts = 3,
   transcriptionText = "add task buy milk",
+  timeZone = "UTC",
 ): Promise<RuntimeHarness> {
   const databasePath = join(directory, "api.sqlite");
   const blobRoot = join(directory, "blobs");
@@ -353,7 +390,7 @@ async function createHarness(
   const memberItemsRepository = new SqliteMemberItemsRepository(databasePath);
   const captureService = new CaptureService(captureRepository, new FileSystemBlobStorage(blobRoot));
   const interpretationWorker = new InterpretationWorker({
-    service: new InterpretationService(interpretationRepository),
+    service: new InterpretationService(interpretationRepository, { timeZone }),
     outcomeService: new OutcomeService(outcomeRepository),
     provider: interpretationProvider,
     repository: interpretationJobRepository,

@@ -135,7 +135,6 @@ export class InterpretationWorker implements TranscriptionSucceededHandler {
         const providerResult = await this.options.provider.interpret({
           transcriptionText: transcription.text,
           catalogVersion: SUPPORTED_INTERPRETATION_CATALOG_VERSION,
-          capturedAt: this.options.captureReader.get(transcription.captureId).capturedAt,
         });
         interpretation = this.options.service.evaluate({
           captureId: transcription.captureId,

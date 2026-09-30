@@ -22,7 +22,6 @@ describe("InterpretationService", () => {
       rawOutput: {
         action: "create_task",
         title: "Buy milk",
-        dueAt: "2026-08-15T09:00:00.000Z",
       },
     });
 
@@ -36,7 +35,6 @@ describe("InterpretationService", () => {
       action: {
         kind: "create_task",
         title: "Buy milk",
-        dueAt: "2026-08-15T09:00:00.000Z",
       },
     });
   });
@@ -55,7 +53,7 @@ describe("InterpretationService", () => {
 
   test("rejects an explicit date when the model supplies a contradictory date", () => {
     expect(new InterpretationService(new MemoryRepository()).evaluate({
-      ...input({ action: "create_task", title: "Cancel subscription", dueAt: "2026-09-02T00:00:00.000Z" }),
+      ...input({ action: "create_task", title: "Cancel subscription", schedule: { date: "2026-09-02" } }),
       transcriptionText: "Task, cancel subscription on the 1st of September",
       capturedAt: "2026-08-23T12:00:00.000Z",
     })).toMatchObject({ classification: "unsupported", rejectionReason: "malformed_model_output" });
@@ -92,21 +90,75 @@ describe("InterpretationService", () => {
     })).toMatchObject({ action: { dueAt: "2026-08-24T17:00:00.000Z" } });
   });
 
+  test.each([
+    {
+      transcriptionText: "Remind me today at 5 o'clock to call the office.",
+      rawOutput: { action: "create_task", title: "Call the office", schedule: { date: "today", hour: 5 } },
+      expectedDueAt: "2026-08-23T03:00:00.000Z",
+    },
+    {
+      transcriptionText: "напомни сегодня в 12 позвонить на тариус",
+      rawOutput: { action: "create_task", title: "Позвонить на тариус", schedule: { date: "сегодня", hour: 12 } },
+      expectedDueAt: "2026-08-23T10:00:00.000Z",
+    },
+  ])("resolves explicit spoken schedules in the supplied IANA timezone: $transcriptionText", ({ transcriptionText, rawOutput, expectedDueAt }) => {
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input(rawOutput, undefined, transcriptionText),
+      transcriptionText,
+      capturedAt: "2026-08-23T12:00:00.000Z",
+      timeZone: "Europe/Warsaw",
+    });
+
+    expect(interpretation).toMatchObject({
+      classification: "clear_supported",
+      action: { kind: "create_task", dueAt: expectedDueAt },
+    });
+  });
+
+  test("does not invent an exact time for a day part without an explicit hour", () => {
+    expect(new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Call the office", schedule: { date: "today", dayPart: "morning" } }, undefined, "morning-only"),
+      transcriptionText: "Remind me today morning to call the office.",
+      timeZone: "Europe/Warsaw",
+    })).toMatchObject({ classification: "unsupported", rejectionReason: "malformed_model_output" });
+  });
+
+  test.each([
+    ["Remind me today at 11 to call the office.", { date: "today", hour: 11 }, "2026-08-23T09:00:00.000Z"],
+    ["Remind me today at 5 PM to call the office.", { date: "today", hour: 5, period: "pm" }, "2026-08-23T15:00:00.000Z"],
+    ["Remind me today at 5 in the evening to call the office.", { date: "today", hour: 5, dayPart: "evening" }, "2026-08-23T15:00:00.000Z"],
+    ["Remind me today at noon to call the office.", { date: "today", special: "noon" }, "2026-08-23T10:00:00.000Z"],
+    ["Remind me today at midnight to call the office.", { date: "today", special: "midnight" }, "2026-08-22T22:00:00.000Z"],
+    ["напомни сегодня в 7 утра позвонить в офис", { date: "сегодня", hour: 7, dayPart: "morning" }, "2026-08-23T05:00:00.000Z"],
+    ["напомни сегодня в 8 вечера позвонить в офис", { date: "сегодня", hour: 8, dayPart: "evening" }, "2026-08-23T18:00:00.000Z"],
+  ] as const)("resolves supported clock and day-part form: $0", (transcriptionText, schedule, expectedDueAt) => {
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Call the office", schedule }, undefined, transcriptionText),
+      transcriptionText,
+      timeZone: "Europe/Warsaw",
+    });
+
+    expect(interpretation).toMatchObject({
+      classification: "clear_supported",
+      action: { kind: "create_task", dueAt: expectedDueAt },
+    });
+  });
+
   test("rejects an explicit but ambiguous spoken time and a contradictory model time", () => {
     const service = new InterpretationService(new MemoryRepository());
 
     expect(service.evaluate({
-      ...input({ action: "create_task", title: "Go running", dueAt: "2026-08-24T09:00:00.000Z" }, undefined, "transcription-ambiguous-time"),
+      ...input({ action: "create_task", title: "Go running", schedule: { date: "tomorrow", dayPart: "morning" } }, undefined, "transcription-ambiguous-time"),
       transcriptionText: "add task go running tomorrow morning",
     })).toMatchObject({ classification: "unsupported", rejectionReason: "malformed_model_output" });
 
     expect(service.evaluate({
-      ...input({ action: "create_task", title: "Call Anna", dueAt: "2026-08-24T16:00:00.000Z" }, undefined, "transcription-wrong-time"),
+      ...input({ action: "create_task", title: "Call Anna", schedule: { date: "tomorrow", hour: 4, period: "pm" } }, undefined, "transcription-wrong-time"),
       transcriptionText: "remind me to call Anna tomorrow at 5 PM",
     })).toMatchObject({ classification: "unsupported", rejectionReason: "malformed_model_output" });
 
     expect(service.evaluate({
-      ...input({ action: "create_task", title: "Buy milk" }, undefined, "transcription-invalid-time"),
+      ...input({ action: "create_task", title: "Buy milk", schedule: { date: "tomorrow", dayPart: "morning" } }, undefined, "transcription-invalid-time"),
       transcriptionText: "add task buy milk tomorrow morning",
     })).toMatchObject({ classification: "unsupported", rejectionReason: "malformed_model_output" });
   });
@@ -161,6 +213,31 @@ describe("InterpretationService", () => {
     expect(service.evaluate(input({ action: "create_task", title: "Buy milk" }, "direct-instructions.v0", "transcription-version"))).toMatchObject({
       classification: "unsupported",
       rejectionReason: "catalog_version_mismatch",
+    });
+  });
+
+  test("rejects absolute UTC and timezone fields from model output", () => {
+    const service = new InterpretationService(new MemoryRepository());
+
+    expect(service.evaluate(input({
+      action: "create_task",
+      title: "Call the office",
+      dueAt: "2026-08-23T03:00:00.000Z",
+    }, undefined, "absolute-due-at"))).toMatchObject({
+      classification: "unsupported",
+      rejectionReason: "malformed_model_output",
+    });
+
+    expect(service.evaluate({
+      ...input({
+        action: "create_task",
+        title: "Call the office",
+        schedule: { date: "today", hour: 5, timezone: "Europe/Warsaw" },
+      }, undefined, "timezone-field"),
+      transcriptionText: "Remind me today at 5 to call the office.",
+    })).toMatchObject({
+      classification: "unsupported",
+      rejectionReason: "malformed_model_output",
     });
   });
 

@@ -14,7 +14,26 @@ export interface LocalOllamaInterpretationProviderOptions {
 const interpretationSchema = {
   type: "object",
   oneOf: [
-    { properties: { action: { const: "create_task" }, title: { type: "string", minLength: 1 }, dueAt: { type: "string" } }, required: ["action", "title"], additionalProperties: false },
+    {
+      properties: {
+        action: { const: "create_task" },
+        title: { type: "string", minLength: 1 },
+        schedule: {
+          type: "object",
+          properties: {
+            date: { type: "string", minLength: 1 },
+            hour: { type: "integer", minimum: 0, maximum: 23 },
+            minute: { oneOf: [{ type: "integer", minimum: 0, maximum: 59 }, { type: "null" }] },
+            period: { type: "string", enum: ["am", "pm"] },
+            dayPart: { type: "string", enum: ["morning", "afternoon", "evening", "night"] },
+            special: { type: "string", enum: ["noon", "midnight"] },
+          },
+          additionalProperties: false,
+        },
+      },
+      required: ["action", "title"],
+      additionalProperties: false,
+    },
     { properties: { action: { const: "complete_task" }, title: { type: "string", minLength: 1 } }, required: ["action", "title"], additionalProperties: false },
     { properties: { action: { const: "none" }, reason: { type: "string", enum: ["ordinary", "ambiguous"] } }, required: ["action", "reason"], additionalProperties: false },
     { properties: { action: { const: "unsupported" }, reason: { type: "string", enum: ["unsupported"] } }, required: ["action", "reason"], additionalProperties: false },
@@ -42,7 +61,7 @@ export class LocalOllamaInterpretationProvider implements InterpretationProvider
           messages: [
             {
               role: "system",
-              content: systemPrompt(input.catalogVersion, input.capturedAt),
+              content: systemPrompt(input.catalogVersion),
             },
             { role: "user", content: input.transcriptionText },
           ],
@@ -82,8 +101,8 @@ export class LocalOllamaInterpretationProviderError extends Error {
   }
 }
 
-function systemPrompt(catalogVersion: string, capturedAt?: string): string {
-  return `Classify this transcription using ${catalogVersion}. Return only JSON matching the schema. For create_task, title must be only the concise requested work, without command words or scheduling phrases. If a clear date or time is spoken, dueAt may contain an ISO UTC value, using Capture timestamp ${capturedAt ?? "provided by the application"} as the year policy and UTC as the capture timezone; date-only requests use midnight UTC. Never invent or guess a date, time, timezone, or title; omit dueAt when the spoken schedule is unclear. Use create_task only for a clear explicit request, complete_task only for a clear request to complete a named Task, none/ordinary for ordinary content, none/ambiguous for unclear instructions, and unsupported for any other action.`;
+function systemPrompt(catalogVersion: string): string {
+  return `Classify this transcription using ${catalogVersion}. Return only JSON matching the schema. For create_task, title must be only the concise requested work, without command words or scheduling phrases. Extract only explicitly spoken schedule components into schedule: date is the spoken relative or calendar date phrase, hour is the spoken clock hour, minute is the spoken minute or null when no minute was spoken, period is am/pm only when spoken or normalized from an explicit day part, and dayPart may be morning, afternoon, evening, or night. Use special noon or midnight only when spoken. Never invent or guess a date, hour, minute, AM/PM, day part, timezone, or absolute UTC timestamp; omit schedule when no schedule is spoken. The application resolves local schedule components with its supplied IANA timezone. Use create_task only for a clear explicit request, complete_task only for a clear request to complete a named Task, none/ordinary for ordinary content, none/ambiguous for unclear instructions, and unsupported for any other action.`;
 }
 
 function isOllamaResponse(value: unknown): value is { readonly message: { readonly content: string } } {
