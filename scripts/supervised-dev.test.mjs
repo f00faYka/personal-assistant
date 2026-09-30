@@ -20,8 +20,8 @@ const validEnvironment = {
   WHISPER_ENDPOINT: "http://127.0.0.1:8080/inference",
   WHISPER_HEALTH_ENDPOINT: "http://127.0.0.1:8080/health",
   WHISPER_BINARY_PATH: "/tools/whisper-server",
-  WHISPER_MODEL_PATH: "/models/reviewed.bin",
-  WHISPER_MODEL: "reviewed-whisper-model",
+  WHISPER_MODEL_PATH: "/models/ggml-small.bin",
+  WHISPER_MODEL: "ggml-small",
   EXPO_PUBLIC_API_BASE_URL: "http://127.0.0.1:3000",
   SUPERVISOR_READINESS_TIMEOUT_MS: "100",
   SUPERVISOR_POLL_INTERVAL_MS: "1",
@@ -38,7 +38,7 @@ describe("supervised development configuration", () => {
     expect(loadSupervisedConfiguration(validEnvironment)).toMatchObject({
       ollamaModel: "reviewed-model",
       whisperBinaryPath: "/tools/whisper-server",
-      whisperModelPath: "/models/reviewed.bin",
+      whisperModelPath: "/models/ggml-small.bin",
     });
 
     expect(() => loadSupervisedConfiguration({})).toThrow(ConfigurationError);
@@ -202,7 +202,14 @@ describe("SupervisedDevelopment", () => {
     expect(spawn).toHaveBeenCalledTimes(4);
     expect(spawn.mock.calls[0][0]).toBe("/tools/ollama");
     expect(spawn.mock.calls[1][0]).toBe("/tools/whisper-server");
-    expect(spawn.mock.calls[1][1]).toContain("/models/reviewed.bin");
+    expect(spawn.mock.calls[1][1]).toEqual([
+      "-m", "/models/ggml-small.bin",
+      "--language", "auto",
+      "--host", "127.0.0.1",
+      "--port", "8080",
+      "--convert",
+    ]);
+    expect(spawn.mock.calls[1][1]).not.toContain("--translate");
     expect(calls).toEqual([
       "http://127.0.0.1:11434/api/tags",
       "http://127.0.0.1:11434/api/tags",
