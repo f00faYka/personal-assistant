@@ -13,7 +13,7 @@ const configurationSchema = z.object({
     (value) => value.startsWith("http://") || value.startsWith("https://"),
     "WHISPER_ENDPOINT must use HTTP or HTTPS",
   ).default("http://127.0.0.1:8080/inference"),
-  WHISPER_MODEL: z.string().min(1).default("ggml-base.en"),
+  WHISPER_MODEL: z.string().min(1).default("ggml-small"),
   WHISPER_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(120_000),
   TRANSCRIPTION_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
   OLLAMA_ENDPOINT: z.url().refine(

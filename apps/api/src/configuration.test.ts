@@ -6,7 +6,7 @@ describe("API configuration", () => {
   test("provides bounded local Whisper defaults", () => {
     expect(loadConfiguration({})).toMatchObject({
       whisperEndpoint: "http://127.0.0.1:8080/inference",
-      whisperModel: "ggml-base.en",
+      whisperModel: "ggml-small",
       whisperTimeoutMilliseconds: 120_000,
       transcriptionMaxAttempts: 3,
       ollamaEndpoint: "http://127.0.0.1:11434/api/chat",

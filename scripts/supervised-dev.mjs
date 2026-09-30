@@ -153,6 +153,7 @@ export class SupervisedDevelopment {
     const port = endpoint.port || (endpoint.protocol === "https:" ? "443" : "80");
     this.#startChild(this.#configuration.whisperBinaryPath, [
       "-m", this.#configuration.whisperModelPath,
+      "--language", "auto",
       "--host", host,
       "--port", port,
       "--convert",
