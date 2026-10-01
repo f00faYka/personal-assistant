@@ -8,6 +8,7 @@ describe("selected-day date boundary", () => {
   test("interprets due timestamps in the selected local timezone", () => {
     expect(localDateKey("2026-09-15T23:30:00.000Z", "Europe/Warsaw")).toBe("2026-09-16");
     expect(localDateKey("2026-09-15T23:30:00.000Z", "America/Los_Angeles")).toBe("2026-09-15");
+    expect(localDateKey("2026-03-08T07:30:00.000Z", "America/New_York")).toBe("2026-03-08");
   });
 
   test("keeps undated and other-day Tasks out of the selected day", () => {

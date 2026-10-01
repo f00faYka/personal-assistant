@@ -18,6 +18,7 @@ export interface CaptureSubmitter {
     readonly idempotencyKey: string;
     readonly audio: RecordedAudio;
     readonly capturedAt: string;
+    readonly timeZone: string;
   }): Promise<{ readonly captureId: string }>;
 }
 
@@ -27,7 +28,7 @@ export function createCaptureSubmitter(
   fetcher: (url: string, init: RequestInit) => Promise<Response> = (url, init) => fetch(url, init),
 ): CaptureSubmitter {
   return {
-    async submit({ memberId, idempotencyKey, audio, capturedAt }) {
+    async submit({ memberId, idempotencyKey, audio, capturedAt, timeZone }) {
       const response = await fetcher(`${apiBaseUrl}/captures`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -37,6 +38,7 @@ export function createCaptureSubmitter(
           audioBase64: await readBase64(audio.uri),
           contentType: audio.contentType,
           capturedAt,
+          timeZone,
         }),
       });
       if (!response.ok) {

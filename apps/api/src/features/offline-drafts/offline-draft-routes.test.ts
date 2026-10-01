@@ -18,12 +18,13 @@ describe("Offline draft routes", () => {
     const response = await application.inject({
       method: "POST",
       url: "/offline-drafts/sync",
-      payload: { draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "text", text: "Buy milk" } },
+      payload: { draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", timeZone: "America/Los_Angeles", source: { kind: "text", text: "Buy milk" } },
     });
     const draft = response.json<{ draft: OfflineDraft }>().draft;
 
     expect(response.statusCode).toBe(200);
     expect(draft).toMatchObject({ draftId: "draft-1", status: "accepted", text: "Buy milk" });
+    expect(draft.timeZone).toBe("America/Los_Angeles");
     const retrieval = await application.inject({ method: "GET", url: "/offline-drafts/draft-1?memberId=member-1" });
     expect(retrieval.statusCode).toBe(200);
     expect(retrieval.json()).toEqual({ draft });

@@ -36,11 +36,13 @@ describe("SqliteCaptureRepository", () => {
       audio: Uint8Array.from([4, 5, 6]),
       contentType: "audio/m4a",
       capturedAt: "2026-08-14T10:00:00.000Z",
+      timeZone: "America/Los_Angeles",
     });
     firstRepository.close();
 
     const secondRepository = new SqliteCaptureRepository(databasePath);
     expect(secondRepository.findById(capture.id)).toEqual(capture);
+    expect(secondRepository.findById(capture.id)?.timeZone).toBe("America/Los_Angeles");
     secondRepository.close();
     await expect(readFile(join(blobRoot, blobIdentifier(capture)))).resolves.toEqual(
       Buffer.from([4, 5, 6]),

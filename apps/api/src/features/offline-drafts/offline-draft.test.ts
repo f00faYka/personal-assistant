@@ -20,13 +20,15 @@ describe("OfflineDraftService", () => {
       undefined,
       { handleStoredCapture: async (capture) => { handled.push(capture); } },
     );
-    const submission = { draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", source: { kind: "audio" as const, audio: Uint8Array.from([1, 2]), contentType: "audio/m4a" } };
+    const submission = { draftId: "draft-1", memberId: "member-1", capturedAt: "2026-08-15T10:00:00.000Z", timeZone: "America/Los_Angeles", source: { kind: "audio" as const, audio: Uint8Array.from([1, 2]), contentType: "audio/m4a" } };
 
     const first = await service.sync(submission);
     const second = await service.sync(submission);
 
     expect(second).toEqual(first);
     expect(first).toMatchObject({ draftId: "draft-1", status: "accepted", captureId: expect.any(String), retryable: false });
+    expect(first.timeZone).toBe("America/Los_Angeles");
+    expect(handled[0]?.timeZone).toBe("America/Los_Angeles");
     expect(blobs.values.get(blobIdentifier({ id: first.captureId! }))).toEqual(Uint8Array.from([1, 2]));
     expect(repository.values).toHaveLength(1);
     expect(handled).toEqual([expect.objectContaining({ id: first.captureId })]);

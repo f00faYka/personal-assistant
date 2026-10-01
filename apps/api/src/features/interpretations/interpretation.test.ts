@@ -159,6 +159,18 @@ describe("InterpretationService", () => {
     });
   });
 
+  test("keeps the UTC instant correct across a DST transition in another device timezone", () => {
+    const transcriptionText = "Remind me today at 9 AM to call the office.";
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Call the office", schedule: { date: "today", hour: 9, period: "am" } }, undefined, "dst-transition"),
+      transcriptionText,
+      capturedAt: "2026-03-08T06:30:00.000Z",
+      timeZone: "America/New_York",
+    });
+
+    expect(interpretation).toMatchObject({ action: { kind: "create_task", dueAt: "2026-03-08T13:00:00.000Z" } });
+  });
+
   test.each([
     ["one", "2026-08-22T23:00:00.000Z"],
     ["two", "2026-08-23T00:00:00.000Z"],

@@ -9,10 +9,12 @@ import { entityTypes, type Entity, type EntityType, type MetadataClient, type Me
 import { createReviewClient, type ReviewClient, type ReviewContract } from "./review";
 import type { OrganizationProposal, OrganizationProposalCandidate, OrganizationProposalClient } from "./organization-proposals";
 import type { Space, SpacesClient } from "../spaces/spaces";
+import { getDeviceTimeZone } from "../time-zone";
 
 interface ReviewScreenProps {
   readonly apiBaseUrl: string;
   readonly memberId: string;
+  readonly timeZone?: string;
   readonly detailUrl: string;
   readonly onBack: () => void;
   readonly client?: ReviewClient;
@@ -27,7 +29,8 @@ type ReviewStatus = { readonly status: "loading" } | { readonly status: "error";
 type PendingMetadataMutation = { readonly label: string; readonly operation: () => Promise<void> };
 type DetailMetadataState = { readonly itemId: string; readonly itemKind: MetadataItemKind; readonly selectedSpaceId: string | null; readonly spaces: readonly { readonly id: string; readonly label: string }[]; readonly tags: readonly { readonly id: string; readonly label: string; readonly selected: boolean }[]; readonly error: string | null };
 
-export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: providedClient, offlineDraftStore, metadataClient: providedMetadataClient, organizationProposalClient: providedOrganizationProposalClient, spacesClient: providedSpacesClient, detailMetadata }: ReviewScreenProps) {
+export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, onBack, client: providedClient, offlineDraftStore, metadataClient: providedMetadataClient, organizationProposalClient: providedOrganizationProposalClient, spacesClient: providedSpacesClient, detailMetadata }: ReviewScreenProps) {
+  const effectiveTimeZone = timeZone ?? getDeviceTimeZone();
   const client = useMemo(() => providedClient ?? createReviewClient(apiBaseUrl), [apiBaseUrl, providedClient]);
   const metadataClient = useMemo(() => providedMetadataClient ?? null, [providedMetadataClient]);
   const organizationProposalClient = useMemo(() => providedOrganizationProposalClient ?? null, [providedOrganizationProposalClient]);
@@ -139,7 +142,7 @@ export function ReviewScreen({ apiBaseUrl, memberId, detailUrl, onBack, client: 
         }
         try {
           const identity = textDraftIdentity.current;
-          await offlineDraftStore.save({ draftId: identity.draftId, memberId, capturedAt: identity.capturedAt, source: { kind: "text", text } });
+          await offlineDraftStore.save({ draftId: identity.draftId, memberId, capturedAt: identity.capturedAt, timeZone: effectiveTimeZone, source: { kind: "text", text } });
           setSaveError(`${saveMessage}. Saved as an Offline draft · Not confirmed`);
         } catch (persistenceError) {
           const persistenceMessage = persistenceError instanceof Error ? persistenceError.message : "local storage failed";

@@ -121,6 +121,7 @@ function captureRecord(overrides: Partial<Capture> = {}): Capture {
     byteLength: 3,
     contentSha256: "hash",
     capturedAt: "2026-08-14T10:00:00.000Z",
+    timeZone: "UTC",
     createdAt: "2026-08-14T10:00:00.000Z",
     storageState: "stored",
     ...overrides,

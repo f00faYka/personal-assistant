@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { BlobStorage } from "../../shared/blob-storage.js";
+import { DEFAULT_TIME_ZONE, isValidTimeZone } from "../../shared/time-zone.js";
 
 export interface CaptureSubmission {
   readonly memberId: string;
@@ -8,6 +9,7 @@ export interface CaptureSubmission {
   readonly audio: Uint8Array;
   readonly contentType: string;
   readonly capturedAt: string;
+  readonly timeZone?: string;
 }
 
 export interface Capture {
@@ -19,6 +21,7 @@ export interface Capture {
   readonly byteLength: number;
   readonly contentSha256: string;
   readonly capturedAt: string;
+  readonly timeZone: string;
   readonly createdAt: string;
   readonly storageState: "pending" | "stored";
 }
@@ -62,7 +65,8 @@ export class CaptureService {
       submission.idempotencyKey,
     );
     const contentSha256 = hashAudio(submission.audio);
-    if (existing && existing.contentSha256 !== contentSha256) {
+    const timeZone = submission.timeZone ?? DEFAULT_TIME_ZONE;
+    if (existing && (existing.contentSha256 !== contentSha256 || existing.timeZone !== timeZone)) {
       throw new ConflictingCaptureRetryError(submission.idempotencyKey);
     }
 
@@ -75,6 +79,7 @@ export class CaptureService {
       byteLength: submission.audio.byteLength,
       contentSha256,
       capturedAt: submission.capturedAt,
+      timeZone,
       createdAt: new Date().toISOString(),
       storageState: "pending" as const,
     };
@@ -153,6 +158,9 @@ function validateSubmission(submission: CaptureSubmission): void {
   }
   if (!isIsoDate(submission.capturedAt)) {
     throw new InvalidCaptureSubmissionError("capturedAt must be an ISO date");
+  }
+  if (submission.timeZone !== undefined && !isValidTimeZone(submission.timeZone)) {
+    throw new InvalidCaptureSubmissionError("timeZone must be a valid IANA identifier");
   }
 }
 

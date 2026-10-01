@@ -6,6 +6,7 @@ export interface OfflineDraft {
   readonly draftId: string;
   readonly memberId: string;
   readonly capturedAt: string;
+  readonly timeZone?: string;
   readonly source: OfflineDraftSource;
 }
 
@@ -81,6 +82,7 @@ export function createOfflineDraftStore(persistence: OfflineDraftPersistence): O
           draftId: input.draftId,
           memberId: input.memberId,
           capturedAt: input.capturedAt,
+          ...(input.timeZone === undefined ? {} : { timeZone: input.timeZone }),
           source: { kind: "audio", uri, contentType: input.source.contentType },
         };
         try {
