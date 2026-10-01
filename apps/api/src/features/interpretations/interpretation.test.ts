@@ -115,6 +115,21 @@ describe("InterpretationService", () => {
     });
   });
 
+  test("matches a normalized weekday name from the model to the spoken Russian weekday", () => {
+    const transcriptionText = "напомни в понедельник позвонить Анне";
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Позвонить Анне", schedule: { date: "понедельник" } }, undefined, "transcription-russian-weekday-normalized"),
+      transcriptionText,
+      capturedAt: "2026-08-23T12:00:00.000Z",
+      timeZone: "Europe/Warsaw",
+    });
+
+    expect(interpretation).toMatchObject({
+      classification: "clear_supported",
+      action: { kind: "create_task", dueAt: "2026-08-23T22:00:00.000Z" },
+    });
+  });
+
   test("does not invent an exact time for a day part without an explicit hour", () => {
     expect(new InterpretationService(new MemoryRepository()).evaluate({
       ...input({ action: "create_task", title: "Call the office", schedule: { date: "today", dayPart: "morning" } }, undefined, "morning-only"),
@@ -190,6 +205,64 @@ describe("InterpretationService", () => {
     });
   });
 
+  test.each([
+    ["thirteen", 13], ["fourteen", 14], ["fifteen", 15], ["sixteen", 16], ["seventeen", 17],
+    ["eighteen", 18], ["nineteen", 19], ["twenty", 20], ["twenty one", 21], ["twenty two", 22], ["twenty three", 23],
+    ["тринадцать", 13], ["четырнадцать", 14], ["пятнадцать", 15], ["шестнадцать", 16], ["семнадцать", 17],
+    ["восемнадцать", 18], ["девятнадцать", 19], ["двадцать", 20], ["двадцать один", 21], ["двадцать два", 22], ["двадцать три", 23],
+  ] as const)("resolves spoken 24-hour clock hour $0", (spokenHour, numericHour) => {
+    const isRussian = /[а-я]/i.test(spokenHour);
+    const transcriptionText = isRussian
+      ? `напомни сегодня в ${spokenHour} позвонить в офис`
+      : `Remind me today at ${spokenHour} to call the office.`;
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Call the office", schedule: { date: isRussian ? "сегодня" : "today", hour: numericHour } }, undefined, transcriptionText),
+      transcriptionText,
+      timeZone: "Europe/Warsaw",
+    });
+
+    expect(interpretation).toMatchObject({
+      classification: "clear_supported",
+      action: { kind: "create_task", dueAt: new Date(Date.UTC(2026, 7, 23, numericHour) - 2 * 60 * 60 * 1000).toISOString() },
+    });
+  });
+
+  test.each([
+    ["zero", 0], ["one", 1], ["two", 2], ["three", 3], ["four", 4], ["five", 5], ["six", 6], ["seven", 7], ["eight", 8], ["nine", 9],
+    ["ten", 10], ["eleven", 11], ["twelve", 12], ["thirteen", 13], ["fourteen", 14], ["fifteen", 15], ["sixteen", 16], ["seventeen", 17],
+    ["eighteen", 18], ["nineteen", 19], ["twenty", 20], ["twenty one", 21], ["twenty two", 22], ["twenty three", 23], ["twenty four", 24],
+    ["twenty five", 25], ["twenty six", 26], ["twenty seven", 27], ["twenty eight", 28], ["twenty nine", 29], ["thirty", 30],
+    ["thirty one", 31], ["thirty two", 32], ["thirty three", 33], ["thirty four", 34], ["thirty five", 35], ["thirty six", 36],
+    ["thirty seven", 37], ["thirty eight", 38], ["thirty nine", 39], ["forty", 40], ["forty one", 41], ["forty two", 42],
+    ["forty three", 43], ["forty four", 44], ["forty five", 45], ["forty six", 46], ["forty seven", 47], ["forty eight", 48],
+    ["forty nine", 49], ["fifty", 50], ["fifty one", 51], ["fifty two", 52], ["fifty three", 53], ["fifty four", 54],
+    ["fifty five", 55], ["fifty six", 56], ["fifty seven", 57], ["fifty eight", 58], ["fifty nine", 59],
+    ["ноль", 0], ["один", 1], ["два", 2], ["три", 3], ["четыре", 4], ["пять", 5], ["шесть", 6], ["семь", 7], ["восемь", 8], ["девять", 9],
+    ["десять", 10], ["одиннадцать", 11], ["двенадцать", 12], ["тринадцать", 13], ["четырнадцать", 14], ["пятнадцать", 15], ["шестнадцать", 16], ["семнадцать", 17],
+    ["восемнадцать", 18], ["девятнадцать", 19], ["двадцать", 20], ["двадцать один", 21], ["двадцать два", 22], ["двадцать три", 23], ["двадцать четыре", 24],
+    ["двадцать пять", 25], ["двадцать шесть", 26], ["двадцать семь", 27], ["двадцать восемь", 28], ["двадцать девять", 29], ["тридцать", 30],
+    ["тридцать один", 31], ["тридцать два", 32], ["тридцать три", 33], ["тридцать четыре", 34], ["тридцать пять", 35], ["тридцать шесть", 36],
+    ["тридцать семь", 37], ["тридцать восемь", 38], ["тридцать девять", 39], ["сорок", 40], ["сорок один", 41], ["сорок два", 42],
+    ["сорок три", 43], ["сорок четыре", 44], ["сорок пять", 45], ["сорок шесть", 46], ["сорок семь", 47], ["сорок восемь", 48],
+    ["сорок девять", 49], ["пятьдесят", 50], ["пятьдесят один", 51], ["пятьдесят два", 52], ["пятьдесят три", 53], ["пятьдесят четыре", 54],
+    ["пятьдесят пять", 55], ["пятьдесят шесть", 56], ["пятьдесят семь", 57], ["пятьдесят восемь", 58], ["пятьдесят девять", 59],
+  ] as const)("resolves every spoken minute $0", (spokenMinute, numericMinute) => {
+    const isRussian = /[а-я]/i.test(spokenMinute);
+    const transcriptionText = isRussian
+      ? `напомни сегодня в двадцать три ${spokenMinute} позвонить в офис`
+      : `Remind me today at twenty three ${spokenMinute} to call the office.`;
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Call the office", schedule: { date: isRussian ? "сегодня" : "today", hour: 23, minute: numericMinute } }, undefined, transcriptionText),
+      transcriptionText,
+      timeZone: "Europe/Warsaw",
+    });
+
+    expect(interpretation).toMatchObject({
+      classification: "clear_supported",
+      action: { kind: "create_task", dueAt: new Date(Date.UTC(2026, 7, 23, 23, numericMinute) - 2 * 60 * 60 * 1000).toISOString() },
+    });
+  });
+
   test("rejects an explicit but ambiguous spoken time and a contradictory model time", () => {
     const service = new InterpretationService(new MemoryRepository());
 
@@ -238,6 +311,29 @@ describe("InterpretationService", () => {
     })).toMatchObject({ action: { dueAt: "2026-08-22T00:00:00.000Z" } });
   });
 
+  test.each([
+    ["в понедельник", "2026-08-23T22:00:00.000Z"],
+    ["во вторник", "2026-08-24T22:00:00.000Z"],
+    ["в среду", "2026-08-25T22:00:00.000Z"],
+    ["в четверг", "2026-08-26T22:00:00.000Z"],
+    ["в пятницу", "2026-08-27T22:00:00.000Z"],
+    ["в субботу", "2026-08-28T22:00:00.000Z"],
+    ["в воскресенье", "2026-08-29T22:00:00.000Z"],
+  ] as const)("resolves Russian weekday $0 to the next occurrence", (spokenDate, expectedDueAt) => {
+    const transcriptionText = `напомни ${spokenDate} позвонить Анне`;
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Позвонить Анне", schedule: { date: spokenDate } }, undefined, transcriptionText),
+      transcriptionText,
+      capturedAt: "2026-08-23T12:00:00.000Z",
+      timeZone: "Europe/Warsaw",
+    });
+
+    expect(interpretation).toMatchObject({
+      classification: "clear_supported",
+      action: { kind: "create_task", dueAt: expectedDueAt },
+    });
+  });
+
   test("removes scheduling phrases when the provider includes them in the title", () => {
     const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
       ...input({ action: "create_task", title: "Add a task to buy milk tomorrow at 5 PM" }),
@@ -254,6 +350,18 @@ describe("InterpretationService", () => {
     });
 
     expect(interpretation.action).toMatchObject({ title: "call the office" });
+  });
+
+  test("removes compound spoken time and Russian weekday scheduling phrases from the title", () => {
+    expect(new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Add a task to call the office tomorrow at twenty three thirty" }),
+      transcriptionText: "add task call the office tomorrow at twenty three thirty",
+    }).action).toMatchObject({ title: "call the office" });
+
+    expect(new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "позвонить Анне в понедельник" }),
+      transcriptionText: "добавить задачу позвонить Анне в понедельник",
+    }).action).toMatchObject({ title: "позвонить Анне" });
   });
 
   test("classifies ordinary and ambiguous content without an action", () => {

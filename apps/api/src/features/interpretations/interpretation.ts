@@ -228,16 +228,53 @@ const MONTHS = new Map([
   ["july", 6], ["august", 7], ["september", 8], ["october", 9], ["november", 10], ["december", 11],
 ]);
 
-const ENGLISH_CLOCK_NUMBERS = new Map([
-  ["one", 1], ["two", 2], ["three", 3], ["four", 4], ["five", 5], ["six", 6],
-  ["seven", 7], ["eight", 8], ["nine", 9], ["ten", 10], ["eleven", 11], ["twelve", 12],
+const ENGLISH_CLOCK_NUMBERS = createClockNumberMap(
+  ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"],
+  [["twenty", 20], ["thirty", 30], ["forty", 40], ["fifty", 50]],
+);
+const RUSSIAN_CLOCK_NUMBERS = createClockNumberMap(
+  ["ноль", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать"],
+  [["двадцать", 20], ["тридцать", 30], ["сорок", 40], ["пятьдесят", 50]],
+  [["одна", 1], ["две", 2]],
+);
+const ENGLISH_CLOCK_NUMBER_PATTERN = createClockNumberPattern(ENGLISH_CLOCK_NUMBERS, true);
+const RUSSIAN_CLOCK_NUMBER_PATTERN = createClockNumberPattern(RUSSIAN_CLOCK_NUMBERS, false);
+const ENGLISH_WEEKDAY_PATTERN = "monday|tuesday|wednesday|thursday|friday|saturday|sunday";
+const RUSSIAN_WEEKDAY_PATTERN = "понедельник|вторник|среду|среда|четверг|пятницу|пятница|субботу|суббота|воскресенье";
+const RUSSIAN_WEEKDAY_TARGETS = new Map([
+  ["понедельник", 1], ["вторник", 2], ["среда", 3], ["среду", 3], ["четверг", 4],
+  ["пятница", 5], ["пятницу", 5], ["суббота", 6], ["субботу", 6], ["воскресенье", 0],
 ]);
-const RUSSIAN_CLOCK_NUMBERS = new Map([
-  ["один", 1], ["два", 2], ["три", 3], ["четыре", 4], ["пять", 5], ["шесть", 6],
-  ["семь", 7], ["восемь", 8], ["девять", 9], ["десять", 10], ["одиннадцать", 11], ["двенадцать", 12],
-]);
-const ENGLISH_CLOCK_NUMBER_PATTERN = "\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve";
-const RUSSIAN_CLOCK_NUMBER_PATTERN = "\\d{1,2}|один|два|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать";
+
+function createClockNumberMap(
+  underTwenty: readonly string[],
+  tens: readonly (readonly [string, number])[],
+  variants: readonly (readonly [string, number])[] = [],
+): Map<string, number> {
+  const result = new Map<string, number>(underTwenty.map((word, value) => [word, value]));
+  for (const [word, value] of tens) {
+    result.set(word, value);
+    for (let unit = 1; unit <= 9; unit += 1) {
+      result.set(`${word} ${underTwenty[unit]}`, value + unit);
+    }
+  }
+  for (const [word, value] of variants) {
+    result.set(word, value);
+    for (const [tensWord, tensValue] of tens) result.set(`${tensWord} ${word}`, tensValue + value);
+  }
+  return result;
+}
+
+function createClockNumberPattern(numbers: ReadonlyMap<string, number>, allowHyphen: boolean): string {
+  const words = [...numbers.keys()]
+    .sort((left, right) => right.length - left.length)
+    .map((phrase) => phrase.split(" ").map(escapeRegExp).join(allowHyphen ? "(?:\\s+|-)" : "\\s+"));
+  return `\\d{1,2}|${words.join("|")}`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 interface CalendarDate { readonly year: number; readonly month: number; readonly day: number }
 interface ClockTime {
@@ -396,6 +433,26 @@ function extractDate(text: string, captured: CalendarDate): CalendarDate | undef
     const target = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].indexOf(weekday);
     return addCalendarDays(captured, (target - calendarDayOfWeek(captured) + 7) % 7 || 7);
   }
+  const englishWeekday = text.match(new RegExp(`\\bon\\s+(${ENGLISH_WEEKDAY_PATTERN})\\b`))?.[1];
+  if (englishWeekday) {
+    const target = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].indexOf(englishWeekday);
+    return addCalendarDays(captured, (target - calendarDayOfWeek(captured) + 7) % 7 || 7);
+  }
+  const russianWeekday = text.match(new RegExp(`(?:^|\\s)(?:в|во)\\s+(?:следующ\\w*\\s+)?(${RUSSIAN_WEEKDAY_PATTERN})(?=\\s|[.!?,]|$)`))?.[1];
+  if (russianWeekday !== undefined) {
+    const target = RUSSIAN_WEEKDAY_TARGETS.get(russianWeekday);
+    if (target !== undefined) return addCalendarDays(captured, (target - calendarDayOfWeek(captured) + 7) % 7 || 7);
+  }
+  const bareEnglishWeekday = text.match(new RegExp(`^(${ENGLISH_WEEKDAY_PATTERN})$`))?.[1];
+  if (bareEnglishWeekday) {
+    const target = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].indexOf(bareEnglishWeekday);
+    return addCalendarDays(captured, (target - calendarDayOfWeek(captured) + 7) % 7 || 7);
+  }
+  const bareRussianWeekday = text.match(new RegExp(`^(${RUSSIAN_WEEKDAY_PATTERN})$`))?.[1];
+  if (bareRussianWeekday !== undefined) {
+    const target = RUSSIAN_WEEKDAY_TARGETS.get(bareRussianWeekday);
+    if (target !== undefined) return addCalendarDays(captured, (target - calendarDayOfWeek(captured) + 7) % 7 || 7);
+  }
   const match = text.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+of\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/)
     ?? text.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?\b/);
   if (!match) return undefined;
@@ -418,18 +475,22 @@ function extractDate(text: string, captured: CalendarDate): CalendarDate | undef
 function extractTime(text: string): ClockTime | undefined {
   if (/\bnoon\b|полдень/.test(text)) return { hour: 12, minute: 0, special: "noon" };
   if (/\bmidnight\b|полночь/.test(text)) return { hour: 0, minute: 0, special: "midnight" };
-  const english = text.match(new RegExp(`\\bat\\s+(${ENGLISH_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?\\s*(?:o['’]?clock)?\\s+(am|pm|morning|afternoon|evening|night|in\\s+the\\s+(?:morning|afternoon|evening|night))\\b`))
-    ?? text.match(new RegExp(`\\bat\\s+(${ENGLISH_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?\\s*(?:o['’]?clock)?(?=\\s|[.!?,]|$)`));
-  const russian = text.match(new RegExp(`в\\s*(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?(?:\\s*час(?:а|ов)?)?\\s+(утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью)`))
-    ?? text.match(new RegExp(`в\\s*(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?(?:\\s*час(?:а|ов)?)?(?=\\s|[.!?,]|$)`));
+  const english = text.match(new RegExp(`\\bat\\s+(${ENGLISH_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?\\s+(am|pm|morning|afternoon|evening|night|in\\s+the\\s+(?:morning|afternoon|evening|night))\\b`))
+    ?? text.match(new RegExp(`\\bat\\s+(${ENGLISH_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?(?=\\s|[.!?,]|$)`));
+  const russian = text.match(new RegExp(`в\\s*(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?(?:\\s*час(?:а|ов)?)?(?:\\s+(?:ноль\\s+)?(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:\\s*минут(?:а|ы)?)?)?\\s+(утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью)`))
+    ?? text.match(new RegExp(`в\\s*(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?(?:\\s*час(?:а|ов)?)?(?:\\s+(?:ноль\\s+)?(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:\\s*минут(?:а|ы)?)?)?(?=\\s|[.!?,]|$)`));
   const match = english ?? russian;
   if (!match) return undefined;
   const hour = parseClockHour(match[1] ?? "");
-  const minute = match[2] === undefined ? undefined : Number(match[2]);
-  const periodValue = match[3] ?? match[4] ?? match[3];
+  const minute = match[2] !== undefined
+    ? Number(match[2])
+    : match[3] === undefined
+      ? undefined
+      : parseClockHour(match[3]);
+  const periodValue = match[4];
   const dayPart = normalizeDayPart(periodValue);
   const period = periodValue === "am" || periodValue === "pm" ? periodValue : periodForDayPart(dayPart);
-  if (hour < 1 || hour > 23 || (period !== undefined && hour > 12) || (minute !== undefined && minute > 59)) return undefined;
+  if (!Number.isInteger(hour) || hour < 1 || hour > 23 || (period !== undefined && hour > 12) || (minute !== undefined && (!Number.isInteger(minute) || minute < 0 || minute > 59))) return undefined;
   return {
     hour: period === undefined ? hour : (hour % 12) + (period === "pm" ? 12 : 0),
     ...(minute === undefined ? {} : { minute }),
@@ -467,8 +528,9 @@ function localDateTimeToUtc(date: CalendarDate, time: ClockTime | undefined, tim
 }
 
 function hasExplicitSchedule(text: string): boolean {
-  return /\b(?:today|tomorrow|yesterday|the day after tomorrow|the day before yesterday|this week\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|next\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|\d{1,2}(?:st|nd|rd|th)?\s+of\s+|(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2})\b/i.test(text)
+  return new RegExp(`\\b(?:today|tomorrow|yesterday|the day after tomorrow|the day before yesterday|this week\\s+(?:${ENGLISH_WEEKDAY_PATTERN})|next\\s+(?:${ENGLISH_WEEKDAY_PATTERN})|on\\s+(?:${ENGLISH_WEEKDAY_PATTERN})|\\d{1,2}(?:st|nd|rd|th)?\\s+of\\s+|(?:january|february|march|april|may|june|july|august|september|october|november|december)\\s+\\d{1,2})\\b`, "i").test(text)
     || /послезавтра|после\s+завтра|позавчера|поза\s+вчера|сегодня|завтра|вчера/.test(text)
+    || new RegExp(`(?:^|\\s)(?:в|во)\\s+(?:следующ\\w*\\s+)?(?:${RUSSIAN_WEEKDAY_PATTERN})(?=\\s|[.!?,]|$)`).test(text)
     || /\b(?:noon|midnight|at\s+\d{1,2}(?::\d{2})?|morning|afternoon|evening|night)\b/i.test(text)
     || /полдень|полночь|в\s*\d{1,2}(?::\d{2})?|утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью/i.test(text)
     || hasSpokenClockNumber(text);
@@ -485,9 +547,9 @@ function normalizeTaskTitle(title: string, transcription: string): string {
 
 function removeSchedule(value: string): string {
   return value.trim()
-    .replace(/\s+(?:today|tomorrow|yesterday|the day after tomorrow|the day before yesterday|this week\s+\w+|послезавтра|после\s+завтра|позавчера|поза\s+вчера|сегодня|завтра|вчера)(?:\s+(?:at|в)\s+[^.!?]+)?[.!?]*$/i, "")
+    .replace(new RegExp(`\\s+(?:today|tomorrow|yesterday|the day after tomorrow|the day before yesterday|this week\\s+\\w+|on\\s+(?:${ENGLISH_WEEKDAY_PATTERN})|(?:в|во)\\s+(?:следующ\\w*\\s+)?(?:${RUSSIAN_WEEKDAY_PATTERN})|послезавтра|после\\s+завтра|позавчера|поза\\s+вчера|сегодня|завтра|вчера)(?:\\s+(?:at|в)\\s+[^.!?]+)?[.!?]*$`, "i"), "")
     .replace(/\s+(?:on\s+\d{1,2}(?:st|nd|rd|th)?\s+of\s+\w+|\w+\s+\d{1,2}(?:st|nd|rd|th)?)[.!?]*$/i, "")
-    .replace(new RegExp(`\\s+(?:at\\s+(?:${ENGLISH_CLOCK_NUMBER_PATTERN})(?::\\d{2})?\\s*(?:o['’]?clock\\s*)?(?:am|pm)?(?:\\s+in\\s+the\\s+(?:morning|afternoon|evening|night))?|в\\s*(?:${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::\\d{2})?(?:\\s+(?:утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью))?)[.!?]*$`, "i"), "")
+    .replace(new RegExp(`\\s+(?:at\\s+(?:${ENGLISH_CLOCK_NUMBER_PATTERN})(?::\\d{2})?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(?:${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?(?:\\s+(?:am|pm|morning|afternoon|evening|night|in\\s+the\\s+(?:morning|afternoon|evening|night)))?|в\\s*(?:${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::\\d{2})?(?:\\s*час(?:а|ов)?)?(?:\\s+(?:ноль\\s+)?(?:${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:\\s*минут(?:а|ы)?)?)?(?:\\s+(?:утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью))?)[.!?]*$`, "i"), "")
     .trim().replace(/[.!?]+$/, "");
 }
 
@@ -496,8 +558,9 @@ function isScheduleDayPart(value: unknown): value is ScheduleDayPart {
 }
 
 function parseClockHour(value: string): number {
-  if (/^\d{1,2}$/.test(value)) return Number(value);
-  return ENGLISH_CLOCK_NUMBERS.get(value) ?? RUSSIAN_CLOCK_NUMBERS.get(value) ?? Number.NaN;
+  const normalized = value.toLowerCase().replace(/-/g, " ").replace(/\s+/g, " ").trim();
+  if (/^\d{1,2}$/.test(normalized)) return Number(normalized);
+  return ENGLISH_CLOCK_NUMBERS.get(normalized) ?? RUSSIAN_CLOCK_NUMBERS.get(normalized) ?? Number.NaN;
 }
 
 function hasSpokenClockNumber(text: string): boolean {
