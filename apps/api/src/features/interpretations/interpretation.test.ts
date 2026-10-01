@@ -144,6 +144,52 @@ describe("InterpretationService", () => {
     });
   });
 
+  test.each([
+    ["one", "2026-08-22T23:00:00.000Z"],
+    ["two", "2026-08-23T00:00:00.000Z"],
+    ["three", "2026-08-23T01:00:00.000Z"],
+    ["four", "2026-08-23T02:00:00.000Z"],
+    ["five", "2026-08-23T03:00:00.000Z"],
+    ["six", "2026-08-23T04:00:00.000Z"],
+    ["seven", "2026-08-23T05:00:00.000Z"],
+    ["eight", "2026-08-23T06:00:00.000Z"],
+    ["nine", "2026-08-23T07:00:00.000Z"],
+    ["ten", "2026-08-23T08:00:00.000Z"],
+    ["eleven", "2026-08-23T09:00:00.000Z"],
+    ["twelve", "2026-08-23T10:00:00.000Z"],
+    ["один", "2026-08-22T23:00:00.000Z"],
+    ["два", "2026-08-23T00:00:00.000Z"],
+    ["три", "2026-08-23T01:00:00.000Z"],
+    ["четыре", "2026-08-23T02:00:00.000Z"],
+    ["пять", "2026-08-23T03:00:00.000Z"],
+    ["шесть", "2026-08-23T04:00:00.000Z"],
+    ["семь", "2026-08-23T05:00:00.000Z"],
+    ["восемь", "2026-08-23T06:00:00.000Z"],
+    ["девять", "2026-08-23T07:00:00.000Z"],
+    ["десять", "2026-08-23T08:00:00.000Z"],
+    ["одиннадцать", "2026-08-23T09:00:00.000Z"],
+    ["двенадцать", "2026-08-23T10:00:00.000Z"],
+  ] as const)("resolves spoken clock number $0", (spokenHour, expectedDueAt) => {
+    const isRussian = /[а-я]/i.test(spokenHour);
+    const numericHour = (isRussian
+      ? ["один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать"]
+      : ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
+    ).indexOf(spokenHour) + 1;
+    const transcriptionText = isRussian
+      ? `напомни сегодня в ${spokenHour} позвонить в офис`
+      : `Remind me today at ${spokenHour} to call the office.`;
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Call the office", schedule: { date: isRussian ? "сегодня" : "today", hour: numericHour } }, undefined, transcriptionText),
+      transcriptionText,
+      timeZone: "Europe/Warsaw",
+    });
+
+    expect(interpretation).toMatchObject({
+      classification: "clear_supported",
+      action: { kind: "create_task", dueAt: expectedDueAt },
+    });
+  });
+
   test("rejects an explicit but ambiguous spoken time and a contradictory model time", () => {
     const service = new InterpretationService(new MemoryRepository());
 
@@ -175,6 +221,21 @@ describe("InterpretationService", () => {
       ...input({ action: "create_task", title: "Call Anna" }, undefined, "transcription-this-week"),
       transcriptionText: "remind me to call Anna this week Saturday",
     })).toMatchObject({ action: { dueAt: "2026-08-29T00:00:00.000Z" } });
+
+    expect(service.evaluate({
+      ...input({ action: "create_task", title: "Call Anna" }, undefined, "transcription-after-tomorrow"),
+      transcriptionText: "remind me to call Anna после завтра",
+    })).toMatchObject({ action: { dueAt: "2026-08-25T00:00:00.000Z" } });
+
+    expect(service.evaluate({
+      ...input({ action: "create_task", title: "Call Anna" }, undefined, "transcription-before-yesterday"),
+      transcriptionText: "напомни поза вчера позвонить Анне",
+    })).toMatchObject({ action: { dueAt: "2026-08-21T00:00:00.000Z" } });
+
+    expect(service.evaluate({
+      ...input({ action: "create_task", title: "Call Anna" }, undefined, "transcription-yesterday"),
+      transcriptionText: "remind me to call Anna yesterday",
+    })).toMatchObject({ action: { dueAt: "2026-08-22T00:00:00.000Z" } });
   });
 
   test("removes scheduling phrases when the provider includes them in the title", () => {
@@ -184,6 +245,15 @@ describe("InterpretationService", () => {
     });
 
     expect(interpretation.action).toMatchObject({ title: "buy milk" });
+  });
+
+  test("removes word-number scheduling phrases when the provider includes them in the title", () => {
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Add a task to call the office tomorrow at five" }),
+      transcriptionText: "add task call the office tomorrow at five",
+    });
+
+    expect(interpretation.action).toMatchObject({ title: "call the office" });
   });
 
   test("classifies ordinary and ambiguous content without an action", () => {
