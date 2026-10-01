@@ -130,6 +130,7 @@ export class InterpretationWorker implements TranscriptionSucceededHandler {
       if (transcription?.status !== "succeeded" || transcription.text === undefined) {
         throw new Error(`Interpretation requires a succeeded transcription: ${job.transcriptionId}`);
       }
+      const capture = this.options.captureReader.get(transcription.captureId);
       let interpretation = this.options.service.getByTranscriptionId(job.transcriptionId);
       if (interpretation === undefined) {
         const providerResult = await this.options.provider.interpret({
@@ -142,7 +143,8 @@ export class InterpretationWorker implements TranscriptionSucceededHandler {
           transcriptionId: transcription.id,
           transcriptionStatus: "succeeded",
           transcriptionText: transcription.text,
-          capturedAt: this.options.captureReader.get(transcription.captureId).capturedAt,
+          capturedAt: capture.capturedAt,
+          timeZone: capture.timeZone,
           catalogVersion: SUPPORTED_INTERPRETATION_CATALOG_VERSION,
           model: providerResult.model,
           rawOutput: providerResult.rawOutput,

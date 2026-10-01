@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { CaptureService, CaptureStoredHandler } from "../captures/capture.js";
+import { DEFAULT_TIME_ZONE, isValidTimeZone } from "../../shared/time-zone.js";
 
 export type OfflineDraftSource =
   | { readonly kind: "audio"; readonly audio: Uint8Array; readonly contentType: string }
@@ -32,6 +33,7 @@ export interface OfflineDraftSubmission {
   readonly draftId: string;
   readonly memberId: string;
   readonly capturedAt: string;
+  readonly timeZone?: string;
   readonly source: OfflineDraftSource;
 }
 
@@ -39,6 +41,7 @@ export interface OfflineDraft {
   readonly draftId: string;
   readonly memberId: string;
   readonly capturedAt: string;
+  readonly timeZone: string;
   readonly sourceKind: OfflineDraftSource["kind"];
   readonly contentType?: string;
   readonly text?: string;
@@ -71,9 +74,11 @@ export class OfflineDraftService {
     validateSubmission(submission);
     const key = `${submission.memberId}:${submission.draftId}`;
     const sourceSha256 = hashSource(submission.source);
+    const timeZone = submission.timeZone ?? DEFAULT_TIME_ZONE;
     const existing = this.repository.find(submission.memberId, submission.draftId);
     if (existing) {
       ensureSameSource(existing, sourceSha256);
+      if (existing.timeZone !== timeZone) throw new ConflictingOfflineDraftError(submission.draftId);
       if (existing.status === "accepted") return existing;
     }
 
@@ -139,10 +144,12 @@ export class OfflineDraftService {
 
   private async syncOnce(submission: OfflineDraftSubmission, sourceSha256: string): Promise<OfflineDraft> {
     const now = new Date().toISOString();
+    const timeZone = submission.timeZone ?? DEFAULT_TIME_ZONE;
     const draft = this.repository.create({
       draftId: submission.draftId,
       memberId: submission.memberId,
       capturedAt: submission.capturedAt,
+      timeZone,
       sourceKind: submission.source.kind,
       ...(submission.source.kind === "audio" ? { contentType: submission.source.contentType } : { text: submission.source.text }),
       sourceSha256,
@@ -160,6 +167,7 @@ export class OfflineDraftService {
         idempotencyKey: `offline-draft:${submission.draftId}`,
         audio: submission.source.audio,
         contentType: submission.source.contentType,
+        timeZone,
         capturedAt: submission.capturedAt,
       });
       await this.captureStoredHandler?.handleStoredCapture(capture);
@@ -205,6 +213,7 @@ function validateSubmission(submission: OfflineDraftSubmission): void {
   if (!submission.draftId.trim()) throw new InvalidOfflineDraftError("draftId is required");
   if (!submission.memberId.trim()) throw new InvalidOfflineDraftError("memberId is required");
   if (!isIsoDate(submission.capturedAt)) throw new InvalidOfflineDraftError("capturedAt must be an ISO date");
+  if (submission.timeZone !== undefined && !isValidTimeZone(submission.timeZone)) throw new InvalidOfflineDraftError("timeZone must be a valid IANA identifier");
   if (submission.source.kind === "audio") {
     if (submission.source.audio.byteLength === 0) throw new InvalidOfflineDraftError("audio must not be empty");
     if (!/^audio\/[A-Za-z0-9.+-]+$/.test(submission.source.contentType)) throw new InvalidOfflineDraftError("contentType must be an audio media type");

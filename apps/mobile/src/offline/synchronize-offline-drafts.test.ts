@@ -7,6 +7,7 @@ const draft: OfflineDraft = {
   draftId: "draft-1",
   memberId: "member-1",
   capturedAt: "2026-08-15T10:00:00.000Z",
+  timeZone: "America/Los_Angeles",
   source: { kind: "audio", uri: "file:///draft.m4a", contentType: "audio/m4a" },
 };
 
@@ -25,7 +26,7 @@ test("synchronizes audio and removes the unconfirmed boundary only after server 
   await expect(client.synchronize(draft)).resolves.toMatchObject({ state: "confirmed", result: { id: "note-1" } });
   expect(readBase64).toHaveBeenCalledWith("file:///draft.m4a");
   expect(JSON.parse(fetcher.mock.calls[0]?.[1]?.body as string)).toMatchObject({
-    draftId: "draft-1", memberId: "member-1", source: { kind: "audio", audioBase64: "AQI=", contentType: "audio/m4a" },
+    draftId: "draft-1", memberId: "member-1", timeZone: "America/Los_Angeles", source: { kind: "audio", audioBase64: "AQI=", contentType: "audio/m4a" },
   });
 });
 

@@ -79,7 +79,7 @@ async function synchronizeDraft(
     const syncResponse = await fetcher(`${apiBaseUrl}/offline-drafts/sync`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ draftId: draft.draftId, memberId: draft.memberId, capturedAt: draft.capturedAt, source }),
+      body: JSON.stringify({ draftId: draft.draftId, memberId: draft.memberId, capturedAt: draft.capturedAt, timeZone: draft.timeZone ?? "UTC", source }),
     });
     if (!syncResponse.ok) return failureResult(draft.draftId, await responseMessage(syncResponse), isRetryable(syncResponse.status));
 

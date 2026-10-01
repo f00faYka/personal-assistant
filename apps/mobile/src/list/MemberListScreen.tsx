@@ -15,11 +15,13 @@ import { createMetadataClient, type Entity, type Tag } from "../review/metadata"
 import { loadCompleteMemberItems, localDateKey } from "../day/selected-day";
 import { TaskCard } from "../web/TaskNoteCardPrototype";
 import type { BrowserFixtureTask } from "../web/fixture-data";
+import { getDeviceTimeZone } from "../time-zone";
 
 interface MemberListScreenProps {
   readonly apiBaseUrl: string;
   readonly client?: MemberItemsClient;
   readonly memberId: string;
+  readonly timeZone?: string;
   readonly onOpenDetail?: (detailUrl: string) => void;
   readonly voiceRecorder?: VoiceRecorder;
   readonly recordingMetering?: number | undefined;
@@ -43,7 +45,8 @@ type TimelineItem =
   | { readonly kind: "server_item"; readonly item: MemberListItem };
 type AssignableItem = Extract<MemberListItem, { kind: "task" | "note" }>;
 
-export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId, onOpenDetail, voiceRecorder, recordingMetering, recordingInterrupted = false, captureSubmitter, offlineDraftStore, offlineDraftSyncClient, captureRequest = 0, home = false, onOpenToday }: MemberListScreenProps) {
+export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId, timeZone, onOpenDetail, voiceRecorder, recordingMetering, recordingInterrupted = false, captureSubmitter, offlineDraftStore, offlineDraftSyncClient, captureRequest = 0, home = false, onOpenToday }: MemberListScreenProps) {
+  const effectiveTimeZone = timeZone ?? getDeviceTimeZone();
   const client = useMemo(() => providedClient ?? createMemberItemsClient(apiBaseUrl), [apiBaseUrl, providedClient]);
   const spacesClient = useMemo(() => createSpacesClient(apiBaseUrl), [apiBaseUrl]);
   const [state, setState] = useState<ListState>(initialListState);
@@ -222,7 +225,7 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
     const draftId = captureKey.current;
     const capturedAt = captureCreatedAt.current ?? new Date().toISOString();
     try {
-      const result = await captureSubmitter.submit({ memberId, idempotencyKey: draftId, audio, capturedAt });
+      const result = await captureSubmitter.submit({ memberId, idempotencyKey: draftId, audio, capturedAt, timeZone: effectiveTimeZone });
       captureKey.current = null;
       captureCreatedAt.current = null;
       setCapture({ status: "idle" });
@@ -233,7 +236,7 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
         setCapture({ status: "failed", audio, message: submissionMessage });
       } else {
         try {
-          const draft = await offlineDraftStore.save({ draftId, memberId, capturedAt, source: { kind: "audio", uri: audio.uri, contentType: audio.contentType } });
+          const draft = await offlineDraftStore.save({ draftId, memberId, capturedAt, timeZone: effectiveTimeZone, source: { kind: "audio", uri: audio.uri, contentType: audio.contentType } });
           deletedOfflineDraftIds.current.delete(draft.draftId);
           setOfflineDrafts((current) => [draft, ...current.filter((candidate) => candidate.draftId !== draft.draftId)]);
           setOfflineDraftError(null);
@@ -250,7 +253,7 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
     } finally {
       submissionInFlight.current = false;
     }
-  }, [captureSubmitter, memberId, offlineDraftStore, synchronizeDraft, voiceRecorder]);
+  }, [captureSubmitter, effectiveTimeZone, memberId, offlineDraftStore, synchronizeDraft, voiceRecorder]);
 
   useEffect(() => { void startFreshLoad(); }, [startFreshLoad]);
 
@@ -393,8 +396,8 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
       ...state.items.map((item): TimelineItem => ({ kind: "server_item", item })),
     ];
 
-  const homeDate = localDateKey(new Date(), "Europe/Warsaw");
-  const homeItems = (home ? completeHomeItems : state.items).filter((item): item is Extract<MemberListItem, { kind: "task" }> => item.kind === "task" && item.dueAt !== undefined && localDateKey(item.dueAt, "Europe/Warsaw") === homeDate);
+  const homeDate = localDateKey(new Date(), effectiveTimeZone);
+  const homeItems = (home ? completeHomeItems : state.items).filter((item): item is Extract<MemberListItem, { kind: "task" }> => item.kind === "task" && item.dueAt !== undefined && localDateKey(item.dueAt, effectiveTimeZone) === homeDate);
   const homeTimelineItems: readonly TimelineItem[] = homeItems.map((item): TimelineItem => ({ kind: "server_item", item }));
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -426,7 +429,7 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
           contentContainerStyle={styles.list}
           renderItem={({ item: entry }) => entry.kind === "offline_draft"
             ? <OfflineDraftCard draft={entry.draft} sync={offlineDraftSync[entry.draft.draftId]} deleting={deletingDraftId === entry.draft.draftId} onDelete={() => void deleteOfflineDraft(entry.draft.draftId)} onSync={() => retryOfflineDraft(entry.draft.draftId)} />
-            : home && entry.item.kind === "task" ? <TaskCard task={toCardTask(entry.item)} timeZone="Europe/Warsaw" today={homeDate} onPress={() => onOpenDetail?.(entry.item.detailUrl)} onSetCompleted={(completed) => setTaskCompleted(entry.item.id, completed)} />
+            : home && entry.item.kind === "task" ? <TaskCard task={toCardTask(entry.item)} timeZone={effectiveTimeZone} today={homeDate} onPress={() => onOpenDetail?.(entry.item.detailUrl)} onSetCompleted={(completed) => setTaskCompleted(entry.item.id, completed)} />
             : <ListCard item={entry.item} spaces={spaces} assigning={assigningItemId === entry.item.id} onAssign={(item, spaceId) => void assignItem(item, spaceId)} onPress={onOpenDetail} />}
         />
       ) : null}

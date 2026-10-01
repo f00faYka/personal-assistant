@@ -12,6 +12,7 @@ describe("Capture submission client", () => {
       idempotencyKey: "capture-key",
       audio: { uri: "file:///capture.m4a", contentType: "audio/m4a" },
       capturedAt: "2026-08-14T10:00:00.000Z",
+      timeZone: "America/Los_Angeles",
     })).resolves.toEqual({ captureId: "capture-1" });
 
     expect(fetcher).toHaveBeenCalledWith("http://api.test/captures", expect.objectContaining({
@@ -22,6 +23,7 @@ describe("Capture submission client", () => {
         audioBase64: "AQI=",
         contentType: "audio/m4a",
         capturedAt: "2026-08-14T10:00:00.000Z",
+        timeZone: "America/Los_Angeles",
       }),
     }));
   });
@@ -34,6 +36,7 @@ describe("Capture submission client", () => {
       idempotencyKey: "capture-key",
       audio: { uri: "file:///capture.m4a", contentType: "audio/m4a" },
       capturedAt: "2026-08-14T10:00:00.000Z",
+      timeZone: "UTC",
     })).rejects.toThrow("Unable to submit Capture (503)");
   });
 

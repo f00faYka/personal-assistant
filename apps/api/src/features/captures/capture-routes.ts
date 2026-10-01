@@ -15,6 +15,7 @@ const submissionSchema = z.object({
   audioBase64: z.string(),
   contentType: z.string(),
   capturedAt: z.string(),
+  timeZone: z.string().optional(),
 });
 
 export function registerCaptureRoutes(
@@ -31,6 +32,7 @@ export function registerCaptureRoutes(
         audio: decodeBase64(body.audioBase64),
         contentType: body.contentType,
         capturedAt: body.capturedAt,
+        ...(body.timeZone === undefined ? {} : { timeZone: body.timeZone }),
       });
       await storedHandler?.handleStoredCapture(capture);
       return reply.code(201).send({ capture });

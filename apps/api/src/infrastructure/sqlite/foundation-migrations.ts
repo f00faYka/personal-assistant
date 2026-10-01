@@ -258,4 +258,14 @@ export const foundationMigrations: readonly Migration[] = [
       CREATE INDEX organization_proposals_item_index ON organization_proposals(member_id, item_id, item_kind);
     `,
   },
+  {
+    version: 15,
+    name: "persist capture device time zone",
+    sql: "ALTER TABLE captures ADD COLUMN time_zone TEXT NOT NULL DEFAULT 'UTC'",
+  },
+  {
+    version: 16,
+    name: "persist Offline draft device time zone",
+    sql: "ALTER TABLE offline_drafts ADD COLUMN time_zone TEXT NOT NULL DEFAULT 'UTC'",
+  },
 ];

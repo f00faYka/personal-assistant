@@ -333,6 +333,7 @@ describe("ReviewScreen", () => {
 
     expect(offlineDraftStore.save).toHaveBeenCalledWith(expect.objectContaining({
       memberId: "member-1",
+      timeZone: expect.any(String),
       source: { kind: "text", text: "Call the dentist tomorrow" },
     }));
     expect(textContent(renderer)).toContain("Saved as an Offline draft · Not confirmed");

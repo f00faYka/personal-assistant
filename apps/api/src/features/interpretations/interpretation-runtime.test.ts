@@ -115,13 +115,13 @@ describe("production interpretation runtime", () => {
     expect(item).toMatchObject({
       kind: "task",
       title: "cancel subscription to the Strava series",
-      dueAt: "2026-09-01T00:00:00.000Z",
+      dueAt: "2026-08-31T22:00:00.000Z",
     });
     expect(review).toMatchObject({
       capture: { id: captureId, capturedAt: "2026-08-23T12:00:00.000Z" },
       transcription: { text: "Task, please remind me to cancel subscription to the Strava series on the 1st of September." },
       interpretation: { classification: "clear_supported" },
-      outcome: { kind: "task", title: "cancel subscription to the Strava series", dueAt: "2026-09-01T00:00:00.000Z" },
+      outcome: { kind: "task", title: "cancel subscription to the Strava series", dueAt: "2026-08-31T22:00:00.000Z" },
     });
   });
 
@@ -158,6 +158,33 @@ describe("production interpretation runtime", () => {
     expect(item).toMatchObject({ kind: "task", captureId, dueAt });
     expect((await waitForReviewState(harness, captureId, "completed")).interpretation).toMatchObject({
       classification: "clear_supported",
+    });
+  });
+
+  test("uses the Capture timezone when delayed interpretation crosses UTC midnight", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "personal-assistant-interpretation-capture-time-zone-"));
+    directories.push(directory);
+    const transcriptionText = "Remind me today at 5 o'clock to call the office.";
+    const harness = await createHarness(directory, new DeterministicInterpretationProvider({
+      action: "create_task",
+      title: "Call the office",
+      schedule: { date: "today", hour: 5 },
+    }), 3, transcriptionText);
+    harnesses.push(harness);
+
+    const response = await harness.application.inject({
+      method: "POST",
+      url: "/captures",
+      payload: { ...submission(), capturedAt: "2026-09-30T22:45:31.132Z", timeZone: "Europe/Warsaw" },
+    });
+    const captureId = response.json<{ capture: { id: string } }>().capture.id;
+
+    expect(await waitForItem(harness, captureId)).toMatchObject({
+      kind: "task",
+      dueAt: "2026-10-01T03:00:00.000Z",
+    });
+    expect((await harness.application.inject({ method: "GET", url: `/captures/${captureId}` })).json()).toMatchObject({
+      capture: { timeZone: "Europe/Warsaw" },
     });
   });
 
@@ -559,6 +586,7 @@ function submission(): Record<string, string> {
     audioBase64: Buffer.from([1, 2, 3]).toString("base64"),
     contentType: "audio/m4a",
     capturedAt: "2026-08-15T10:00:00.000Z",
+    timeZone: "Europe/Warsaw",
   };
 }
 

@@ -11,6 +11,7 @@ interface CaptureRow {
   byte_length: number;
   content_sha256: string;
   captured_at: string;
+  time_zone: string;
   created_at: string;
   storage_state: "pending" | "stored";
 }
@@ -42,8 +43,8 @@ export class SqliteCaptureRepository implements CaptureRepository {
     this.database
       .prepare(
         `INSERT OR IGNORE INTO captures
-          (id, source_id, member_id, idempotency_key, content_type, byte_length, content_sha256, captured_at, created_at, storage_state)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, source_id, member_id, idempotency_key, content_type, byte_length, content_sha256, captured_at, time_zone, created_at, storage_state)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         capture.id,
@@ -54,6 +55,7 @@ export class SqliteCaptureRepository implements CaptureRepository {
         capture.byteLength,
         capture.contentSha256,
         capture.capturedAt,
+        capture.timeZone,
         capture.createdAt,
         capture.storageState,
       );
@@ -79,6 +81,7 @@ function toCapture(row: CaptureRow): Capture {
     byteLength: row.byte_length,
     contentSha256: row.content_sha256,
     capturedAt: row.captured_at,
+    timeZone: row.time_zone,
     createdAt: row.created_at,
     storageState: row.storage_state,
   };

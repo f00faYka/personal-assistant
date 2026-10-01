@@ -23,6 +23,7 @@ describe("Capture routes", () => {
       audioBase64: Buffer.from([1, 2, 3]).toString("base64"),
       contentType: "audio/m4a",
       capturedAt: "2026-08-14T10:00:00.000Z",
+      timeZone: "America/Los_Angeles",
     };
     const response = await application.inject({
       method: "POST",
@@ -33,6 +34,7 @@ describe("Capture routes", () => {
 
     expect(response.statusCode).toBe(201);
     expect(capture).toMatchObject({ memberId: "member-1", byteLength: 3 });
+    expect(capture.timeZone).toBe("America/Los_Angeles");
     expect(capture.contentSha256).toHaveLength(64);
 
     const retrieval = await application.inject({ method: "GET", url: `/captures/${capture.id}` });

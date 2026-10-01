@@ -11,6 +11,7 @@ describe("Offline draft store", () => {
       draftId: "draft-audio-1",
       memberId: "member-1",
       capturedAt: "2026-08-15T10:00:00.000Z",
+      timeZone: "America/Los_Angeles",
       source: { kind: "audio", uri: "file:///temporary/capture.m4a", contentType: "audio/m4a" },
     });
 
@@ -19,6 +20,7 @@ describe("Offline draft store", () => {
         draftId: "draft-audio-1",
         memberId: "member-1",
         capturedAt: "2026-08-15T10:00:00.000Z",
+        timeZone: "America/Los_Angeles",
         source: { kind: "audio", uri: "file:///documents/draft-audio-1.m4a", contentType: "audio/m4a" },
       },
     ]);

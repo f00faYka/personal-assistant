@@ -19,12 +19,14 @@ describe("CaptureService", () => {
       audio: Uint8Array.from([1, 2, 3]),
       contentType: "audio/m4a",
       capturedAt: "2026-08-14T10:00:00.000Z",
+      timeZone: "America/Los_Angeles",
     };
 
     const first = await service.submit(submission);
     const second = await service.submit(submission);
 
     expect(second).toEqual(first);
+    expect(first.timeZone).toBe("America/Los_Angeles");
     expect(blobs.values.get(blobIdentifier(first))).toEqual(Uint8Array.from([1, 2, 3]));
     expect(repository.values).toHaveLength(1);
   });

@@ -12,7 +12,7 @@ const sourceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("audio"), audioBase64: z.string(), contentType: z.string() }),
   z.object({ kind: z.literal("text"), text: z.string() }),
 ]);
-const syncSchema = z.object({ draftId: z.string(), memberId: z.string(), capturedAt: z.string(), source: sourceSchema });
+const syncSchema = z.object({ draftId: z.string(), memberId: z.string(), capturedAt: z.string(), timeZone: z.string().optional(), source: sourceSchema });
 
 export function registerOfflineDraftRoutes(application: FastifyInstance, service: OfflineDraftService): void {
   application.post<{ Body: unknown }>("/offline-drafts/sync", async (request, reply) => {
@@ -21,7 +21,7 @@ export function registerOfflineDraftRoutes(application: FastifyInstance, service
       const source = body.source.kind === "audio"
         ? { kind: "audio" as const, audio: decodeBase64(body.source.audioBase64), contentType: body.source.contentType }
         : body.source;
-      return { draft: await service.sync({ draftId: body.draftId, memberId: body.memberId, capturedAt: body.capturedAt, source }) };
+      return { draft: await service.sync({ draftId: body.draftId, memberId: body.memberId, capturedAt: body.capturedAt, ...(body.timeZone === undefined ? {} : { timeZone: body.timeZone }), source }) };
     } catch (error) {
       if (error instanceof z.ZodError || error instanceof InvalidOfflineDraftError) {
         const message = error instanceof Error ? error.message : "invalid Offline draft";

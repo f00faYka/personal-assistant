@@ -6,6 +6,7 @@ interface OfflineDraftRow {
   draft_id: string;
   member_id: string;
   captured_at: string;
+  time_zone: string;
   source_kind: "audio" | "text";
   content_type: string | null;
   text: string | null;
@@ -32,9 +33,9 @@ export class SqliteOfflineDraftRepository implements OfflineDraftRepository {
 
   create(draft: OfflineDraft): OfflineDraft {
     this.database.prepare(`INSERT OR IGNORE INTO offline_drafts
-      (draft_id, member_id, captured_at, source_kind, content_type, text, source_sha256, status, capture_id, error, retryable, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      draft.draftId, draft.memberId, draft.capturedAt, draft.sourceKind, draft.contentType ?? null, draft.text ?? null,
+      (draft_id, member_id, captured_at, time_zone, source_kind, content_type, text, source_sha256, status, capture_id, error, retryable, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      draft.draftId, draft.memberId, draft.capturedAt, draft.timeZone, draft.sourceKind, draft.contentType ?? null, draft.text ?? null,
       draft.sourceSha256, draft.status, draft.captureId ?? null, draft.error ?? null, draft.retryable ? 1 : 0, draft.createdAt, draft.updatedAt,
     );
     return this.find(draft.memberId, draft.draftId) ?? draft;
@@ -59,6 +60,7 @@ function toDraft(row: OfflineDraftRow): OfflineDraft {
     draftId: row.draft_id,
     memberId: row.member_id,
     capturedAt: row.captured_at,
+    timeZone: row.time_zone,
     sourceKind: row.source_kind,
     ...(row.content_type === null ? {} : { contentType: row.content_type }),
     ...(row.text === null ? {} : { text: row.text }),
