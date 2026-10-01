@@ -11,7 +11,10 @@ vi.mock("react-native", async () => {
   return {
     AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
     ActivityIndicator: host("ActivityIndicator"),
+    Dimensions: { get: vi.fn(() => ({ width: 390, height: 844 })) },
     FlatList,
+    Modal: host("Modal"),
+    PanResponder: { create: () => ({ panHandlers: {} }) },
     Pressable: host("Pressable"),
     RefreshControl: host("RefreshControl"),
     TextInput: host("TextInput"),
@@ -33,12 +36,16 @@ import type { CaptureSubmitter, VoiceRecorder } from "../capture/voice-capture";
 import { ConfirmedRequestError } from "../http/request-error";
 import type { OfflineDraftStore } from "../offline/offline-drafts";
 import type { OfflineDraftSyncClient } from "../offline/synchronize-offline-drafts";
+import type { MemberItemsClient } from "./member-items";
 
 const task = { kind: "task" as const, id: "task-1", captureId: "capture-1", title: "Buy milk", state: "open" as const, createdAt: "2026-08-14T08:00:00Z", detailUrl: "/captures/capture-1/review" };
 const note = { kind: "note" as const, id: "note-1", captureId: "capture-2", content: "Call the dentist", state: "none" as const, createdAt: "2026-08-14T08:00:00Z", detailUrl: "/captures/capture-2/review" };
 
 describe("MemberListScreen", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
   test("shows loading before the first response", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
@@ -47,6 +54,32 @@ describe("MemberListScreen", () => {
     act(() => { renderer = create(<MemberListScreen apiBaseUrl="http://api.test" memberId="member-1" />); });
 
     expect(textContent(renderer)).toContain("Loading your items…");
+    renderer.unmount();
+  });
+
+  test("refreshes Today’s tasks from every page while Home remains mounted", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-01T10:00:00Z"));
+    const today = new Date("2026-10-01T12:00:00Z");
+    const existingTask = { ...task, dueAt: today.toISOString() };
+    const todayTask = { ...task, id: "task-today", captureId: "capture-today", title: "Buy flowers", dueAt: today.toISOString() };
+    const list = vi.fn<MemberItemsClient["list"]>()
+      .mockResolvedValueOnce({ items: [existingTask], nextCursor: null })
+      .mockResolvedValueOnce({ items: [existingTask], nextCursor: null })
+      .mockResolvedValueOnce({ items: [existingTask], nextCursor: null })
+      .mockResolvedValueOnce({ items: [existingTask], nextCursor: "cursor-today" })
+      .mockResolvedValueOnce({ items: [todayTask], nextCursor: null });
+    const client: MemberItemsClient = { list, search: vi.fn().mockResolvedValue({ items: [], nextCursor: null }) };
+    const renderer = await renderScreen({ client, home: true, timeZone: "UTC" });
+
+    expect(textContent(renderer)).toContain("1 remaining");
+    expect(textContent(renderer)).not.toContain("Buy flowers");
+    await act(async () => { await renderer.root.findByType(RefreshControl).props.onRefresh(); });
+
+    expect(textContent(renderer)).toContain("Buy flowers");
+    expect(textContent(renderer)).toContain("2 remaining");
+    expect(list).toHaveBeenCalledTimes(5);
+    expect(list).toHaveBeenNthCalledWith(5, "member-1", "cursor-today");
     renderer.unmount();
   });
 

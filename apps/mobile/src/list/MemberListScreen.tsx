@@ -76,6 +76,8 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
   const captureCreatedAt = useRef<string | null>(null);
   const loadingCursor = useRef<string | null>(null);
   const requestGeneration = useRef(0);
+  const refreshGeneration = useRef(0);
+  const homeLoadGeneration = useRef(0);
   const deletedOfflineDraftIds = useRef(new Set<string>());
   const metadataClient = useMemo(() => createMetadataClient(apiBaseUrl), [apiBaseUrl]);
 
@@ -113,6 +115,20 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
     setOfflineDraftSync((current) => ({ ...current, [draft.draftId]: result }));
   }, [client, memberId, offlineDraftStore, offlineDraftSyncClient]);
 
+  const loadHomeItems = useCallback(async () => {
+    if (!home) return;
+    const generation = ++homeLoadGeneration.current;
+    setHomeLoadStatus("loading");
+    try {
+      const result = await loadCompleteMemberItems(client, memberId);
+      if (generation !== homeLoadGeneration.current) return;
+      setCompleteHomeItems(result.items);
+      setHomeLoadStatus("ready");
+    } catch {
+      if (generation === homeLoadGeneration.current) setHomeLoadStatus("error");
+    }
+  }, [client, home, memberId]);
+
   const load = useCallback(async (isRefresh = false, cursor?: string, generation = requestGeneration.current) => {
     if (isRefresh) setRefreshing(true);
     else if (cursor) {
@@ -146,7 +162,17 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
     return load(isRefresh, undefined, generation);
   }, [load]);
 
-  const refresh = useCallback(() => startFreshLoad(true), [startFreshLoad]);
+  const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
+    await startFreshLoad(true);
+    if (!home || generation !== refreshGeneration.current) return;
+    setRefreshing(true);
+    try {
+      await loadHomeItems();
+    } finally {
+      if (generation === refreshGeneration.current) setRefreshing(false);
+    }
+  }, [home, loadHomeItems, startFreshLoad]);
 
   const openSearch = useCallback(() => {
     setSearchOpen(true);
@@ -259,17 +285,9 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
 
   useEffect(() => {
     if (!home) return;
-    let cancelled = false;
-    setHomeLoadStatus("loading");
-    void loadCompleteMemberItems(client, memberId).then((result) => {
-      if (cancelled) return;
-      setCompleteHomeItems(result.items);
-      setHomeLoadStatus("ready");
-    }).catch(() => {
-      if (!cancelled) setHomeLoadStatus("error");
-    });
-    return () => { cancelled = true; };
-  }, [client, home, memberId]);
+    void loadHomeItems();
+    return () => { homeLoadGeneration.current += 1; };
+  }, [home, loadHomeItems]);
 
   useEffect(() => {
     if (!offlineDraftStore) return;
