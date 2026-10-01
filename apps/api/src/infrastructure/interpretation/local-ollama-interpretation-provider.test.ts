@@ -15,7 +15,7 @@ describe("LocalOllamaInterpretationProvider", () => {
           content: JSON.stringify({
             action: "create_task",
             title: "Buy milk",
-            dueAt: "2026-08-16T09:00:00.000Z",
+            schedule: { date: "tomorrow", hour: 9, minute: null },
           }),
         },
         done: true,
@@ -32,7 +32,6 @@ describe("LocalOllamaInterpretationProvider", () => {
     const result = await provider.interpret({
       transcriptionText: "add task buy milk tomorrow",
       catalogVersion: "direct-instructions.v1",
-      capturedAt: "2026-08-23T12:00:00.000Z",
     });
 
     expect(result).toEqual({
@@ -40,7 +39,7 @@ describe("LocalOllamaInterpretationProvider", () => {
       rawOutput: {
         action: "create_task",
         title: "Buy milk",
-        dueAt: "2026-08-16T09:00:00.000Z",
+        schedule: { date: "tomorrow", hour: 9, minute: null },
       },
     });
     expect(request).toHaveBeenCalledTimes(1);
@@ -48,17 +47,24 @@ describe("LocalOllamaInterpretationProvider", () => {
     expect(url).toBe("http://127.0.0.1:11434/api/chat");
     expect(options?.method).toBe("POST");
     expect(options?.headers).toEqual({ "content-type": "application/json" });
-    expect(JSON.parse(options?.body as string)).toMatchObject({
+    const requestBody = JSON.parse(options?.body as string) as { readonly format: { readonly oneOf: readonly Record<string, unknown>[] }; readonly messages: readonly { readonly content: string }[] };
+    expect(requestBody).toMatchObject({
       model: "qwen3.5:4b",
       stream: false,
       think: false,
       options: { temperature: 0 },
       messages: [
-        { role: "system", content: expect.stringContaining("2026-08-23T12:00:00.000Z") },
+        { role: "system", content: expect.stringContaining("absolute UTC timestamp") },
         { role: "user", content: "add task buy milk tomorrow" },
       ],
       format: { type: "object", oneOf: expect.any(Array) },
     });
+    expect(requestBody.format.oneOf[0]?.properties).not.toHaveProperty("dueAt");
+    expect(requestBody.messages[0]?.content).not.toContain("capturedAt");
+    expect(requestBody.messages[0]?.content).toContain("twenty three");
+    expect(requestBody.messages[0]?.content).toContain("двадцать три");
+    expect(requestBody.messages[0]?.content).toContain("thirty five");
+    expect(requestBody.messages[0]?.content).toContain("тридцать пять");
   });
 
   test("translates provider, timeout, and malformed-output failures without leaking response content", async () => {
@@ -91,7 +97,6 @@ describe("LocalOllamaInterpretationProvider", () => {
       await expect(provider.interpret({
         transcriptionText: "private transcription",
         catalogVersion: "direct-instructions.v1",
-        capturedAt: "2026-08-23T12:00:00.000Z",
       })).rejects.toEqual(new LocalOllamaInterpretationProviderError(message));
     }
   });

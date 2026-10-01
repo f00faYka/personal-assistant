@@ -8,6 +8,19 @@ export type InterpretationClassification =
   | "ambiguous"
   | "unsupported";
 
+export type SchedulePeriod = "am" | "pm";
+export type ScheduleDayPart = "morning" | "afternoon" | "evening" | "night";
+export type ScheduleSpecialTime = "noon" | "midnight";
+
+export interface InterpretationSchedule {
+  readonly date?: string;
+  readonly hour?: number;
+  readonly minute?: number | null;
+  readonly period?: SchedulePeriod;
+  readonly dayPart?: ScheduleDayPart;
+  readonly special?: ScheduleSpecialTime;
+}
+
 export type InterpretationAction =
   | {
       readonly kind: "create_task";
@@ -26,6 +39,7 @@ export interface InterpretationInput {
   readonly transcriptionStatus: "succeeded";
   readonly transcriptionText: string;
   readonly capturedAt: string;
+  readonly timeZone?: string;
   readonly catalogVersion: string;
   readonly model: string;
   readonly rawOutput: unknown;
@@ -50,10 +64,13 @@ export interface InterpretationRepository {
   create(interpretation: Interpretation): Interpretation;
 }
 
+export interface InterpretationServiceOptions {
+  readonly timeZone?: string;
+}
+
 export interface InterpretationProviderInput {
   readonly transcriptionText: string;
   readonly catalogVersion: string;
-  readonly capturedAt: string;
 }
 
 export interface InterpretationProviderResult {
@@ -66,7 +83,14 @@ export interface InterpretationProvider {
 }
 
 export class InterpretationService {
-  constructor(private readonly repository: InterpretationRepository) {}
+  private readonly timeZone: string;
+
+  constructor(
+    private readonly repository: InterpretationRepository,
+    options: InterpretationServiceOptions = {},
+  ) {
+    this.timeZone = options.timeZone ?? "UTC";
+  }
 
   getByTranscriptionId(transcriptionId: string): Interpretation | undefined {
     return this.repository.findByTranscriptionId(transcriptionId);
@@ -80,7 +104,7 @@ export class InterpretationService {
     const existing = this.repository.findByTranscriptionId(input.transcriptionId);
     if (existing) return existing;
 
-    const result = classify(input);
+    const result = classify({ ...input, timeZone: input.timeZone ?? this.timeZone });
     return this.repository.create({
       id: randomUUID(),
       captureId: input.captureId,
@@ -134,18 +158,28 @@ function classify(input: InterpretationInput): Pick<Interpretation, "classificat
     if (typeof input.rawOutput.title !== "string" || !input.rawOutput.title.trim()) {
       return { classification: "unsupported", rejectionReason: "malformed_model_output" };
     }
-    if (!hasExpectedFields(input.rawOutput, ["action", "title", "dueAt"])) {
+    if (!hasExpectedFields(input.rawOutput, ["action", "title", "schedule"])) {
       return { classification: "unsupported", rejectionReason: "malformed_model_output" };
     }
-    const extractedDueAt = extractExplicitDueAt(input.transcriptionText, input.capturedAt);
-    if (input.rawOutput.dueAt !== undefined && !isIsoDate(input.rawOutput.dueAt)) {
+    const timeZone = input.timeZone ?? "UTC";
+    const modelSchedule = parseModelSchedule(input.rawOutput.schedule, input.capturedAt, timeZone);
+    if (modelSchedule === INVALID_SCHEDULE) {
       return { classification: "unsupported", rejectionReason: "malformed_model_output" };
     }
+    const extractedDueAt = resolveExplicitSchedule({
+      transcriptionText: input.transcriptionText,
+      capturedAt: input.capturedAt,
+      timeZone,
+    });
     if (hasExplicitSchedule(input.transcriptionText) && extractedDueAt === undefined) {
       return { classification: "unsupported", rejectionReason: "malformed_model_output" };
     }
-    if (extractedDueAt !== undefined && input.rawOutput.dueAt !== undefined
-      && normalizeIsoDate(input.rawOutput.dueAt) !== extractedDueAt) {
+    if (modelSchedule !== undefined && !modelScheduleMatchesTranscription(
+      modelSchedule,
+      input.transcriptionText,
+      input.capturedAt,
+      timeZone,
+    )) {
       return { classification: "unsupported", rejectionReason: "malformed_model_output" };
     }
     const title = normalizeTaskTitle(input.rawOutput.title, input.transcriptionText);
@@ -155,9 +189,7 @@ function classify(input: InterpretationInput): Pick<Interpretation, "classificat
       action: {
         kind: "create_task",
         title,
-        ...(input.rawOutput.dueAt === undefined
-          ? extractedDueAt === undefined ? {} : { dueAt: extractedDueAt }
-          : { dueAt: input.rawOutput.dueAt }),
+        ...(extractedDueAt === undefined ? {} : { dueAt: extractedDueAt }),
       },
     };
   }
@@ -191,118 +223,317 @@ function serializeRawOutput(value: unknown): string {
   return serialized === undefined ? "null" : serialized;
 }
 
-function isIsoDate(value: unknown): value is string {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) {
-    return false;
-  }
-  const normalized = value.includes(".") ? value : value.replace("Z", ".000Z");
-  return new Date(value).toISOString() === normalized;
-}
-
 const MONTHS = new Map([
   ["january", 0], ["february", 1], ["march", 2], ["april", 3], ["may", 4], ["june", 5],
   ["july", 6], ["august", 7], ["september", 8], ["october", 9], ["november", 10], ["december", 11],
 ]);
 
-function extractExplicitDueAt(text: string, capturedAt: string): string | undefined {
-  const normalized = text.toLowerCase();
-  const captured = new Date(capturedAt);
-  if (Number.isNaN(captured.getTime())) return undefined;
-  const date = extractDate(normalized, captured);
-  const time = extractTime(normalized);
-  if (hasExplicitTime(normalized) && time === undefined) return undefined;
-  if (date === undefined && time === undefined) return undefined;
-  const base = date ?? { year: captured.getUTCFullYear(), month: captured.getUTCMonth(), day: captured.getUTCDate() };
-  return new Date(Date.UTC(base.year, base.month, base.day, time?.hour ?? 0, time?.minute ?? 0)).toISOString();
+const ENGLISH_CLOCK_NUMBERS = createClockNumberMap(
+  ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"],
+  [["twenty", 20], ["thirty", 30], ["forty", 40], ["fifty", 50]],
+);
+const RUSSIAN_CLOCK_NUMBERS = createClockNumberMap(
+  ["ноль", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать"],
+  [["двадцать", 20], ["тридцать", 30], ["сорок", 40], ["пятьдесят", 50]],
+  [["одна", 1], ["две", 2]],
+);
+const ENGLISH_CLOCK_NUMBER_PATTERN = createClockNumberPattern(ENGLISH_CLOCK_NUMBERS, true);
+const RUSSIAN_CLOCK_NUMBER_PATTERN = createClockNumberPattern(RUSSIAN_CLOCK_NUMBERS, false);
+const ENGLISH_WEEKDAY_PATTERN = "monday|tuesday|wednesday|thursday|friday|saturday|sunday";
+const RUSSIAN_WEEKDAY_PATTERN = "понедельник|вторник|среду|среда|четверг|пятницу|пятница|субботу|суббота|воскресенье";
+const RUSSIAN_WEEKDAY_TARGETS = new Map([
+  ["понедельник", 1], ["вторник", 2], ["среда", 3], ["среду", 3], ["четверг", 4],
+  ["пятница", 5], ["пятницу", 5], ["суббота", 6], ["субботу", 6], ["воскресенье", 0],
+]);
+
+function createClockNumberMap(
+  underTwenty: readonly string[],
+  tens: readonly (readonly [string, number])[],
+  variants: readonly (readonly [string, number])[] = [],
+): Map<string, number> {
+  const result = new Map<string, number>(underTwenty.map((word, value) => [word, value]));
+  for (const [word, value] of tens) {
+    result.set(word, value);
+    for (let unit = 1; unit <= 9; unit += 1) {
+      result.set(`${word} ${underTwenty[unit]}`, value + unit);
+    }
+  }
+  for (const [word, value] of variants) {
+    result.set(word, value);
+    for (const [tensWord, tensValue] of tens) result.set(`${tensWord} ${word}`, tensValue + value);
+  }
+  return result;
+}
+
+function createClockNumberPattern(numbers: ReadonlyMap<string, number>, allowHyphen: boolean): string {
+  const words = [...numbers.keys()]
+    .sort((left, right) => right.length - left.length)
+    .map((phrase) => phrase.split(" ").map(escapeRegExp).join(allowHyphen ? "(?:\\s+|-)" : "\\s+"));
+  return `\\d{1,2}|${words.join("|")}`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 interface CalendarDate { readonly year: number; readonly month: number; readonly day: number }
-interface ClockTime { readonly hour: number; readonly minute: number }
+interface ClockTime {
+  readonly hour?: number;
+  readonly minute?: number;
+  readonly period?: SchedulePeriod;
+  readonly dayPart?: ScheduleDayPart;
+  readonly special?: ScheduleSpecialTime;
+}
 
-function extractDate(text: string, captured: Date): CalendarDate | undefined {
-  if (/\b(?:today)\b|сегодня/.test(text)) {
-    return { year: captured.getUTCFullYear(), month: captured.getUTCMonth(), day: captured.getUTCDate() };
+interface ParsedSchedule {
+  readonly date?: CalendarDate;
+  readonly time?: ClockTime;
+}
+
+const INVALID_SCHEDULE = Symbol("invalid schedule");
+
+export interface ScheduleResolverInput {
+  readonly transcriptionText: string;
+  readonly capturedAt: string;
+  readonly timeZone?: string;
+}
+
+export function resolveExplicitSchedule(input: ScheduleResolverInput): string | undefined {
+  const normalized = input.transcriptionText.toLowerCase();
+  const captured = new Date(input.capturedAt);
+  if (Number.isNaN(captured.getTime()) || !isValidTimeZone(input.timeZone ?? "UTC")) return undefined;
+
+  const timeZone = input.timeZone ?? "UTC";
+  const capturedDate = localCalendarDate(captured, timeZone);
+  const date = extractDate(normalized, capturedDate);
+  const time = extractTime(normalized);
+  if (hasExplicitTime(normalized) && time === undefined) return undefined;
+  if (date === undefined && time === undefined) return undefined;
+  if (time !== undefined && time.hour === undefined) return undefined;
+
+  const base = date ?? capturedDate;
+  return localDateTimeToUtc(base, time, timeZone);
+}
+
+function parseModelSchedule(value: unknown, capturedAt: string, timeZone: string): ParsedSchedule | typeof INVALID_SCHEDULE | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || !hasExpectedFields(value, ["date", "hour", "minute", "period", "dayPart", "special"])) {
+    return INVALID_SCHEDULE;
   }
-  if (/послезавтра|\bthe day after tomorrow\b/.test(text)) {
-    const next = addUtcDays(startOfUtcDay(captured), 2);
-    return { year: next.getUTCFullYear(), month: next.getUTCMonth(), day: next.getUTCDate() };
+  if (value.date !== undefined && (typeof value.date !== "string" || !value.date.trim())) return INVALID_SCHEDULE;
+  const hour = value.hour;
+  const minute = value.minute;
+  const period = value.period;
+  const dayPart = value.dayPart;
+  const special = value.special;
+  if (hour !== undefined && (typeof hour !== "number" || !Number.isInteger(hour) || hour < 0 || hour > 23)) return INVALID_SCHEDULE;
+  if (minute !== undefined && minute !== null && (typeof minute !== "number" || !Number.isInteger(minute) || minute < 0 || minute > 59)) return INVALID_SCHEDULE;
+  if (period !== undefined && period !== "am" && period !== "pm") return INVALID_SCHEDULE;
+  if (dayPart !== undefined && !isScheduleDayPart(dayPart)) return INVALID_SCHEDULE;
+  if (special !== undefined && special !== "noon" && special !== "midnight") return INVALID_SCHEDULE;
+  if (special !== undefined && (hour !== undefined || minute !== undefined || period !== undefined || dayPart !== undefined)) {
+    return INVALID_SCHEDULE;
+  }
+  const date = modelScheduleDate(value.date, capturedAt, timeZone);
+  if (date === INVALID_DATE || (value.date !== undefined && date === undefined)) return INVALID_SCHEDULE;
+  if (dayPart !== undefined && hour === undefined) {
+    return { ...(date === undefined ? {} : { date }), time: { dayPart } };
+  }
+  if (period !== undefined && hour === undefined) return INVALID_SCHEDULE;
+  if (hour !== undefined && period !== undefined && (hour < 1 || hour > 12)) return INVALID_SCHEDULE;
+  if (hour === undefined && minute !== undefined) return INVALID_SCHEDULE;
+  const effectivePeriod = period ?? periodForDayPart(dayPart);
+  const time: ClockTime | undefined = special === undefined && hour === undefined && dayPart === undefined
+    ? undefined
+    : special !== undefined
+      ? { special, hour: special === "noon" ? 12 : 0, minute: 0 }
+      : {
+        ...(hour === undefined ? {} : { hour: effectivePeriod === undefined ? hour : (hour % 12) + (effectivePeriod === "pm" ? 12 : 0) }),
+        ...(minute === undefined || minute === null ? {} : { minute }),
+        ...(period === undefined ? {} : { period }),
+        ...(dayPart === undefined ? {} : { dayPart }),
+      };
+  return { ...(date === undefined ? {} : { date }), ...(time === undefined ? {} : { time }) };
+}
+
+const INVALID_DATE = Symbol("invalid date");
+
+function modelScheduleDate(value: unknown, capturedAt: string, timeZone: string): CalendarDate | typeof INVALID_DATE | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return INVALID_DATE;
+  const captured = new Date(capturedAt);
+  if (Number.isNaN(captured.getTime())) return INVALID_DATE;
+  if (!isValidTimeZone(timeZone)) return INVALID_DATE;
+  const capturedDate = localCalendarDate(captured, timeZone);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (match === null) return INVALID_DATE;
+    const parsed = { year: Number(match[1]), month: Number(match[2]) - 1, day: Number(match[3]) };
+    return isValidCalendarDate(parsed) ? parsed : INVALID_DATE;
+  }
+  const parsed = extractDate(value.toLowerCase(), capturedDate);
+  return parsed ?? INVALID_DATE;
+}
+
+function modelScheduleMatchesTranscription(
+  model: ParsedSchedule,
+  transcription: string,
+  capturedAt: string,
+  timeZone: string,
+): boolean {
+  const captured = new Date(capturedAt);
+  if (Number.isNaN(captured.getTime())) return false;
+  if (!isValidTimeZone(timeZone)) return false;
+  const capturedDate = localCalendarDate(captured, timeZone);
+  const spoken = parseSpokenSchedule(transcription, capturedDate);
+  if (model.date !== undefined && !sameCalendarDate(model.date, spoken.date)) return false;
+  if (model.time === undefined) return true;
+  if (spoken.time === undefined) return false;
+  if (model.time.special !== undefined) return model.time.special === spoken.time.special;
+  if (model.time.hour !== undefined && model.time.hour !== spoken.time.hour) return false;
+  if (model.time.minute !== undefined && model.time.minute !== spoken.time.minute) return false;
+  if (model.time.period !== undefined && model.time.period !== spoken.time.period) return false;
+  if (model.time.dayPart !== undefined && model.time.dayPart !== spoken.time.dayPart) return false;
+  return true;
+}
+
+function parseSpokenSchedule(text: string, capturedDate: CalendarDate): ParsedSchedule {
+  const normalized = text.toLowerCase();
+  const date = extractDate(normalized, capturedDate);
+  const time = extractTime(normalized);
+  return { ...(date === undefined ? {} : { date }), ...(time === undefined ? {} : { time }) };
+}
+
+function extractDate(text: string, captured: CalendarDate): CalendarDate | undefined {
+  if (/\b(?:today)\b|сегодня/.test(text)) {
+    return captured;
+  }
+  if (/послезавтра|после\s+завтра|\bthe day after tomorrow\b/.test(text)) {
+    return addCalendarDays(captured, 2);
+  }
+  if (/позавчера|поза\s+вчера|\bthe day before yesterday\b/.test(text)) {
+    return addCalendarDays(captured, -2);
+  }
+  if (/вчера|\byesterday\b/.test(text)) {
+    return addCalendarDays(captured, -1);
   }
   if (/\b(?:tomorrow)\b|завтра/.test(text)) {
-    const next = addUtcDays(startOfUtcDay(captured), 1);
-    return { year: next.getUTCFullYear(), month: next.getUTCMonth(), day: next.getUTCDate() };
+    return addCalendarDays(captured, 1);
   }
   const thisWeekday = text.match(/\bthis week\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/)?.[1];
   if (thisWeekday) {
     const target = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].indexOf(thisWeekday);
-    const monday = addUtcDays(startOfUtcDay(captured), 1 - (captured.getUTCDay() || 7));
-    let result = addUtcDays(monday, target);
-    if (result < startOfUtcDay(captured)) result = addUtcDays(result, 7);
-    return { year: result.getUTCFullYear(), month: result.getUTCMonth(), day: result.getUTCDate() };
+    const monday = addCalendarDays(captured, 1 - (calendarDayOfWeek(captured) || 7));
+    let result = addCalendarDays(monday, target);
+    if (compareCalendarDates(result, captured) < 0) result = addCalendarDays(result, 7);
+    return result;
   }
   const weekday = text.match(/\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/)?.[1];
   if (weekday) {
     const target = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].indexOf(weekday);
-    const next = addUtcDays(startOfUtcDay(captured), (target - captured.getUTCDay() + 7) % 7 || 7);
-    return { year: next.getUTCFullYear(), month: next.getUTCMonth(), day: next.getUTCDate() };
+    return addCalendarDays(captured, (target - calendarDayOfWeek(captured) + 7) % 7 || 7);
+  }
+  const englishWeekday = text.match(new RegExp(`\\bon\\s+(${ENGLISH_WEEKDAY_PATTERN})\\b`))?.[1];
+  if (englishWeekday) {
+    const target = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].indexOf(englishWeekday);
+    return addCalendarDays(captured, (target - calendarDayOfWeek(captured) + 7) % 7 || 7);
+  }
+  const russianWeekday = text.match(new RegExp(`(?:^|\\s)(?:в|во)\\s+(?:следующ\\w*\\s+)?(${RUSSIAN_WEEKDAY_PATTERN})(?=\\s|[.!?,]|$)`))?.[1];
+  if (russianWeekday !== undefined) {
+    const target = RUSSIAN_WEEKDAY_TARGETS.get(russianWeekday);
+    if (target !== undefined) return addCalendarDays(captured, (target - calendarDayOfWeek(captured) + 7) % 7 || 7);
+  }
+  const bareEnglishWeekday = text.match(new RegExp(`^(${ENGLISH_WEEKDAY_PATTERN})$`))?.[1];
+  if (bareEnglishWeekday) {
+    const target = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].indexOf(bareEnglishWeekday);
+    return addCalendarDays(captured, (target - calendarDayOfWeek(captured) + 7) % 7 || 7);
+  }
+  const bareRussianWeekday = text.match(new RegExp(`^(${RUSSIAN_WEEKDAY_PATTERN})$`))?.[1];
+  if (bareRussianWeekday !== undefined) {
+    const target = RUSSIAN_WEEKDAY_TARGETS.get(bareRussianWeekday);
+    if (target !== undefined) return addCalendarDays(captured, (target - calendarDayOfWeek(captured) + 7) % 7 || 7);
   }
   const match = text.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+of\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/)
     ?? text.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?\b/);
   if (!match) return undefined;
-  const day = Number(/^\d/.test(match[1] ?? "") ? match[1] : match[2]);
-  const monthName = MONTHS.has(match[1] ?? "") ? match[1] : match[2];
-  const month = MONTHS.get(monthName ?? "");
-  if (month === undefined || day < 1 || day > 31) return undefined;
-  let year = captured.getUTCFullYear();
-  let result = new Date(Date.UTC(year, month, day));
-  if (result.getUTCMonth() !== month || result.getUTCDate() !== day) return undefined;
-  if (result < startOfUtcDay(captured)) {
+  const first = match[1] ?? "";
+  const second = match[2] ?? "";
+  const day = Number(/^\d/.test(first) ? first : second);
+  const monthName = MONTHS.has(first) ? first : second;
+  const month = MONTHS.get(monthName);
+  if (month === undefined || !Number.isInteger(day) || day < 1 || day > 31) return undefined;
+  let year = captured.year;
+  let result = { year, month, day };
+  if (!isValidCalendarDate(result)) return undefined;
+  if (compareCalendarDates(result, captured) < 0) {
     year += 1;
-    result = new Date(Date.UTC(year, month, day));
+    result = { year, month, day };
   }
-  return { year, month, day: result.getUTCDate() };
+  return isValidCalendarDate(result) ? result : undefined;
 }
 
 function extractTime(text: string): ClockTime | undefined {
-  if (/\bnoon\b|полдень/.test(text)) return { hour: 12, minute: 0 };
-  if (/\bmidnight\b|полночь/.test(text)) return { hour: 0, minute: 0 };
-  const twelveHour = text.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/)
-    ?? text.match(/в\s*(\d{1,2})(?::(\d{2}))?\s*(утра|дня|вечера|ночи)/);
-  if (twelveHour) {
-    const hour = Number(twelveHour[1]);
-    const minute = Number(twelveHour[2] ?? 0);
-    if (hour < 1 || hour > 12 || minute > 59) return undefined;
-    const period = twelveHour[3];
-    const isPm = period === "pm" || period === "вечера" || period === "дня";
-    return { hour: (hour % 12) + (isPm ? 12 : 0), minute };
-  }
-  const twentyFourHour = text.match(/\bat\s+(\d{1,2}):(\d{2})\b/)
-    ?? text.match(/в\s*(\d{1,2}):(\d{2})/);
-  if (!twentyFourHour) return undefined;
-  const hour = Number(twentyFourHour[1]);
-  const minute = Number(twentyFourHour[2]);
-  return hour > 23 || minute > 59 ? undefined : { hour, minute };
+  if (/\bnoon\b|полдень/.test(text)) return { hour: 12, minute: 0, special: "noon" };
+  if (/\bmidnight\b|полночь/.test(text)) return { hour: 0, minute: 0, special: "midnight" };
+  const english = text.match(new RegExp(`\\bat\\s+(${ENGLISH_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?\\s+(am|pm|morning|afternoon|evening|night|in\\s+the\\s+(?:morning|afternoon|evening|night))\\b`))
+    ?? text.match(new RegExp(`\\bat\\s+(${ENGLISH_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?(?=\\s|[.!?,]|$)`));
+  const russian = text.match(new RegExp(`в\\s*(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?(?:\\s*час(?:а|ов)?)?(?:\\s+(?:ноль\\s+)?(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:\\s*минут(?:а|ы)?)?)?\\s+(утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью)`))
+    ?? text.match(new RegExp(`в\\s*(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?(?:\\s*час(?:а|ов)?)?(?:\\s+(?:ноль\\s+)?(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:\\s*минут(?:а|ы)?)?)?(?=\\s|[.!?,]|$)`));
+  const match = english ?? russian;
+  if (!match) return undefined;
+  const hour = parseClockHour(match[1] ?? "");
+  const minute = match[2] !== undefined
+    ? Number(match[2])
+    : match[3] === undefined
+      ? undefined
+      : parseClockHour(match[3]);
+  const periodValue = match[4];
+  const dayPart = normalizeDayPart(periodValue);
+  const period = periodValue === "am" || periodValue === "pm" ? periodValue : periodForDayPart(dayPart);
+  if (!Number.isInteger(hour) || hour < 1 || hour > 23 || (period !== undefined && hour > 12) || (minute !== undefined && (!Number.isInteger(minute) || minute < 0 || minute > 59))) return undefined;
+  return {
+    hour: period === undefined ? hour : (hour % 12) + (period === "pm" ? 12 : 0),
+    ...(minute === undefined ? {} : { minute }),
+    ...(period === undefined ? {} : { period }),
+    ...(dayPart === undefined ? {} : { dayPart }),
+  };
 }
 
 function hasExplicitTime(text: string): boolean {
   return /\b(?:noon|midnight|at\s+\d{1,2}(?::\d{2})?|morning|afternoon|evening|night)\b/i.test(text)
-    || /полдень|полночь|в\s+\d{1,2}(?::\d{2})?|утром|днём|днем|вечером|ночью/i.test(text);
+    || /полдень|полночь|в\s*\d{1,2}(?::\d{2})?|утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью/i.test(text)
+    || hasSpokenClockNumber(text);
 }
 
-function startOfUtcDay(value: Date): Date {
-  return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
+function localCalendarDate(value: Date, timeZone: string): CalendarDate {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(value);
+  return { year: partNumber(parts, "year"), month: partNumber(parts, "month") - 1, day: partNumber(parts, "day") };
 }
 
-function addUtcDays(value: Date, days: number): Date {
-  const result = new Date(value);
-  result.setUTCDate(result.getUTCDate() + days);
-  return result;
+function localDateTimeToUtc(date: CalendarDate, time: ClockTime | undefined, timeZone: string): string | undefined {
+  if (!isValidCalendarDate(date)) return undefined;
+  const hour = time?.hour ?? 0;
+  const minute = time?.minute ?? 0;
+  const target = Date.UTC(date.year, date.month, date.day, hour, minute);
+  let candidate = target;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const local = localCalendarDateTime(new Date(candidate), timeZone);
+    const offset = Date.UTC(local.year, local.month, local.day, local.hour, local.minute) - candidate;
+    candidate = target - offset;
+  }
+  const result = new Date(candidate);
+  const local = localCalendarDateTime(result, timeZone);
+  if (Date.UTC(local.year, local.month, local.day, local.hour, local.minute) !== target) return undefined;
+  return result.toISOString();
 }
 
 function hasExplicitSchedule(text: string): boolean {
-  return /\b(?:today|tomorrow|the day after tomorrow|this week\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|next\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|\d{1,2}(?:st|nd|rd|th)?\s+of\s+|(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2})\b/i.test(text)
-    || /послезавтра|сегодня|завтра/.test(text)
+  return new RegExp(`\\b(?:today|tomorrow|yesterday|the day after tomorrow|the day before yesterday|this week\\s+(?:${ENGLISH_WEEKDAY_PATTERN})|next\\s+(?:${ENGLISH_WEEKDAY_PATTERN})|on\\s+(?:${ENGLISH_WEEKDAY_PATTERN})|\\d{1,2}(?:st|nd|rd|th)?\\s+of\\s+|(?:january|february|march|april|may|june|july|august|september|october|november|december)\\s+\\d{1,2})\\b`, "i").test(text)
+    || /послезавтра|после\s+завтра|позавчера|поза\s+вчера|сегодня|завтра|вчера/.test(text)
+    || new RegExp(`(?:^|\\s)(?:в|во)\\s+(?:следующ\\w*\\s+)?(?:${RUSSIAN_WEEKDAY_PATTERN})(?=\\s|[.!?,]|$)`).test(text)
     || /\b(?:noon|midnight|at\s+\d{1,2}(?::\d{2})?|morning|afternoon|evening|night)\b/i.test(text)
-    || /полдень|полночь|в\s+\d{1,2}(?::\d{2})?|утром|днём|днем|вечером|ночью/i.test(text);
+    || /полдень|полночь|в\s*\d{1,2}(?::\d{2})?|утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью/i.test(text)
+    || hasSpokenClockNumber(text);
 }
 
 function normalizeTaskTitle(title: string, transcription: string): string {
@@ -316,12 +547,92 @@ function normalizeTaskTitle(title: string, transcription: string): string {
 
 function removeSchedule(value: string): string {
   return value.trim()
-    .replace(/\s+(?:today|tomorrow|the day after tomorrow|this week\s+\w+|послезавтра|сегодня|завтра)(?:\s+(?:at|в)\s+[^.!?]+)?[.!?]*$/i, "")
+    .replace(new RegExp(`\\s+(?:today|tomorrow|yesterday|the day after tomorrow|the day before yesterday|this week\\s+\\w+|on\\s+(?:${ENGLISH_WEEKDAY_PATTERN})|(?:в|во)\\s+(?:следующ\\w*\\s+)?(?:${RUSSIAN_WEEKDAY_PATTERN})|послезавтра|после\\s+завтра|позавчера|поза\\s+вчера|сегодня|завтра|вчера)(?:\\s+(?:at|в)\\s+[^.!?]+)?[.!?]*$`, "i"), "")
     .replace(/\s+(?:on\s+\d{1,2}(?:st|nd|rd|th)?\s+of\s+\w+|\w+\s+\d{1,2}(?:st|nd|rd|th)?)[.!?]*$/i, "")
-    .replace(/\s+(?:at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?|в\s+\d{1,2}(?::\d{2})?(?:\s+(?:утра|дня|вечера|ночи))?)[.!?]*$/i, "")
+    .replace(new RegExp(`\\s+(?:at\\s+(?:${ENGLISH_CLOCK_NUMBER_PATTERN})(?::\\d{2})?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(?:${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?(?:\\s+(?:am|pm|morning|afternoon|evening|night|in\\s+the\\s+(?:morning|afternoon|evening|night)))?|в\\s*(?:${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::\\d{2})?(?:\\s*час(?:а|ов)?)?(?:\\s+(?:ноль\\s+)?(?:${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:\\s*минут(?:а|ы)?)?)?(?:\\s+(?:утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью))?)[.!?]*$`, "i"), "")
     .trim().replace(/[.!?]+$/, "");
 }
 
-function normalizeIsoDate(value: string): string {
-  return new Date(value).toISOString();
+function isScheduleDayPart(value: unknown): value is ScheduleDayPart {
+  return value === "morning" || value === "afternoon" || value === "evening" || value === "night";
+}
+
+function parseClockHour(value: string): number {
+  const normalized = value.toLowerCase().replace(/-/g, " ").replace(/\s+/g, " ").trim();
+  if (/^\d{1,2}$/.test(normalized)) return Number(normalized);
+  return ENGLISH_CLOCK_NUMBERS.get(normalized) ?? RUSSIAN_CLOCK_NUMBERS.get(normalized) ?? Number.NaN;
+}
+
+function hasSpokenClockNumber(text: string): boolean {
+  return new RegExp(`\\bat\\s+(?:${ENGLISH_CLOCK_NUMBER_PATTERN})(?::\\d{2})?(?:\\s|[.!?,]|$)|в\\s*(?:${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::\\d{2})?(?:\\s|[.!?,]|$)`).test(text);
+}
+
+function normalizeDayPart(value: string | undefined): ScheduleDayPart | undefined {
+  if (value === undefined) return undefined;
+  if (value.startsWith("in the ")) value = value.slice("in the ".length);
+  if (value === "morning" || value === "утра" || value === "утром") return "morning";
+  if (value === "afternoon" || value === "дня" || value === "днём" || value === "днем") return "afternoon";
+  if (value === "evening" || value === "вечера" || value === "вечером") return "evening";
+  if (value === "night" || value === "ночи" || value === "ночью") return "night";
+  return undefined;
+}
+
+function periodForDayPart(dayPart: ScheduleDayPart | undefined): SchedulePeriod | undefined {
+  return dayPart === "morning" ? "am" : dayPart === undefined ? undefined : "pm";
+}
+
+function localCalendarDateTime(value: Date, timeZone: string): CalendarDate & { readonly hour: number; readonly minute: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(value);
+  return {
+    year: partNumber(parts, "year"),
+    month: partNumber(parts, "month") - 1,
+    day: partNumber(parts, "day"),
+    hour: partNumber(parts, "hour"),
+    minute: partNumber(parts, "minute"),
+  };
+}
+
+function partNumber(parts: readonly Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPartTypes): number {
+  const value = parts.find((part) => part.type === type)?.value;
+  return Number(value);
+}
+
+function isValidTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isValidCalendarDate(value: CalendarDate): boolean {
+  const date = new Date(Date.UTC(value.year, value.month, value.day));
+  return date.getUTCFullYear() === value.year && date.getUTCMonth() === value.month && date.getUTCDate() === value.day;
+}
+
+function addCalendarDays(value: CalendarDate, days: number): CalendarDate {
+  const date = new Date(Date.UTC(value.year, value.month, value.day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return { year: date.getUTCFullYear(), month: date.getUTCMonth(), day: date.getUTCDate() };
+}
+
+function calendarDayOfWeek(value: CalendarDate): number {
+  return new Date(Date.UTC(value.year, value.month, value.day)).getUTCDay();
+}
+
+function compareCalendarDates(left: CalendarDate, right: CalendarDate): number {
+  return Date.UTC(left.year, left.month, left.day) - Date.UTC(right.year, right.month, right.day);
+}
+
+function sameCalendarDate(left: CalendarDate, right: CalendarDate | undefined): boolean {
+  return right !== undefined && left.year === right.year && left.month === right.month && left.day === right.day;
 }
