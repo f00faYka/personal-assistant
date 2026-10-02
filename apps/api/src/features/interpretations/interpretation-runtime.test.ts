@@ -129,12 +129,12 @@ describe("production interpretation runtime", () => {
     {
       transcriptionText: "Remind me today at 5 o'clock to call the office.",
       rawOutput: { action: "create_task", title: "Call the office", schedule: { date: "today", hour: 5 } },
-      dueAt: "2026-08-23T03:00:00.000Z",
+      dueAt: "2026-08-23T15:00:00.000Z",
     },
     {
       transcriptionText: "Remind me today to call those at 11.",
       rawOutput: { action: "create_task", title: "Call those", schedule: { date: "today", hour: 11 } },
-      dueAt: "2026-08-23T09:00:00.000Z",
+      dueAt: "2026-08-23T21:00:00.000Z",
     },
     {
       transcriptionText: "напомни сегодня в 12 позвонить на тариус",
