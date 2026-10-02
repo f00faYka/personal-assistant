@@ -312,7 +312,31 @@ export function resolveExplicitSchedule(input: ScheduleResolverInput): string | 
   if (time !== undefined && time.hour === undefined) return undefined;
 
   const base = date ?? capturedDate;
-  return localDateTimeToUtc(base, time, timeZone);
+  return localDateTimeToUtc(base, normalizeAmbiguousTodayTime(date, time, captured, capturedDate, timeZone), timeZone);
+}
+
+function normalizeAmbiguousTodayTime(
+  date: CalendarDate | undefined,
+  time: ClockTime | undefined,
+  captured: Date,
+  capturedDate: CalendarDate,
+  timeZone: string,
+): ClockTime | undefined {
+  if (
+    date === undefined
+    || time?.hour === undefined
+    || !sameCalendarDate(date, capturedDate)
+    || time.hour < 1
+    || time.hour > 11
+    || time.period !== undefined
+    || time.dayPart !== undefined
+    || time.special !== undefined
+  ) return time;
+
+  const now = localCalendarDateTime(captured, timeZone);
+  const minute = time.minute ?? 0;
+  if (time.hour > now.hour || (time.hour === now.hour && minute >= now.minute)) return time;
+  return { ...time, hour: time.hour + 12 };
 }
 
 function parseModelSchedule(value: unknown, capturedAt: string, timeZone: string): ParsedSchedule | typeof INVALID_SCHEDULE | undefined {
@@ -339,8 +363,8 @@ function parseModelSchedule(value: unknown, capturedAt: string, timeZone: string
   if (dayPart !== undefined && hour === undefined) {
     return { ...(date === undefined ? {} : { date }), time: { dayPart } };
   }
-  if (period !== undefined && hour === undefined) return INVALID_SCHEDULE;
-  if (hour !== undefined && period !== undefined && (hour < 1 || hour > 12)) return INVALID_SCHEDULE;
+  if (period !== undefined && (hour === undefined || hour < 1 || hour > 23)) return INVALID_SCHEDULE;
+  if (period === "am" && hour !== undefined && hour > 12) return INVALID_SCHEDULE;
   if (hour === undefined && minute !== undefined) return INVALID_SCHEDULE;
   const effectivePeriod = period ?? periodForDayPart(dayPart);
   const time: ClockTime | undefined = special === undefined && hour === undefined && dayPart === undefined
@@ -348,7 +372,7 @@ function parseModelSchedule(value: unknown, capturedAt: string, timeZone: string
     : special !== undefined
       ? { special, hour: special === "noon" ? 12 : 0, minute: 0 }
       : {
-        ...(hour === undefined ? {} : { hour: effectivePeriod === undefined ? hour : (hour % 12) + (effectivePeriod === "pm" ? 12 : 0) }),
+        ...(hour === undefined ? {} : { hour: effectivePeriod === undefined || hour > 12 ? hour : (hour % 12) + (effectivePeriod === "pm" ? 12 : 0) }),
         ...(minute === undefined || minute === null ? {} : { minute }),
         ...(period === undefined ? {} : { period }),
         ...(dayPart === undefined ? {} : { dayPart }),
@@ -475,10 +499,10 @@ function extractDate(text: string, captured: CalendarDate): CalendarDate | undef
 function extractTime(text: string): ClockTime | undefined {
   if (/\bnoon\b|полдень/.test(text)) return { hour: 12, minute: 0, special: "noon" };
   if (/\bmidnight\b|полночь/.test(text)) return { hour: 0, minute: 0, special: "midnight" };
-  const english = text.match(new RegExp(`\\bat\\s+(${ENGLISH_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?\\s+(am|pm|morning|afternoon|evening|night|in\\s+the\\s+(?:morning|afternoon|evening|night))\\b`))
-    ?? text.match(new RegExp(`\\bat\\s+(${ENGLISH_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?(?=\\s|[.!?,]|$)`));
-  const russian = text.match(new RegExp(`в\\s*(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?(?:\\s*час(?:а|ов)?)?(?:\\s+(?:ноль\\s+)?(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:\\s*минут(?:а|ы)?)?)?\\s+(утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью)`))
-    ?? text.match(new RegExp(`в\\s*(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::(\\d{2}))?(?:\\s*час(?:а|ов)?)?(?:\\s+(?:ноль\\s+)?(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:\\s*минут(?:а|ы)?)?)?(?=\\s|[.!?,]|$)`));
+  const english = text.match(new RegExp(`\\bat\\s+(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:[:.](\\d{2}))?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?\\s+(am|pm|morning|afternoon|evening|night|in\\s+the\\s+(?:morning|afternoon|evening|night))\\b`))
+    ?? text.match(new RegExp(`\\bat\\s+(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:[:.](\\d{2}))?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?(?=\\s|[.!?,]|$)`));
+  const russian = text.match(new RegExp(`в\\s*(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:[:.](\\d{2}))?(?:\\s*час(?:а|ов)?)?(?:\\s+(?:ноль\\s+)?(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:\\s*минут(?:а|ы)?)?)?\\s+(утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью)`))
+    ?? text.match(new RegExp(`в\\s*(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:[:.](\\d{2}))?(?:\\s*час(?:а|ов)?)?(?:\\s+(?:ноль\\s+)?(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:\\s*минут(?:а|ы)?)?)?(?=\\s|[.!?,]|$)`));
   const match = english ?? russian;
   if (!match) return undefined;
   const hour = parseClockHour(match[1] ?? "");
@@ -500,8 +524,8 @@ function extractTime(text: string): ClockTime | undefined {
 }
 
 function hasExplicitTime(text: string): boolean {
-  return /\b(?:noon|midnight|at\s+\d{1,2}(?::\d{2})?|morning|afternoon|evening|night)\b/i.test(text)
-    || /полдень|полночь|в\s*\d{1,2}(?::\d{2})?|утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью/i.test(text)
+  return /\b(?:noon|midnight|at\s+\d{1,2}(?:[:.]\d{2})?|morning|afternoon|evening|night)\b/i.test(text)
+    || /полдень|полночь|в\s*\d{1,2}(?:[:.]\d{2})?|утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью/i.test(text)
     || hasSpokenClockNumber(text);
 }
 
@@ -549,7 +573,7 @@ function removeSchedule(value: string): string {
   return value.trim()
     .replace(new RegExp(`\\s+(?:today|tomorrow|yesterday|the day after tomorrow|the day before yesterday|this week\\s+\\w+|on\\s+(?:${ENGLISH_WEEKDAY_PATTERN})|(?:в|во)\\s+(?:следующ\\w*\\s+)?(?:${RUSSIAN_WEEKDAY_PATTERN})|послезавтра|после\\s+завтра|позавчера|поза\\s+вчера|сегодня|завтра|вчера)(?:\\s+(?:at|в)\\s+[^.!?]+)?[.!?]*$`, "i"), "")
     .replace(/\s+(?:on\s+\d{1,2}(?:st|nd|rd|th)?\s+of\s+\w+|\w+\s+\d{1,2}(?:st|nd|rd|th)?)[.!?]*$/i, "")
-    .replace(new RegExp(`\\s+(?:at\\s+(?:${ENGLISH_CLOCK_NUMBER_PATTERN})(?::\\d{2})?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(?:${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?(?:\\s+(?:am|pm|morning|afternoon|evening|night|in\\s+the\\s+(?:morning|afternoon|evening|night)))?|в\\s*(?:${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::\\d{2})?(?:\\s*час(?:а|ов)?)?(?:\\s+(?:ноль\\s+)?(?:${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:\\s*минут(?:а|ы)?)?)?(?:\\s+(?:утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью))?)[.!?]*$`, "i"), "")
+    .replace(new RegExp(`\\s+(?:at\\s+(?:${ENGLISH_CLOCK_NUMBER_PATTERN})(?:[:.]\\d{2})?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(?:${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?(?:\\s+(?:am|pm|morning|afternoon|evening|night|in\\s+the\\s+(?:morning|afternoon|evening|night)))?|в\\s*(?:${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:[:.]\\d{2})?(?:\\s*час(?:а|ов)?)?(?:\\s+(?:ноль\\s+)?(?:${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:\\s*минут(?:а|ы)?)?)?(?:\\s+(?:утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью))?)[.!?]*$`, "i"), "")
     .trim().replace(/[.!?]+$/, "");
 }
 
@@ -564,7 +588,7 @@ function parseClockHour(value: string): number {
 }
 
 function hasSpokenClockNumber(text: string): boolean {
-  return new RegExp(`\\bat\\s+(?:${ENGLISH_CLOCK_NUMBER_PATTERN})(?::\\d{2})?(?:\\s|[.!?,]|$)|в\\s*(?:${RUSSIAN_CLOCK_NUMBER_PATTERN})(?::\\d{2})?(?:\\s|[.!?,]|$)`).test(text);
+  return new RegExp(`\\bat\\s+(?:${ENGLISH_CLOCK_NUMBER_PATTERN})(?:[:.]\\d{2})?(?:\\s|[.!?,]|$)|в\\s*(?:${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:[:.]\\d{2})?(?:\\s|[.!?,]|$)`).test(text);
 }
 
 function normalizeDayPart(value: string | undefined): ScheduleDayPart | undefined {

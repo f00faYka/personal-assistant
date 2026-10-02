@@ -65,6 +65,10 @@ describe("LocalOllamaInterpretationProvider", () => {
     expect(requestBody.messages[0]?.content).toContain("двадцать три");
     expect(requestBody.messages[0]?.content).toContain("thirty five");
     expect(requestBody.messages[0]?.content).toContain("тридцать пять");
+    expect(requestBody.messages[0]?.content).toContain("schedule.hour");
+    expect(requestBody.messages[0]?.content).toContain("schedule.minute");
+    expect(requestBody.messages[0]?.content).toContain("omit schedule.period");
+    expect(requestBody.messages[0]?.content).toContain("when schedule.period is present");
   });
 
   test("translates provider, timeout, and malformed-output failures without leaking response content", async () => {

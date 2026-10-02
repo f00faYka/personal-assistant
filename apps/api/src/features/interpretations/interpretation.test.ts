@@ -94,7 +94,7 @@ describe("InterpretationService", () => {
     {
       transcriptionText: "Remind me today at 5 o'clock to call the office.",
       rawOutput: { action: "create_task", title: "Call the office", schedule: { date: "today", hour: 5 } },
-      expectedDueAt: "2026-08-23T03:00:00.000Z",
+      expectedDueAt: "2026-08-23T15:00:00.000Z",
     },
     {
       transcriptionText: "напомни сегодня в 12 позвонить на тариус",
@@ -139,7 +139,7 @@ describe("InterpretationService", () => {
   });
 
   test.each([
-    ["Remind me today at 11 to call the office.", { date: "today", hour: 11 }, "2026-08-23T09:00:00.000Z"],
+    ["Remind me today at 11 to call the office.", { date: "today", hour: 11 }, "2026-08-23T21:00:00.000Z"],
     ["Remind me today at 5 PM to call the office.", { date: "today", hour: 5, period: "pm" }, "2026-08-23T15:00:00.000Z"],
     ["Remind me today at 5 in the evening to call the office.", { date: "today", hour: 5, dayPart: "evening" }, "2026-08-23T15:00:00.000Z"],
     ["Remind me today at noon to call the office.", { date: "today", special: "noon" }, "2026-08-23T10:00:00.000Z"],
@@ -159,6 +159,51 @@ describe("InterpretationService", () => {
     });
   });
 
+  test("accepts dot-separated minutes and chooses the upcoming PM occurrence for an ambiguous past time today", () => {
+    const transcriptionText = "напомни забрать детей в 4.30 сегодня";
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Забрать детей", schedule: { date: "сегодня", hour: 4, minute: 30 } }, undefined, transcriptionText),
+      transcriptionText,
+      capturedAt: "2026-10-02T10:18:00.000Z",
+      timeZone: "Europe/Warsaw",
+    });
+
+    expect(interpretation).toMatchObject({
+      classification: "clear_supported",
+      action: { kind: "create_task", title: "Забрать детей", dueAt: "2026-10-02T14:30:00.000Z" },
+    });
+  });
+
+  test("preserves an explicit morning period for a past clock time today", () => {
+    const transcriptionText = "напомни сегодня в 4.30 утра забрать детей";
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Забрать детей", schedule: { date: "сегодня", hour: 4, minute: 30, dayPart: "morning" } }, undefined, transcriptionText),
+      transcriptionText,
+      capturedAt: "2026-10-02T10:18:00.000Z",
+      timeZone: "Europe/Warsaw",
+    });
+
+    expect(interpretation).toMatchObject({
+      classification: "clear_supported",
+      action: { kind: "create_task", dueAt: "2026-10-02T02:30:00.000Z" },
+    });
+  });
+
+  test("accepts a redundant 24-hour PM value from the model", () => {
+    const transcriptionText = "напомни сегодня в 11 вечера поцеловать жену";
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "поцеловать жену", schedule: { date: "today", hour: 23, period: "pm" } }, undefined, transcriptionText),
+      transcriptionText,
+      capturedAt: "2026-10-02T16:52:40.013Z",
+      timeZone: "Europe/Warsaw",
+    });
+
+    expect(interpretation).toMatchObject({
+      classification: "clear_supported",
+      action: { kind: "create_task", title: "поцеловать жену", dueAt: "2026-10-02T21:00:00.000Z" },
+    });
+  });
+
   test("keeps the UTC instant correct across a DST transition in another device timezone", () => {
     const transcriptionText = "Remind me today at 9 AM to call the office.";
     const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
@@ -172,29 +217,29 @@ describe("InterpretationService", () => {
   });
 
   test.each([
-    ["one", "2026-08-22T23:00:00.000Z"],
-    ["two", "2026-08-23T00:00:00.000Z"],
-    ["three", "2026-08-23T01:00:00.000Z"],
-    ["four", "2026-08-23T02:00:00.000Z"],
-    ["five", "2026-08-23T03:00:00.000Z"],
-    ["six", "2026-08-23T04:00:00.000Z"],
-    ["seven", "2026-08-23T05:00:00.000Z"],
-    ["eight", "2026-08-23T06:00:00.000Z"],
-    ["nine", "2026-08-23T07:00:00.000Z"],
-    ["ten", "2026-08-23T08:00:00.000Z"],
-    ["eleven", "2026-08-23T09:00:00.000Z"],
+    ["one", "2026-08-23T11:00:00.000Z"],
+    ["two", "2026-08-23T12:00:00.000Z"],
+    ["three", "2026-08-23T13:00:00.000Z"],
+    ["four", "2026-08-23T14:00:00.000Z"],
+    ["five", "2026-08-23T15:00:00.000Z"],
+    ["six", "2026-08-23T16:00:00.000Z"],
+    ["seven", "2026-08-23T17:00:00.000Z"],
+    ["eight", "2026-08-23T18:00:00.000Z"],
+    ["nine", "2026-08-23T19:00:00.000Z"],
+    ["ten", "2026-08-23T20:00:00.000Z"],
+    ["eleven", "2026-08-23T21:00:00.000Z"],
     ["twelve", "2026-08-23T10:00:00.000Z"],
-    ["один", "2026-08-22T23:00:00.000Z"],
-    ["два", "2026-08-23T00:00:00.000Z"],
-    ["три", "2026-08-23T01:00:00.000Z"],
-    ["четыре", "2026-08-23T02:00:00.000Z"],
-    ["пять", "2026-08-23T03:00:00.000Z"],
-    ["шесть", "2026-08-23T04:00:00.000Z"],
-    ["семь", "2026-08-23T05:00:00.000Z"],
-    ["восемь", "2026-08-23T06:00:00.000Z"],
-    ["девять", "2026-08-23T07:00:00.000Z"],
-    ["десять", "2026-08-23T08:00:00.000Z"],
-    ["одиннадцать", "2026-08-23T09:00:00.000Z"],
+    ["один", "2026-08-23T11:00:00.000Z"],
+    ["два", "2026-08-23T12:00:00.000Z"],
+    ["три", "2026-08-23T13:00:00.000Z"],
+    ["четыре", "2026-08-23T14:00:00.000Z"],
+    ["пять", "2026-08-23T15:00:00.000Z"],
+    ["шесть", "2026-08-23T16:00:00.000Z"],
+    ["семь", "2026-08-23T17:00:00.000Z"],
+    ["восемь", "2026-08-23T18:00:00.000Z"],
+    ["девять", "2026-08-23T19:00:00.000Z"],
+    ["десять", "2026-08-23T20:00:00.000Z"],
+    ["одиннадцать", "2026-08-23T21:00:00.000Z"],
     ["двенадцать", "2026-08-23T10:00:00.000Z"],
   ] as const)("resolves spoken clock number $0", (spokenHour, expectedDueAt) => {
     const isRussian = /[а-я]/i.test(spokenHour);
