@@ -30,6 +30,8 @@
     "mobile:fixture": "EXPO_PUBLIC_UI_FIXTURE=true npm run start --workspace @personal-assistant/mobile",
     "mobile:web": "npm run web --workspace @personal-assistant/mobile",
     "mobile:web:fixture": "EXPO_PUBLIC_UI_FIXTURE=true npm run web --workspace @personal-assistant/mobile",
+    "mobile:materials-prototype": "EXPO_PUBLIC_UI_FIXTURE=true EXPO_PUBLIC_MATERIALS_PROTOTYPE=true npm run start --workspace @personal-assistant/mobile",
+    "mobile:web:materials-prototype": "EXPO_PUBLIC_UI_FIXTURE=true EXPO_PUBLIC_MATERIALS_PROTOTYPE=true npm run web --workspace @personal-assistant/mobile",
     "dev:all": "node scripts/start-dev.mjs"
   }
 }

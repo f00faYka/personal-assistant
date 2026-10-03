@@ -56,8 +56,8 @@ export function CalendarSurface() {
   return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="Your scheduled work">Calendar</Heading><Card tone="blue"><Text style={styles.cardEyebrow}>UPCOMING</Text><Text style={styles.cardTitle}>See Tasks by date</Text><Text style={styles.cardDetail}>Scheduled work and undated items remain available from the full collection.</Text></Card><Text style={styles.sectionTitle}>Next up</Text><Card><TaskRow title="Book dentist appointment" detail="Today · 9:30 AM" /><View style={styles.divider} /><TaskRow title="Prepare Q2 planning" detail="Today · 1:00 PM" /></Card></ScrollView>;
 }
 
-export function MeSurface() {
-  return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="Your organization">Library</Heading><Card tone="butter"><Text style={styles.cardTitle}>Spaces</Text><Text style={styles.cardDetail}>Home · Work · Personal › Health</Text></Card><Card tone="lavender"><Text style={styles.cardTitle}>Entities</Text><Text style={styles.cardDetail}>Dentist · Alex · Q2 Planning</Text></Card><Card tone="blue"><Text style={styles.cardTitle}>Tags</Text><Text style={styles.cardDetail}>urgent · errand · waiting</Text></Card></ScrollView>;
+export function MeSurface({ onOpenMaterials }: { readonly onOpenMaterials?: () => void } = {}) {
+  return <ScrollView contentContainerStyle={styles.surface}><Heading eyebrow="Your organization">Library</Heading>{onOpenMaterials ? <Pressable accessibilityRole="button" accessibilityLabel="Open Materials" onPress={onOpenMaterials} style={styles.materialsEntry}><Text style={styles.cardEyebrow}>COLLECTION</Text><Text style={styles.cardTitle}>Materials</Text><Text style={styles.cardDetail}>Browse Tasks and Notes without opening organization management.</Text></Pressable> : null}<Card tone="butter"><Text style={styles.cardTitle}>Spaces</Text><Text style={styles.cardDetail}>Home · Work · Personal › Health</Text></Card><Card tone="lavender"><Text style={styles.cardTitle}>Entities</Text><Text style={styles.cardDetail}>Dentist · Alex · Q2 Planning</Text></Card><Card tone="blue"><Text style={styles.cardTitle}>Tags</Text><Text style={styles.cardDetail}>urgent · errand · waiting</Text></Card></ScrollView>;
 }
 
 const styles = StyleSheet.create({
@@ -97,5 +97,6 @@ const styles = StyleSheet.create({
   cardEyebrow: { color: tokens.colors.muted, fontSize: 11, fontWeight: "800", letterSpacing: 1.2, marginBottom: 8 },
   cardTitle: { color: tokens.colors.ink, fontSize: 19, fontWeight: "700", lineHeight: 25 },
   cardDetail: { color: tokens.colors.muted, fontSize: 14, lineHeight: 20, marginTop: 7 },
+  materialsEntry: { backgroundColor: tokens.colors.surface, borderColor: tokens.colors.green, borderRadius: tokens.radius.card, borderWidth: 2, marginHorizontal: tokens.spacing.lg, marginBottom: tokens.spacing.md, padding: tokens.spacing.lg },
   sectionTitle: { color: tokens.colors.ink, fontSize: 20, fontWeight: "800", marginHorizontal: tokens.spacing.lg, marginVertical: 8 },
 });
