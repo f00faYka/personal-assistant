@@ -11,7 +11,7 @@ vi.mock("react-native-safe-area-context", async () => {
   return { SafeAreaView: (props: { readonly children?: React.ReactNode }) => React.createElement("SafeAreaView", props, props.children), useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }) };
 });
 
-import { AppShell } from "./AppShell";
+import { AppShell, MeSurface } from "./AppShell";
 import { Text, Pressable } from "react-native";
 
 describe("AppShell", () => {
@@ -26,5 +26,16 @@ describe("AppShell", () => {
     act(() => { find("Open Calendar")?.props.onPress(); find("Start a voice Capture")?.props.onPress(); });
     expect(onTabChange).toHaveBeenCalledWith("calendar");
     expect(onCapture).toHaveBeenCalledOnce();
+  });
+
+  test("exposes one discoverable Materials entry from the library host", () => {
+    const onOpenMaterials = vi.fn();
+    let renderer!: ReactTestRenderer;
+    act(() => { renderer = create(<MeSurface onOpenMaterials={onOpenMaterials} />); });
+
+    const entry = renderer.root.findByProps({ accessibilityLabel: "Open Materials" });
+    act(() => { entry.props.onPress(); });
+
+    expect(onOpenMaterials).toHaveBeenCalledOnce();
   });
 });

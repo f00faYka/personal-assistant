@@ -2,7 +2,7 @@ import { useAudioRecorder, useAudioRecorderState, RecordingPresets } from "expo-
 import { useMemo, useState } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
-import { AppShell, CalendarSurface, FindSurface, MeSurface, type ShellTab } from "../AppShell";
+import { AppShell, CalendarSurface, MeSurface, type ShellTab } from "../AppShell";
 import { createCaptureSubmitter } from "../capture/voice-capture";
 import { createExpoVoiceRecorder, readRecordedAudioAsBase64 } from "../capture/expo-voice-recorder";
 import { SelectedDayTaskScreen } from "../day/SelectedDayTaskScreen";
@@ -21,14 +21,20 @@ import { TaskCard } from "../web/TaskNoteCardPrototype";
 import { createBrowserFixtureData, type BrowserFixtureData, type BrowserFixtureTask } from "../web/fixture-data";
 import { localDateKey } from "../day/selected-day";
 import { getDeviceTimeZone } from "../time-zone";
+import { MaterialsPrototype } from "../materials/MaterialsPrototype";
+import { MaterialsScreen } from "../materials/MaterialsScreen";
+import type { Entity, Tag } from "../review/metadata";
 
 export default function AppRoot() {
   const uiFixture = process.env.EXPO_PUBLIC_UI_FIXTURE === "true";
+  const materialsPrototype = uiFixture && process.env.EXPO_PUBLIC_MATERIALS_PROTOTYPE === "true";
   const [detailUrl, setDetailUrl] = useState<string | null>(null);
   const [fixtureMode, setFixtureMode] = useState(process.env.EXPO_PUBLIC_REVIEW_FIXTURE === "task" || process.env.EXPO_PUBLIC_REVIEW_FIXTURE === "note");
   const [tab, setTab] = useState<ShellTab>("home");
   const [captureRequest, setCaptureRequest] = useState(0);
   const [showToday, setShowToday] = useState(false);
+  const [showMaterialsPrototype, setShowMaterialsPrototype] = useState(false);
+  const [materialsDetailUrl, setMaterialsDetailUrl] = useState<string | null>(null);
   const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:3000";
   const timeZone = getDeviceTimeZone();
   const recorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
@@ -39,21 +45,37 @@ export default function AppRoot() {
   const fixtureData = useMemo(() => uiFixture ? createBrowserFixtureData() : undefined, [uiFixture]);
   const [fixtureSpaceIds, setFixtureSpaceIds] = useState<Record<string, string | null>>({});
   const [fixtureTagIds, setFixtureTagIds] = useState<Record<string, readonly string[]>>({});
-  const fixtureItems = fixtureData ? createStaticMemberItemsClient([...fixtureData.tasks.map((task, index) => fixtureTaskItem(task, index)), ...fixtureData.notes.map((note, index) => fixtureNoteItem(note, index))]) : undefined;
+  const fixtureItems = useMemo(() => fixtureData ? createStaticMemberItemsClient([...fixtureData.tasks.map((task, index) => fixtureTaskItem(task, index)), ...fixtureData.notes.map((note, index) => fixtureNoteItem(note, index))]) : undefined, [fixtureData]);
+  const fixtureSpacesClient = useMemo(() => fixtureData ? createFixtureSpacesClient(fixtureData.spaces, memberId) : undefined, [fixtureData, memberId]);
+  const fixtureMetadataClient = useMemo(() => fixtureData ? createFixtureMetadataClient(fixtureData.tags, fixtureData.entities, memberId) : undefined, [fixtureData, memberId]);
   const fixtureKind = process.env.EXPO_PUBLIC_REVIEW_FIXTURE === "task" ? "task" : "note";
-  const activeFixtureMode = fixtureMode || (uiFixture && detailUrl !== null);
-  const fixtureOutcome = useMemo(() => fixtureData && detailUrl ? fixtureOutcomeForUrl(fixtureData, detailUrl) : undefined, [detailUrl, fixtureData]);
+  const reviewUrl = detailUrl ?? materialsDetailUrl;
+  const activeFixtureMode = fixtureMode || (uiFixture && reviewUrl !== null);
+  const fixtureOutcome = useMemo(() => fixtureData && reviewUrl ? fixtureOutcomeForUrl(fixtureData, reviewUrl) : undefined, [fixtureData, reviewUrl]);
   const fixtureClient = useMemo(() => uiFixture && activeFixtureMode ? createReviewFixtureClient(fixtureOutcome?.kind ?? fixtureKind, fixtureOutcome) : undefined, [activeFixtureMode, fixtureKind, fixtureOutcome, uiFixture]);
-  const fixtureMetadata = uiFixture && fixtureData && detailUrl ? fixtureDetailMetadata(fixtureData, detailUrl, fixtureSpaceIds, fixtureTagIds, setFixtureSpaceIds, setFixtureTagIds) : undefined;
+  const fixtureMetadata = uiFixture && fixtureData && reviewUrl ? fixtureDetailMetadata(fixtureData, reviewUrl, fixtureSpaceIds, fixtureTagIds, setFixtureSpaceIds, setFixtureTagIds) : undefined;
+  const materialsDetail = materialsDetailUrl ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} detailUrl={materialsDetailUrl} {...(fixtureMetadata ? { detailMetadata: fixtureMetadata } : {})} {...(!activeFixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(activeFixtureMode ? { client: fixtureClient ?? createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => setMaterialsDetailUrl(null)} /> : undefined;
+  const materialsScreen = <MaterialsScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} {...(fixtureItems ? { client: fixtureItems } : {})} {...(fixtureSpacesClient ? { spacesClient: fixtureSpacesClient } : {})} {...(fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} onOpenDetail={setMaterialsDetailUrl} detailUrl={materialsDetailUrl} detail={materialsDetail} />;
   const openCapture = () => { setTab("home"); setCaptureRequest((request) => request + 1); };
   const content = detailUrl || fixtureMode
     ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} detailUrl={detailUrl ?? "/captures/demo-capture-1/review"} {...(fixtureMetadata ? { detailMetadata: fixtureMetadata } : {})} {...(!activeFixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(activeFixtureMode ? { client: fixtureClient ?? createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => { setDetailUrl(null); setFixtureMode(false); }} />
     : showToday ? <SelectedDayTaskScreen apiBaseUrl={apiBaseUrl} memberId={memberId} selectedDate={localDateKey(new Date(), timeZone)} timeZone={timeZone} renderTask={(task) => <PressableTaskRow title={task.title} detailUrl={task.detailUrl} timeZone={timeZone} onOpenDetail={setDetailUrl} />} />
-    : tab === "find" ? <FindSurface />
+    : tab === "find" ? materialsScreen
     : tab === "calendar" ? <CalendarSurface />
-    : tab === "me" ? <MeSurface />
+    : tab === "me" ? (materialsPrototype && showMaterialsPrototype ? <MaterialsPrototype timeZone={timeZone} /> : <MeSurface onOpenMaterials={() => materialsPrototype ? setShowMaterialsPrototype(true) : setTab("find")} />)
     : <MemberListScreen apiBaseUrl={apiBaseUrl} {...(fixtureItems ? { client: fixtureItems } : {})} memberId={memberId} timeZone={timeZone} home={tab === "home" && process.env.NODE_ENV !== "test"} onOpenToday={() => setShowToday(true)} onOpenDetail={setDetailUrl} voiceRecorder={createExpoVoiceRecorder(recorder)} recordingMetering={recorderState.metering} recordingInterrupted={recorderState.mediaServicesDidReset} captureSubmitter={createCaptureSubmitter(apiBaseUrl, readRecordedAudioAsBase64)} offlineDraftStore={offlineDraftStore} offlineDraftSyncClient={offlineDraftSyncClient} captureRequest={captureRequest} />;
   return <SafeAreaProvider><AppShell tab={tab} onTabChange={(nextTab) => { setTab(nextTab); setShowToday(false); }} onCapture={openCapture}>{content}</AppShell></SafeAreaProvider>;
+}
+
+function createFixtureSpacesClient(spaces: BrowserFixtureData["spaces"], memberId: string) {
+  return { list: async () => spaces.map((space) => ({ id: space.id, memberId, name: space.name, ...(space.parentId ? { parentId: space.parentId } : {}), createdAt: "fixture" })) };
+}
+
+function createFixtureMetadataClient(tags: BrowserFixtureData["tags"], entities: BrowserFixtureData["entities"], memberId: string): { readonly listTags: () => Promise<readonly Tag[]>; readonly listEntities: () => Promise<readonly Entity[]> } {
+  return {
+    listTags: async () => tags.map((tag) => ({ ...tag, memberId, createdAt: "fixture" })),
+    listEntities: async () => entities.map((entity) => ({ ...entity, memberId, createdAt: "fixture", type: entity.type === "Person" || entity.type === "Place" || entity.type === "Organization" || entity.type === "Object" ? entity.type : "Object" })),
+  };
 }
 
 function PressableTaskRow({ title, detailUrl, timeZone, onOpenDetail }: { readonly title: string; readonly detailUrl: string; readonly timeZone: string; readonly onOpenDetail: (url: string) => void }) {
