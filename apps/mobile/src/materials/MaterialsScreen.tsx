@@ -26,6 +26,9 @@ interface MaterialsScreenProps {
 type MaterialsMode = "all" | "spaces";
 type LoadState = "loading" | "ready" | "error" | "pagination_error";
 type FilterMenu = "space" | "tag" | "entity";
+
+const anyFilterValue = "__any__";
+const unassignedFilterValue = "__unassigned__";
 type FilterOptionsState =
   | { readonly status: "idle" | "loading" }
   | { readonly status: "ready"; readonly spaces: readonly Space[]; readonly tags: readonly Tag[]; readonly entities: readonly Entity[] }
@@ -124,7 +127,9 @@ export function MaterialsScreen({ apiBaseUrl, memberId, timeZone, client: provid
 
   const selectSingleFilter = useCallback((menu: FilterMenu, value: string) => {
     const text = searchText.trim();
-    const selected = value === "__unassigned__"
+    const selected = value === anyFilterValue
+      ? {}
+      : value === unassignedFilterValue
       ? { unassigned: true }
       : menu === "space"
         ? { spaceId: value }
@@ -232,16 +237,16 @@ function SearchPanel({ open, filterMenu, text, filters, options, onOpen, onTextC
 }
 
 function FilterDropdown({ label, menu, open, activeLabel, onToggle }: { readonly label: string; readonly menu: FilterMenu; readonly open: boolean; readonly activeLabel: string | undefined; readonly onToggle: (menu: FilterMenu) => void }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={`Select Materials ${label} filter`} accessibilityState={{ expanded: open }} onPress={() => onToggle(menu)} style={[styles.refineButton, { flex: 1, marginTop: 0 }, open && { backgroundColor: "#E3EEDD" }]}><Text style={styles.refineButtonText}>{activeLabel ?? label}</Text><Text style={styles.refineButtonArrow}>{open ? "⌃" : "⌄"}</Text></Pressable>;
+  return <Pressable accessibilityRole="button" accessibilityLabel={`Select Materials ${label} filter`} accessibilityState={{ expanded: open }} onPress={() => onToggle(menu)} style={[styles.refineButton, { flex: 1, marginTop: 0 }, open && { backgroundColor: "#E3EEDD" }]}><Text style={styles.refineButtonText}>{activeLabel ?? `Any ${label}`}</Text><Text style={styles.refineButtonArrow}>{open ? "⌃" : "⌄"}</Text></Pressable>;
 }
 
 function FilterMenuList({ menu, options, filters, onSelect }: { readonly menu: FilterMenu; readonly options: Extract<FilterOptionsState, { readonly status: "ready" }>; readonly filters: SearchFilters; readonly onSelect: (menu: FilterMenu, value: string) => void }) {
   const values = menu === "space"
-    ? [{ value: "__unassigned__", label: "Unassigned root" }, ...options.spaces.map((space) => ({ value: space.id, label: `${spacePath(options.spaces, space.id)} subtree` }))]
+    ? [{ value: anyFilterValue, label: "Any Space" }, { value: unassignedFilterValue, label: "Unassigned root" }, ...options.spaces.map((space) => ({ value: space.id, label: `${spacePath(options.spaces, space.id)} subtree` }))]
     : menu === "tag"
-      ? options.tags.map((tag) => ({ value: tag.id, label: tag.name }))
-      : options.entities.map((entity) => ({ value: entity.id, label: `${entity.name} (${entity.type})` }));
-  const activeValue = menu === "space" ? (filters.unassigned ? "__unassigned__" : filters.spaceId) : menu === "tag" ? filters.tagId : filters.entityId;
+      ? [{ value: anyFilterValue, label: "Any Tag" }, ...options.tags.map((tag) => ({ value: tag.id, label: tag.name }))]
+      : [{ value: anyFilterValue, label: "Any Entity" }, ...options.entities.map((entity) => ({ value: entity.id, label: `${entity.name} (${entity.type})` }))];
+  const activeValue = menu === "space" ? (filters.unassigned ? unassignedFilterValue : filters.spaceId ?? anyFilterValue) : menu === "tag" ? filters.tagId ?? anyFilterValue : filters.entityId ?? anyFilterValue;
   return <View style={{ backgroundColor: tokens.colors.background, borderColor: tokens.colors.border, borderRadius: 10, borderWidth: 1, marginTop: 8, padding: 8 }}>{values.length === 0 ? <Text style={styles.sectionHint}>No {menu === "space" ? "Spaces" : menu === "tag" ? "Tags" : "Entities"} yet</Text> : values.map((option) => <Pressable key={option.value} accessibilityRole="button" accessibilityLabel={`Choose Materials ${menu} ${option.label}`} onPress={() => onSelect(menu, option.value)} style={styles.filterOption}><Text style={option.value === activeValue ? styles.filterOptionActive : styles.filterOptionText}>{option.value === activeValue ? "✓ " : ""}{option.label}</Text></Pressable>)}</View>;
 }
 
