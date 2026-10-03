@@ -114,12 +114,12 @@ describe("MaterialsScreen", () => {
 
     act(() => { button(renderer, "Open Materials search and filters").props.onPress(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-    expect(textContent(renderer)).toContain("Start with a word like");
+    expect(textContent(renderer)).toContain("Choose one filter below");
 
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Search Materials" }).props.onChangeText("dentist"); });
     await act(async () => { button(renderer, "Apply Materials search").props.onPress(); await Promise.resolve(); });
-    act(() => { button(renderer, "Open Materials filter panel").props.onPress(); });
-    await act(async () => { button(renderer, "Filter Materials by Space Home").props.onPress(); await Promise.resolve(); });
+    act(() => { button(renderer, "Select Materials Space filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials space Home subtree").props.onPress(); await Promise.resolve(); });
 
     expect(client.search).toHaveBeenLastCalledWith("member-1", { text: "dentist", spaceId: "home" }, undefined);
     expect(textContent(renderer)).toContain("2 active filters");
@@ -132,7 +132,7 @@ describe("MaterialsScreen", () => {
     renderer.unmount();
   });
 
-  test("combines Space, Tag, and Entity filters through the typed search seam", async () => {
+  test("keeps only one organization filter active at a time", async () => {
     const client: MemberItemsClient = {
       list: vi.fn().mockResolvedValue({ items: [task("one", "First")], nextCursor: null }),
       search: vi.fn().mockResolvedValue({ items: [task("two", "Filtered")], nextCursor: null }),
@@ -145,13 +145,36 @@ describe("MaterialsScreen", () => {
     act(() => { button(renderer, "Open Materials search and filters").props.onPress(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 
-    act(() => { button(renderer, "Open Materials filter panel").props.onPress(); });
-    await act(async () => { button(renderer, "Filter Materials by Space Home").props.onPress(); await Promise.resolve(); });
-    await act(async () => { button(renderer, "Filter Materials by Tag urgent").props.onPress(); await Promise.resolve(); });
-    await act(async () => { button(renderer, "Filter Materials by Entity Dentist").props.onPress(); await Promise.resolve(); });
+    act(() => { button(renderer, "Select Materials Space filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials space Home subtree").props.onPress(); await Promise.resolve(); });
+    act(() => { button(renderer, "Select Materials Tag filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials tag urgent").props.onPress(); await Promise.resolve(); });
+    act(() => { button(renderer, "Select Materials Entity filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials entity Dentist (Person)").props.onPress(); await Promise.resolve(); });
 
-    expect(client.search).toHaveBeenLastCalledWith("member-1", { spaceId: "home", tagId: "tag-1", entityId: "entity-1" }, undefined);
-    expect(textContent(renderer)).toContain("3 active filters");
+    expect(client.search).toHaveBeenLastCalledWith("member-1", { entityId: "entity-1" }, undefined);
+    expect(textContent(renderer)).toContain("1 active filter");
+    expect(textContent(renderer)).not.toContain("Space: Home");
+    expect(textContent(renderer)).not.toContain("Tag: urgent");
+    renderer.unmount();
+  });
+
+  test("clears organization filters when Clear filters is pressed without a query", async () => {
+    const client: MemberItemsClient = {
+      list: vi.fn().mockResolvedValue({ items: [task("one", "First")], nextCursor: null }),
+      search: vi.fn().mockResolvedValue({ items: [task("two", "Filtered")], nextCursor: null }),
+    };
+    const renderer = renderScreen(client);
+    await act(async () => { await Promise.resolve(); });
+    act(() => { button(renderer, "Open Materials search and filters").props.onPress(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    act(() => { button(renderer, "Select Materials Space filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials space Home subtree").props.onPress(); await Promise.resolve(); });
+
+    act(() => { button(renderer, "Clear Materials filters").props.onPress(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(client.list).toHaveBeenLastCalledWith("member-1", undefined);
+    expect(textContent(renderer)).not.toContain("Space: Home");
     renderer.unmount();
   });
 
@@ -164,8 +187,8 @@ describe("MaterialsScreen", () => {
     await act(async () => { await Promise.resolve(); });
     act(() => { button(renderer, "Open Materials search and filters").props.onPress(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-    act(() => { button(renderer, "Open Materials filter panel").props.onPress(); });
-    await act(async () => { button(renderer, "Filter Materials by Space Home").props.onPress(); await Promise.resolve(); });
+    act(() => { button(renderer, "Select Materials Space filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials space Home subtree").props.onPress(); await Promise.resolve(); });
 
     expect(textContent(renderer)).toContain("No matching materials");
     expect(textContent(renderer)).toContain("clear the filters");
@@ -184,8 +207,8 @@ describe("MaterialsScreen", () => {
     await act(async () => { await Promise.resolve(); });
     act(() => { button(renderer, "Open Materials search and filters").props.onPress(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-    act(() => { button(renderer, "Open Materials filter panel").props.onPress(); });
-    await act(async () => { button(renderer, "Filter Materials by Space Home").props.onPress(); await Promise.resolve(); });
+    act(() => { button(renderer, "Select Materials Space filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials space Home subtree").props.onPress(); await Promise.resolve(); });
 
     expect(textContent(renderer)).toContain("Couldn’t load more Materials:");
     await act(async () => { button(renderer, "Retry loading more Materials").props.onPress(); await Promise.resolve(); });

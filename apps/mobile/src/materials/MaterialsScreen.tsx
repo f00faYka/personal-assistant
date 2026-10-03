@@ -25,6 +25,7 @@ interface MaterialsScreenProps {
 
 type MaterialsMode = "all" | "spaces";
 type LoadState = "loading" | "ready" | "error" | "pagination_error";
+type FilterMenu = "space" | "tag" | "entity";
 type FilterOptionsState =
   | { readonly status: "idle" | "loading" }
   | { readonly status: "ready"; readonly spaces: readonly Space[]; readonly tags: readonly Tag[]; readonly entities: readonly Entity[] }
@@ -43,7 +44,7 @@ export function MaterialsScreen({ apiBaseUrl, memberId, timeZone, client: provid
   const [paginationError, setPaginationError] = useState<{ readonly filters: SearchFilters; readonly cursor: string; readonly message: string } | null>(null);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [filterMenu, setFilterMenu] = useState<FilterMenu | null>(null);
   const [searchText, setSearchText] = useState("");
   const [filters, setFilters] = useState<SearchFilters>({});
   const [filterOptions, setFilterOptions] = useState<FilterOptionsState>({ status: "idle" });
@@ -120,6 +121,19 @@ export function MaterialsScreen({ apiBaseUrl, memberId, timeZone, client: provid
     void load(nextFilters);
   }, [load]);
 
+  const selectSingleFilter = useCallback((menu: FilterMenu, value: string) => {
+    const text = filters.text;
+    const selected = value === "__unassigned__"
+      ? { unassigned: true }
+      : menu === "space"
+        ? { spaceId: value }
+        : menu === "tag"
+          ? { tagId: value }
+          : { entityId: value };
+    setFilterMenu(null);
+    applyFilters(text ? { text, ...selected } : selected);
+  }, [applyFilters, filters.text]);
+
   const applySearchText = useCallback(() => {
     const text = searchText.trim();
     const { text: _currentText, ...withoutText } = filters;
@@ -127,9 +141,9 @@ export function MaterialsScreen({ apiBaseUrl, memberId, timeZone, client: provid
   }, [applyFilters, filters, searchText]);
 
   const clearFilters = useCallback(() => {
-    const { text, ...withoutOrganizationFilters } = filters;
+    const { text } = filters;
     setSearchText(text ?? "");
-    applyFilters(text ? { text } : withoutOrganizationFilters);
+    applyFilters(text ? { text } : {});
   }, [applyFilters, filters]);
 
   const clearQuery = useCallback(() => {
@@ -153,7 +167,7 @@ export function MaterialsScreen({ apiBaseUrl, memberId, timeZone, client: provid
         <ModeTab active={mode === "all"} label="All materials" hint="Flat · uncategorized" onPress={() => setMode("all")} />
         <ModeTab active={mode === "spaces"} label="By Spaces" hint="Tree · paths" onPress={() => setMode("spaces")} />
       </View>
-      <SearchPanel open={searchOpen} filterPanelOpen={filterPanelOpen} text={searchText} filters={filters} options={filterOptions} onOpen={() => openSearch()} onTextChange={setSearchText} onApplyText={applySearchText} onApply={applyFilters} onClearQuery={clearQuery} onClearFilters={clearFilters} onToggleFilterPanel={() => setFilterPanelOpen((open) => !open)} onRetry={() => openSearch(true)} />
+      <SearchPanel open={searchOpen} filterMenu={filterMenu} text={searchText} filters={filters} options={filterOptions} onOpen={() => openSearch()} onTextChange={setSearchText} onApplyText={applySearchText} onSelectFilter={selectSingleFilter} onClearQuery={clearQuery} onClearFilters={clearFilters} onToggleFilterMenu={(menu) => setFilterMenu((current) => current === menu ? null : menu)} onRetry={() => openSearch(true)} />
       {loadState === "loading" && items.length === 0 ? <StateMessage title="Loading Materials" detail="Reading the complete collection…" /> : null}
       {loadState === "loading" && items.length > 0 ? <View accessibilityRole="alert" style={styles.loadingBanner}><Text style={styles.sectionHint}>Updating Materials…</Text></View> : null}
       {loadState === "error" && items.length === 0 ? <StateMessage title="Couldn’t load Materials" detail={error ?? "Try again."} onRetry={() => void load(filters)} /> : null}
@@ -197,37 +211,47 @@ function MaterialCard({ item, spaces, timeZone, today, onOpenDetail }: { readonl
   return <NoteCard note={{ id: item.id, content: item.content, reviewState: item.state, space: path }} onPress={onPress} />;
 }
 
-function SearchPanel({ open, filterPanelOpen, text, filters, options, onOpen, onTextChange, onApplyText, onApply, onClearQuery, onClearFilters, onToggleFilterPanel, onRetry }: { readonly open: boolean; readonly filterPanelOpen: boolean; readonly text: string; readonly filters: SearchFilters; readonly options: FilterOptionsState; readonly onOpen: () => void; readonly onTextChange: (value: string) => void; readonly onApplyText: () => void; readonly onApply: (filters: SearchFilters) => void; readonly onClearQuery: () => void; readonly onClearFilters: () => void; readonly onToggleFilterPanel: () => void; readonly onRetry: () => void }) {
+function SearchPanel({ open, filterMenu, text, filters, options, onOpen, onTextChange, onApplyText, onSelectFilter, onClearQuery, onClearFilters, onToggleFilterMenu, onRetry }: { readonly open: boolean; readonly filterMenu: FilterMenu | null; readonly text: string; readonly filters: SearchFilters; readonly options: FilterOptionsState; readonly onOpen: () => void; readonly onTextChange: (value: string) => void; readonly onApplyText: () => void; readonly onSelectFilter: (menu: FilterMenu, value: string) => void; readonly onClearQuery: () => void; readonly onClearFilters: () => void; readonly onToggleFilterMenu: (menu: FilterMenu) => void; readonly onRetry: () => void }) {
   if (!open) return <Pressable accessibilityRole="button" accessibilityLabel="Open Materials search and filters" onPress={onOpen} style={styles.searchToggle}><Text style={styles.searchToggleText}>Filter materials</Text><Text style={styles.searchToggleHint}>Search by words, Space, Entity, or Tag</Text></Pressable>;
   return <View style={styles.searchPanel}>
     <Text style={styles.searchEyebrow}>FILTER MATERIALS</Text>
     <Text style={styles.searchTitle}>What are you looking for?</Text>
-    <View style={styles.searchRow}><TextInput accessibilityLabel="Search Materials" placeholder="Search Tasks and Notes" value={text} onChangeText={onTextChange} onSubmitEditing={onApplyText} style={styles.searchInput} /><Pressable accessibilityRole="button" accessibilityLabel="Apply Materials search" onPress={onApplyText} style={styles.searchButton}><Text style={styles.searchButtonText}>Apply</Text></Pressable>{text.length > 0 ? <Pressable accessibilityRole="button" accessibilityLabel="Clear Materials query" onPress={onClearQuery} style={styles.clearQuery}><Text style={styles.clearQueryText}>×</Text></Pressable> : null}</View>
-    {filterCount(filters) > 0 ? <Text style={styles.filterSummary}>{`${filterCount(filters)} active ${filterCount(filters) === 1 ? "filter" : "filters"} · ${filterSummary(filters, options)}`}</Text> : <Text style={styles.searchGuidance}>Start with a word like “dentist”, or open Refine to browse by organization.</Text>}
-    <Pressable accessibilityRole="button" accessibilityLabel="Open Materials filter panel" accessibilityState={{ expanded: filterPanelOpen }} onPress={onToggleFilterPanel} style={styles.refineButton}><Text style={styles.refineButtonText}>{organizationFilterCount(filters) > 0 ? `Refine · ${organizationFilterCount(filters)}` : "Refine results"}</Text><Text style={styles.refineButtonArrow}>{filterPanelOpen ? "⌃" : "⌄"}</Text></Pressable>
+    <View style={styles.searchRow}><View style={{ flex: 1, position: "relative" }}><TextInput accessibilityLabel="Search Materials" placeholder="Search Tasks and Notes" value={text} onChangeText={onTextChange} onSubmitEditing={onApplyText} style={[styles.searchInput, { paddingRight: 42 }]} />{text.length > 0 ? <Pressable accessibilityRole="button" accessibilityLabel="Clear Materials query" onPress={onClearQuery} style={[styles.clearQuery, { marginLeft: 0, position: "absolute", right: 4, top: 0, width: 36 }]}><Text style={styles.clearQueryText}>×</Text></Pressable> : null}</View><Pressable accessibilityRole="button" accessibilityLabel="Apply Materials search" onPress={onApplyText} style={styles.searchButton}><Text style={styles.searchButtonText}>Apply</Text></Pressable></View>
+    {filterCount(filters) > 0 ? <Text style={styles.filterSummary}>{`${filterCount(filters)} active ${filterCount(filters) === 1 ? "filter" : "filters"} · ${filterSummary(filters, options)}`}</Text> : <Text style={styles.searchGuidance}>Choose one filter below, or search by words.</Text>}
+    <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+      <FilterDropdown label="Space" menu="space" open={filterMenu === "space"} activeLabel={activeFilterLabel("space", filters, options)} onToggle={onToggleFilterMenu} />
+      <FilterDropdown label="Tag" menu="tag" open={filterMenu === "tag"} activeLabel={activeFilterLabel("tag", filters, options)} onToggle={onToggleFilterMenu} />
+      <FilterDropdown label="Entity" menu="entity" open={filterMenu === "entity"} activeLabel={activeFilterLabel("entity", filters, options)} onToggle={onToggleFilterMenu} />
+    </View>
     {options.status === "loading" ? <View style={styles.filterLoading}><ActivityIndicator /><Text style={styles.sectionHint}>Loading filters…</Text></View> : null}
     {options.status === "error" ? <View accessibilityRole="alert"><Text style={styles.errorText}>Couldn’t load filters: {options.message}</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry loading Materials filters" onPress={onRetry}><Text style={styles.retryText}>Retry filters</Text></Pressable></View> : null}
-    {filterPanelOpen && options.status === "ready" ? <View><Text style={styles.filterHeading}>Space</Text><FilterButton active={filters.unassigned === true} label="Unassigned root" accessibilityLabel="Filter Materials by unassigned root" onPress={() => onApply(toggleUnassigned(filters))} />{options.spaces.map((space) => <FilterButton key={space.id} active={filters.spaceId === space.id} label={`${spacePath(options.spaces, space.id)} subtree`} accessibilityLabel={`Filter Materials by Space ${spacePath(options.spaces, space.id)}`} onPress={() => onApply(toggleSpace(filters, space.id))} />)}<Text style={styles.filterHeading}>Tag</Text>{options.tags.length === 0 ? <Text style={styles.sectionHint}>No Tags yet</Text> : options.tags.map((tag) => <FilterButton key={tag.id} active={filters.tagId === tag.id} label={tag.name} accessibilityLabel={`Filter Materials by Tag ${tag.name}`} onPress={() => onApply(toggleId(filters, "tagId", tag.id))} />)}<Text style={styles.filterHeading}>Entity</Text>{options.entities.length === 0 ? <Text style={styles.sectionHint}>No Entities yet</Text> : options.entities.map((entity) => <FilterButton key={entity.id} active={filters.entityId === entity.id} label={`${entity.name} (${entity.type})`} accessibilityLabel={`Filter Materials by Entity ${entity.name}`} onPress={() => onApply(toggleId(filters, "entityId", entity.id))} />)}</View> : null}
+    {filterMenu !== null && options.status === "ready" ? <FilterMenuList menu={filterMenu} options={options} filters={filters} onSelect={onSelectFilter} /> : null}
     {organizationFilterCount(filters) > 0 ? <Pressable accessibilityRole="button" accessibilityLabel="Clear Materials filters" onPress={onClearFilters} style={styles.clearButton}><Text style={styles.clearButtonText}>Clear filters</Text></Pressable> : null}
   </View>;
 }
 
-function FilterButton({ active, label, accessibilityLabel, onPress }: { readonly active: boolean; readonly label: string; readonly accessibilityLabel: string; readonly onPress: () => void }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel} onPress={onPress} style={styles.filterOption}><Text style={active ? styles.filterOptionActive : styles.filterOptionText}>{active ? "✓ " : ""}{label}</Text></Pressable>;
+function FilterDropdown({ label, menu, open, activeLabel, onToggle }: { readonly label: string; readonly menu: FilterMenu; readonly open: boolean; readonly activeLabel: string | undefined; readonly onToggle: (menu: FilterMenu) => void }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={`Select Materials ${label} filter`} accessibilityState={{ expanded: open }} onPress={() => onToggle(menu)} style={[styles.refineButton, { flex: 1, marginTop: 0 }, open && { backgroundColor: "#E3EEDD" }]}><Text style={styles.refineButtonText}>{activeLabel ?? label}</Text><Text style={styles.refineButtonArrow}>{open ? "⌃" : "⌄"}</Text></Pressable>;
 }
 
-function toggleUnassigned(filters: SearchFilters): SearchFilters {
-  const { spaceId: _spaceId, unassigned, ...rest } = filters;
-  return unassigned ? rest : { ...rest, unassigned: true };
+function FilterMenuList({ menu, options, filters, onSelect }: { readonly menu: FilterMenu; readonly options: Extract<FilterOptionsState, { readonly status: "ready" }>; readonly filters: SearchFilters; readonly onSelect: (menu: FilterMenu, value: string) => void }) {
+  const values = menu === "space"
+    ? [{ value: "__unassigned__", label: "Unassigned root" }, ...options.spaces.map((space) => ({ value: space.id, label: `${spacePath(options.spaces, space.id)} subtree` }))]
+    : menu === "tag"
+      ? options.tags.map((tag) => ({ value: tag.id, label: tag.name }))
+      : options.entities.map((entity) => ({ value: entity.id, label: `${entity.name} (${entity.type})` }));
+  const activeValue = menu === "space" ? (filters.unassigned ? "__unassigned__" : filters.spaceId) : menu === "tag" ? filters.tagId : filters.entityId;
+  return <View style={{ backgroundColor: tokens.colors.background, borderColor: tokens.colors.border, borderRadius: 10, borderWidth: 1, marginTop: 8, padding: 8 }}>{values.length === 0 ? <Text style={styles.sectionHint}>No {menu === "space" ? "Spaces" : menu === "tag" ? "Tags" : "Entities"} yet</Text> : values.map((option) => <Pressable key={option.value} accessibilityRole="button" accessibilityLabel={`Choose Materials ${menu} ${option.label}`} onPress={() => onSelect(menu, option.value)} style={styles.filterOption}><Text style={option.value === activeValue ? styles.filterOptionActive : styles.filterOptionText}>{option.value === activeValue ? "✓ " : ""}{option.label}</Text></Pressable>)}</View>;
 }
 
-function toggleSpace(filters: SearchFilters, spaceId: string): SearchFilters {
-  const { unassigned: _unassigned, spaceId: current, ...rest } = filters;
-  return current === spaceId ? rest : { ...rest, spaceId };
-}
-
-function toggleId(filters: SearchFilters, key: "tagId" | "entityId", value: string): SearchFilters {
-  return filters[key] === value ? { ...filters, [key]: undefined } : { ...filters, [key]: value };
+function activeFilterLabel(menu: FilterMenu, filters: SearchFilters, options: FilterOptionsState): string | undefined {
+  if (menu === "space") {
+    if (filters.unassigned) return "Unassigned";
+    if (filters.spaceId) return options.status === "ready" ? spacePath(options.spaces, filters.spaceId) : "Selected Space";
+  }
+  if (menu === "tag" && filters.tagId) return options.status === "ready" ? options.tags.find((tag) => tag.id === filters.tagId)?.name ?? "Selected Tag" : "Selected Tag";
+  if (menu === "entity" && filters.entityId) return options.status === "ready" ? options.entities.find((entity) => entity.id === filters.entityId)?.name ?? "Selected Entity" : "Selected Entity";
+  return undefined;
 }
 
 function organizationFilterCount(filters: SearchFilters): number {
