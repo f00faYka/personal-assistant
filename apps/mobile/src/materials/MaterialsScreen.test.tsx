@@ -17,6 +17,7 @@ vi.mock("../web/TaskNoteCardPrototype", async () => {
 });
 
 import type { MemberItemsClient } from "../list/member-items";
+import type { MetadataClient } from "../review/metadata";
 import type { Space } from "../spaces/spaces";
 import { Text } from "react-native";
 import { MaterialsScreen } from "./MaterialsScreen";
@@ -40,10 +41,10 @@ function button(renderer: ReactTestRenderer, accessibilityLabel: string) {
   return renderer.root.findByProps({ accessibilityLabel });
 }
 
-function renderScreen(client: MemberItemsClient) {
+function renderScreen(client: MemberItemsClient, metadataClient: Pick<MetadataClient, "listTags" | "listEntities"> = { listTags: vi.fn().mockResolvedValue([]), listEntities: vi.fn().mockResolvedValue([]) }) {
   let renderer!: ReactTestRenderer;
   act(() => {
-    renderer = create(<MaterialsScreen apiBaseUrl="http://api.test" memberId="member-1" timeZone="Europe/Warsaw" client={client} spacesClient={{ list: vi.fn().mockResolvedValue(spaces) }} metadataClient={{ listTags: vi.fn().mockResolvedValue([]), listEntities: vi.fn().mockResolvedValue([]) }} onOpenDetail={vi.fn()} />);
+    renderer = create(<MaterialsScreen apiBaseUrl="http://api.test" memberId="member-1" timeZone="Europe/Warsaw" client={client} spacesClient={{ list: vi.fn().mockResolvedValue(spaces) }} metadataClient={metadataClient} onOpenDetail={vi.fn()} />);
   });
   return renderer;
 }
@@ -93,13 +94,195 @@ describe("MaterialsScreen", () => {
     const client: MemberItemsClient = { list: vi.fn().mockResolvedValue({ items: [task("one", "First")], nextCursor: null }), search: vi.fn().mockResolvedValue({ items: [task("two", "Search result")], nextCursor: null }) };
     const renderer = renderScreen(client);
     await act(async () => { await Promise.resolve(); });
-    act(() => { button(renderer, "Open Materials search and filters").props.onPress(); });
-    await act(async () => { await Promise.resolve(); });
-    act(() => { renderer.root.findByProps({ accessibilityLabel: "Search Materials" }).props.onChangeText("search"); });
-    await act(async () => { button(renderer, "Apply Materials search").props.onPress(); await Promise.resolve(); });
+    act(() => { button(renderer, "Open Materials filters").props.onPress(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Materials filter input" }).props.onChangeText("search"); });
+    await act(async () => { button(renderer, "Apply Materials filter").props.onPress(); await Promise.resolve(); });
     expect(client.search).toHaveBeenCalledWith("member-1", { text: "search" }, undefined);
     expect(textContent(renderer)).toContain("Search result");
     expect(textContent(renderer)).not.toContain("First");
+    renderer.unmount();
+  });
+
+  test("keeps filter context visible while clearing only the query", async () => {
+    const client: MemberItemsClient = {
+      list: vi.fn().mockResolvedValue({ items: [task("one", "First")], nextCursor: null }),
+      search: vi.fn().mockResolvedValue({ items: [task("two", "Dentist", "home")], nextCursor: null }),
+    };
+    const renderer = renderScreen(client);
+    await act(async () => { await Promise.resolve(); });
+
+    act(() => { button(renderer, "Open Materials filters").props.onPress(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(textContent(renderer)).toContain("Choose one filter below");
+
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Materials filter input" }).props.onChangeText("dentist"); });
+    await act(async () => { button(renderer, "Apply Materials filter").props.onPress(); await Promise.resolve(); });
+    act(() => { button(renderer, "Select Materials Space filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials space Home subtree").props.onPress(); await Promise.resolve(); });
+
+    expect(client.search).toHaveBeenLastCalledWith("member-1", { text: "dentist", spaceId: "home" }, undefined);
+    expect(textContent(renderer)).toContain("2 active filters");
+
+    act(() => { button(renderer, "Clear Materials query").props.onPress(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(client.search).toHaveBeenLastCalledWith("member-1", { spaceId: "home" }, undefined);
+    expect(renderer.root.findByProps({ accessibilityLabel: "Materials filter input" }).props.value).toBe("");
+    expect(textContent(renderer)).toContain("Space: Home");
+    renderer.unmount();
+  });
+
+  test("applies the visible draft query when a dropdown filter is chosen", async () => {
+    const client: MemberItemsClient = {
+      list: vi.fn().mockResolvedValue({ items: [task("one", "First")], nextCursor: null }),
+      search: vi.fn().mockResolvedValue({ items: [task("two", "Dentist", "home")], nextCursor: null }),
+    };
+    const renderer = renderScreen(client);
+    await act(async () => { await Promise.resolve(); });
+    act(() => { button(renderer, "Open Materials filters").props.onPress(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Materials filter input" }).props.onChangeText("dentist"); });
+    act(() => { button(renderer, "Select Materials Space filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials space Home subtree").props.onPress(); await Promise.resolve(); });
+
+    expect(client.search).toHaveBeenLastCalledWith("member-1", { text: "dentist", spaceId: "home" }, undefined);
+    renderer.unmount();
+  });
+
+  test("keeps only one organization filter active at a time", async () => {
+    const client: MemberItemsClient = {
+      list: vi.fn().mockResolvedValue({ items: [task("one", "First")], nextCursor: null }),
+      search: vi.fn().mockResolvedValue({ items: [task("two", "Filtered")], nextCursor: null }),
+    };
+    const renderer = renderScreen(client, {
+      listTags: vi.fn().mockResolvedValue([{ id: "tag-1", memberId: "member-1", name: "urgent", createdAt: "now" }]),
+      listEntities: vi.fn().mockResolvedValue([{ id: "entity-1", memberId: "member-1", name: "Dentist", type: "Person", createdAt: "now" }]),
+    });
+    await act(async () => { await Promise.resolve(); });
+    act(() => { button(renderer, "Open Materials filters").props.onPress(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    act(() => { button(renderer, "Select Materials Space filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials space Home subtree").props.onPress(); await Promise.resolve(); });
+    act(() => { button(renderer, "Select Materials Tag filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials tag urgent").props.onPress(); await Promise.resolve(); });
+    act(() => { button(renderer, "Select Materials Entity filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials entity Dentist (Person)").props.onPress(); await Promise.resolve(); });
+
+    expect(client.search).toHaveBeenLastCalledWith("member-1", { entityId: "entity-1" }, undefined);
+    expect(textContent(renderer)).toContain("1 active filter");
+    expect(textContent(renderer)).not.toContain("Space: Home");
+    expect(textContent(renderer)).not.toContain("Tag: urgent");
+    renderer.unmount();
+  });
+
+  test("clears organization filters when Clear filters is pressed without a query", async () => {
+    const client: MemberItemsClient = {
+      list: vi.fn().mockResolvedValue({ items: [task("one", "First")], nextCursor: null }),
+      search: vi.fn().mockResolvedValue({ items: [task("two", "Filtered")], nextCursor: null }),
+    };
+    const renderer = renderScreen(client);
+    await act(async () => { await Promise.resolve(); });
+    act(() => { button(renderer, "Open Materials filters").props.onPress(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    act(() => { button(renderer, "Select Materials Space filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials space Home subtree").props.onPress(); await Promise.resolve(); });
+
+    act(() => { button(renderer, "Clear Materials filters").props.onPress(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(client.list).toHaveBeenLastCalledWith("member-1", undefined);
+    expect(textContent(renderer)).not.toContain("Space: Home");
+    renderer.unmount();
+  });
+
+  test("explains when an organization filter has no matches", async () => {
+    const client: MemberItemsClient = {
+      list: vi.fn().mockResolvedValue({ items: [task("one", "First")], nextCursor: null }),
+      search: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    };
+    const renderer = renderScreen(client);
+    await act(async () => { await Promise.resolve(); });
+    act(() => { button(renderer, "Open Materials filters").props.onPress(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    act(() => { button(renderer, "Select Materials Space filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials space Home subtree").props.onPress(); await Promise.resolve(); });
+
+    expect(textContent(renderer)).toContain("No matching materials");
+    expect(textContent(renderer)).toContain("clear the filters");
+    renderer.unmount();
+  });
+
+  test("retries a failed filtered page without losing the active filter", async () => {
+    const client: MemberItemsClient = {
+      list: vi.fn().mockResolvedValue({ items: [task("one", "First")], nextCursor: null }),
+      search: vi.fn()
+        .mockResolvedValueOnce({ items: [task("filtered-first", "Filtered first")], nextCursor: "next" })
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValueOnce({ items: [task("filtered-second", "Filtered second")], nextCursor: null }),
+    };
+    const renderer = renderScreen(client);
+    await act(async () => { await Promise.resolve(); });
+    act(() => { button(renderer, "Open Materials filters").props.onPress(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    act(() => { button(renderer, "Select Materials Space filter").props.onPress(); });
+    await act(async () => { button(renderer, "Choose Materials space Home subtree").props.onPress(); await Promise.resolve(); });
+
+    expect(textContent(renderer)).toContain("Couldn’t load more Materials:");
+    await act(async () => { button(renderer, "Retry loading more Materials").props.onPress(); await Promise.resolve(); });
+    expect(textContent(renderer)).toContain("Filtered second");
+    expect(client.search).toHaveBeenLastCalledWith("member-1", { spaceId: "home" }, "next");
+    renderer.unmount();
+  });
+
+  test("does not let an older delayed search replace a newer result", async () => {
+    type DelayedPage = { readonly items: readonly ReturnType<typeof task>[]; readonly nextCursor: null };
+    let resolveOld: ((page: DelayedPage) => void) | undefined;
+    let resolveNew: ((page: DelayedPage) => void) | undefined;
+    const oldPage = new Promise<DelayedPage>((resolve) => { resolveOld = resolve; });
+    const newPage = new Promise<DelayedPage>((resolve) => { resolveNew = resolve; });
+    const client: MemberItemsClient = {
+      list: vi.fn().mockResolvedValue({ items: [task("initial", "Initial")], nextCursor: null }),
+      search: vi.fn().mockImplementationOnce(() => oldPage).mockImplementationOnce(() => newPage),
+    };
+    const renderer = renderScreen(client);
+    await act(async () => { await Promise.resolve(); });
+    act(() => { button(renderer, "Open Materials filters").props.onPress(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Materials filter input" }).props.onChangeText("old"); });
+    act(() => { button(renderer, "Apply Materials filter").props.onPress(); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Materials filter input" }).props.onChangeText("new"); });
+    act(() => { button(renderer, "Apply Materials filter").props.onPress(); });
+
+    if (resolveNew === undefined || resolveOld === undefined) throw new Error("Search resolvers were not initialized");
+    const resolveNewPage = resolveNew;
+    const resolveOldPage = resolveOld;
+    await act(async () => { resolveNewPage({ items: [task("new", "New result")], nextCursor: null }); await Promise.resolve(); });
+    expect(textContent(renderer)).toContain("New result");
+    await act(async () => { resolveOldPage({ items: [task("old", "Old result")], nextCursor: null }); await Promise.resolve(); });
+    expect(textContent(renderer)).toContain("New result");
+    expect(textContent(renderer)).not.toContain("Old result");
+    renderer.unmount();
+  });
+
+  test("keeps the active filter context when returning from detail", async () => {
+    const client: MemberItemsClient = {
+      list: vi.fn().mockResolvedValue({ items: [task("one", "First")], nextCursor: null }),
+      search: vi.fn().mockResolvedValue({ items: [task("two", "Filtered")], nextCursor: null }),
+    };
+    let renderer!: ReactTestRenderer;
+    const props = { apiBaseUrl: "http://api.test", memberId: "member-1", timeZone: "Europe/Warsaw", client, spacesClient: { list: vi.fn().mockResolvedValue(spaces) }, metadataClient: { listTags: vi.fn().mockResolvedValue([]), listEntities: vi.fn().mockResolvedValue([]) }, onOpenDetail: vi.fn() };
+    act(() => { renderer = create(<MaterialsScreen {...props} />); });
+    await act(async () => { await Promise.resolve(); });
+    act(() => { button(renderer, "Open Materials filters").props.onPress(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Materials filter input" }).props.onChangeText("filtered"); });
+    await act(async () => { button(renderer, "Apply Materials filter").props.onPress(); await Promise.resolve(); });
+    act(() => { renderer.update(<MaterialsScreen {...props} detailUrl="/captures/two/review" detail={<Text>Existing detail</Text>} />); });
+    expect(textContent(renderer)).toContain("Existing detail");
+    act(() => { renderer.update(<MaterialsScreen {...props} />); });
+    expect(renderer.root.findByProps({ accessibilityLabel: "Materials filter input" }).props.value).toBe("filtered");
+    expect(textContent(renderer)).toContain("Query: “filtered”");
     renderer.unmount();
   });
 
