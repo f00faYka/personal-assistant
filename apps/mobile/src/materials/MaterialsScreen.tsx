@@ -54,6 +54,7 @@ export function MaterialsScreen({ apiBaseUrl, memberId, timeZone, client: provid
     const generation = ++requestGeneration.current;
     if (isRefresh) setRefreshing(true);
     else setLoadState("loading");
+    if (retryCursor === undefined && !isRefresh) setItems([]);
     if (retryCursor === undefined) {
       setPaginationError(null);
     }
@@ -122,7 +123,7 @@ export function MaterialsScreen({ apiBaseUrl, memberId, timeZone, client: provid
   }, [load]);
 
   const selectSingleFilter = useCallback((menu: FilterMenu, value: string) => {
-    const text = filters.text;
+    const text = searchText.trim();
     const selected = value === "__unassigned__"
       ? { unassigned: true }
       : menu === "space"
@@ -132,7 +133,7 @@ export function MaterialsScreen({ apiBaseUrl, memberId, timeZone, client: provid
           : { entityId: value };
     setFilterMenu(null);
     applyFilters(text ? { text, ...selected } : selected);
-  }, [applyFilters, filters.text]);
+  }, [applyFilters, searchText]);
 
   const applySearchText = useCallback(() => {
     const text = searchText.trim();
@@ -212,11 +213,11 @@ function MaterialCard({ item, spaces, timeZone, today, onOpenDetail }: { readonl
 }
 
 function SearchPanel({ open, filterMenu, text, filters, options, onOpen, onTextChange, onApplyText, onSelectFilter, onClearQuery, onClearFilters, onToggleFilterMenu, onRetry }: { readonly open: boolean; readonly filterMenu: FilterMenu | null; readonly text: string; readonly filters: SearchFilters; readonly options: FilterOptionsState; readonly onOpen: () => void; readonly onTextChange: (value: string) => void; readonly onApplyText: () => void; readonly onSelectFilter: (menu: FilterMenu, value: string) => void; readonly onClearQuery: () => void; readonly onClearFilters: () => void; readonly onToggleFilterMenu: (menu: FilterMenu) => void; readonly onRetry: () => void }) {
-  if (!open) return <Pressable accessibilityRole="button" accessibilityLabel="Open Materials search and filters" onPress={onOpen} style={styles.searchToggle}><Text style={styles.searchToggleText}>Filter materials</Text><Text style={styles.searchToggleHint}>Search by words, Space, Entity, or Tag</Text></Pressable>;
+  if (!open) return <Pressable accessibilityRole="button" accessibilityLabel="Open Materials filters" onPress={onOpen} style={styles.searchToggle}><Text style={styles.searchToggleText}>Filter materials</Text><Text style={styles.searchToggleHint}>Filter by words, Space, Entity, or Tag</Text></Pressable>;
   return <View style={styles.searchPanel}>
     <Text style={styles.searchEyebrow}>FILTER MATERIALS</Text>
     <Text style={styles.searchTitle}>What are you looking for?</Text>
-    <View style={styles.searchRow}><View style={{ flex: 1, position: "relative" }}><TextInput accessibilityLabel="Search Materials" placeholder="Search Tasks and Notes" value={text} onChangeText={onTextChange} onSubmitEditing={onApplyText} style={[styles.searchInput, { paddingRight: 42 }]} />{text.length > 0 ? <Pressable accessibilityRole="button" accessibilityLabel="Clear Materials query" onPress={onClearQuery} style={[styles.clearQuery, { marginLeft: 0, position: "absolute", right: 4, top: 0, width: 36 }]}><Text style={styles.clearQueryText}>×</Text></Pressable> : null}</View><Pressable accessibilityRole="button" accessibilityLabel="Apply Materials search" onPress={onApplyText} style={styles.searchButton}><Text style={styles.searchButtonText}>Apply</Text></Pressable></View>
+    <View style={styles.searchRow}><View style={{ flex: 1, position: "relative" }}><TextInput accessibilityLabel="Materials filter input" placeholder="Filter Tasks and Notes" value={text} onChangeText={onTextChange} onSubmitEditing={onApplyText} style={[styles.searchInput, { paddingRight: 42 }]} />{text.length > 0 ? <Pressable accessibilityRole="button" accessibilityLabel="Clear Materials query" onPress={onClearQuery} style={[styles.clearQuery, { marginLeft: 0, position: "absolute", right: 4, top: 0, width: 36 }]}><Text style={styles.clearQueryText}>×</Text></Pressable> : null}</View><Pressable accessibilityRole="button" accessibilityLabel="Apply Materials filter" onPress={onApplyText} style={styles.searchButton}><Text style={styles.searchButtonText}>Apply</Text></Pressable></View>
     {filterCount(filters) > 0 ? <Text style={styles.filterSummary}>{`${filterCount(filters)} active ${filterCount(filters) === 1 ? "filter" : "filters"} · ${filterSummary(filters, options)}`}</Text> : <Text style={styles.searchGuidance}>Choose one filter below, or search by words.</Text>}
     <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
       <FilterDropdown label="Space" menu="space" open={filterMenu === "space"} activeLabel={activeFilterLabel("space", filters, options)} onToggle={onToggleFilterMenu} />
