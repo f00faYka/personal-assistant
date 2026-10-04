@@ -492,10 +492,7 @@ function ResultPreview({ state, apiBaseUrl, memberId, timeZone, onSave, onOpenRe
       </View>
       <Text style={resultStyles.title}>{previewTitle(state.item)}</Text>
       <CaptureResultFacts apiBaseUrl={apiBaseUrl} memberId={memberId} item={state.item} timeZone={timeZone} />
-      {countdown ? <View style={resultStyles.timerSection}>
-        <View style={resultStyles.progressTrack}><View style={[resultStyles.progressFill, { width: `${Math.round(countdown.progress * 100)}%` }]} /></View>
-        <Text style={resultStyles.timerHint}>This result saves automatically when the countdown ends.</Text>
-      </View> : <Text style={resultStyles.timerHint}>The countdown stopped while you reviewed the details.</Text>}
+      {!countdown ? <Text style={resultStyles.timerHint}>The countdown stopped while you reviewed the details.</Text> : null}
       <View style={resultStyles.actions}>
         <Pressable accessibilityRole="button" accessibilityLabel="Open result details" onPress={() => onOpenResultReview(state.item)} style={resultStyles.detailsButton}><Text style={resultStyles.detailsText}>Open details</Text></Pressable>
         <Pressable accessibilityRole="button" accessibilityLabel="Save result" onPress={onSave} style={resultStyles.saveButton}><Text style={resultStyles.saveText}>Save now</Text></Pressable>
@@ -670,9 +667,6 @@ const resultStyles = StyleSheet.create({
   stoppedPill: { backgroundColor: "#F1EFEB", borderRadius: 13, paddingHorizontal: 10, paddingVertical: 9 },
   stoppedText: { color: "#716B64", fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
   title: { color: "#24221F", fontSize: 23, fontWeight: "700", lineHeight: 30, marginTop: 18 },
-  timerSection: { marginTop: 18 },
-  progressTrack: { backgroundColor: "#E9EDE8", borderRadius: 4, height: 7, overflow: "hidden" },
-  progressFill: { backgroundColor: "#A9C638", borderRadius: 4, height: 7 },
   timerHint: { color: "#716B64", fontSize: 12, lineHeight: 17, marginTop: 8 },
   actions: { flexDirection: "row", gap: 10, marginTop: 17 },
   detailsButton: { alignItems: "center", borderColor: "#B8C9BF", borderRadius: 13, borderWidth: 1, flex: 1, justifyContent: "center", minHeight: 48, paddingHorizontal: 12 },
