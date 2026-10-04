@@ -125,7 +125,7 @@ describe("MemberListScreen", () => {
     expect(textContent(renderer)).toContain("AUTO-SAVE");
     expect(textContent(renderer)).toContain("0:15");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Open result details" }).props.onPress(); });
-    expect(textContent(renderer)).toContain("CAPTURE RESULT");
+    expect(textContent(renderer)).toContain("TASK");
     expect(textContent(renderer)).not.toContain("Buy milk Buy milk");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Show source and review history" }).props.onPress(); });
     expect(textContent(renderer)).toContain("Original transcription");

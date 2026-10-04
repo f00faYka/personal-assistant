@@ -22,7 +22,7 @@ describe("CaptureResultReview", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/review")) return jsonResponse({ review: reviewContract() });
-      if (url.includes("/metadata")) return jsonResponse({ tags: [], entities: [{ id: "entity-1", memberId: "member-1", name: "Office", type: "Place", createdAt: "now" }] });
+      if (url.includes("/metadata")) return jsonResponse({ tags: [{ id: "tag-1", memberId: "member-1", name: "Errands", createdAt: "now" }], entities: [{ id: "entity-1", memberId: "member-1", name: "Office", type: "Place", createdAt: "now" }] });
       if (url.includes("/spaces?")) return jsonResponse({ spaces: [{ id: "space-1", memberId: "member-1", name: "Work", createdAt: "now" }] });
       if (url.includes("/spaces/space-1")) return jsonResponse({ space: { id: "space-1", memberId: "member-1", name: "Work", createdAt: "now" }, path: "Work", children: [], items: [{ itemId: "task-1", itemKind: "task", spaceId: "space-1", path: "Work" }] });
       throw new Error(`Unexpected request ${url}`);
@@ -31,8 +31,12 @@ describe("CaptureResultReview", () => {
     const onBack = vi.fn();
     await act(async () => { renderer = create(<CaptureResultReview apiBaseUrl="http://api.test" memberId="member-1" detailUrl="/captures/capture-1/review" timeZone="UTC" onBack={onBack} />); });
     expect(textContent(renderer)).toContain("Buy milk");
-    expect(textContent(renderer)).toContain("Due date");
-    expect(textContent(renderer)).toContain("Due time");
+    expect(textContent(renderer)).toContain("DUE DATE");
+    expect(textContent(renderer)).toContain("DUE TIME");
+    expect(textContent(renderer)).toContain("SPACE Work");
+    expect(textContent(renderer)).toContain("TAGS Errands");
+    expect(textContent(renderer)).toContain("ENTITIES Office Place");
+    expect(textContent(renderer)).not.toContain("Change");
     expect(textContent(renderer)).not.toContain("Call dentist tomorrow");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Show source and review history" }).props.onPress(); });
     expect(textContent(renderer)).toContain("Call dentist tomorrow");
@@ -55,7 +59,10 @@ describe("CaptureResultReview", () => {
     await act(async () => { renderer = create(<CaptureResultReview apiBaseUrl="http://api.test" memberId="member-1" detailUrl="/captures/capture-1/review" timeZone="UTC" onBack={vi.fn()} />); });
     expect(textContent(renderer)).toContain("Maybe book a trip");
     expect(textContent(renderer)).toContain("Needs review");
-    expect(textContent(renderer)).toContain("Type Note");
+    expect(textContent(renderer)).toContain("NOTE");
+    expect(textContent(renderer)).not.toContain("SPACE");
+    expect(textContent(renderer)).not.toContain("TAGS");
+    expect(textContent(renderer)).not.toContain("ENTITIES");
     expect(textContent(renderer)).not.toContain("Due date");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Show source and review history" }).props.onPress(); });
     expect(textContent(renderer)).toContain("Storage pending · audio/m4a · 12 bytes");
