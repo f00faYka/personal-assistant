@@ -122,6 +122,8 @@ describe("MemberListScreen", () => {
     await act(async () => { findButton(renderer, "Submit Capture").props.onPress(); });
 
     expect(textContent(renderer)).toContain("Buy milk");
+    expect(textContent(renderer)).toContain("AUTO-SAVE");
+    expect(textContent(renderer)).toContain("0:15");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Open result details" }).props.onPress(); });
     expect(textContent(renderer)).toContain("CAPTURE RESULT");
     expect(textContent(renderer)).not.toContain("Buy milk Buy milk");
@@ -130,6 +132,10 @@ describe("MemberListScreen", () => {
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Back to Capture result" }).props.onPress(); });
     expect(textContent(renderer)).toContain("RESULT");
     expect(textContent(renderer)).toContain("Buy milk");
+    expect(textContent(renderer)).toContain("TIMER STOPPED");
+    expect(textContent(renderer)).toContain("countdown stopped while you reviewed");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save result" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("Saved to your items");
     renderer.unmount();
   });
 

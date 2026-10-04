@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { beginPreview, expirePreview, openPreviewReview, resolvePreview, savePreview, timeOutPreview } from "./result-preview";
+import { beginPreview, expirePreview, openPreviewReview, previewCountdown, resolvePreview, savePreview, timeOutPreview } from "./result-preview";
 
 const task = { kind: "task" as const, id: "task-1", captureId: "capture-1", title: "Buy milk", state: "open" as const, createdAt: "2026-08-15T10:00:00Z", detailUrl: "/captures/capture-1/review" };
 const note = { kind: "note" as const, id: "note-1", captureId: "capture-1", content: "Call the dentist", state: "none" as const, createdAt: task.createdAt, detailUrl: task.detailUrl };
@@ -20,6 +20,13 @@ describe("result preview state", () => {
     const state = resolvePreview(beginPreview("capture-1", 1000), [task], 1000);
 
     expect(state).toEqual({ status: "preview", item: task, expiresAt: 16000 });
+  });
+
+  test("formats the autosave countdown and progress from the existing deadline", () => {
+    expect(previewCountdown(16_000, 1_000)).toEqual({ seconds: 15, progress: 1 });
+    expect(previewCountdown(16_000, 2_250)).toEqual({ seconds: 14, progress: 0.9166666666666666 });
+    expect(previewCountdown(16_000, 16_000)).toEqual({ seconds: 0, progress: 0 });
+    expect(previewCountdown(16_000, 20_000)).toEqual({ seconds: 0, progress: 0 });
   });
 
   test("previews an ordinary Note without adding another confirmation gate", () => {

@@ -13,6 +13,14 @@ export const PREVIEW_WINDOW_MS = 15_000;
 
 export const PROCESSING_TIMEOUT_MS = 30_000;
 
+export function previewCountdown(expiresAt: number, now: number): { readonly seconds: number; readonly progress: number } {
+  const remainingMilliseconds = Math.max(0, expiresAt - now);
+  return {
+    seconds: Math.ceil(remainingMilliseconds / 1000),
+    progress: Math.min(1, remainingMilliseconds / PREVIEW_WINDOW_MS),
+  };
+}
+
 export function beginPreview(captureId: string, startedAt = Date.now()): PreviewState {
   return { status: "processing", captureId, startedAt };
 }
