@@ -4,6 +4,7 @@ export type PreviewItem = TaskListItem | NoteListItem;
 export type PreviewState =
   | { readonly status: "processing"; readonly captureId: string; readonly startedAt: number }
   | { readonly status: "preview"; readonly item: PreviewItem; readonly expiresAt: number }
+  | { readonly status: "reviewing"; readonly item: PreviewItem }
   | { readonly status: "failed"; readonly captureId: string }
   | { readonly status: "timed_out"; readonly captureId: string }
   | { readonly status: "saved"; readonly item: PreviewItem };
@@ -35,5 +36,9 @@ export function timeOutPreview(state: PreviewState, now: number): PreviewState {
 }
 
 export function savePreview(state: PreviewState): PreviewState {
-  return state.status === "preview" ? { status: "saved", item: state.item } : state;
+  return state.status === "preview" || state.status === "reviewing" ? { status: "saved", item: state.item } : state;
+}
+
+export function openPreviewReview(state: PreviewState): PreviewState {
+  return state.status === "preview" ? { status: "reviewing", item: state.item } : state;
 }

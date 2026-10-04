@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { beginPreview, expirePreview, resolvePreview, savePreview, timeOutPreview } from "./result-preview";
+import { beginPreview, expirePreview, openPreviewReview, resolvePreview, savePreview, timeOutPreview } from "./result-preview";
 
 const task = { kind: "task" as const, id: "task-1", captureId: "capture-1", title: "Buy milk", state: "open" as const, createdAt: "2026-08-15T10:00:00Z", detailUrl: "/captures/capture-1/review" };
 const note = { kind: "note" as const, id: "note-1", captureId: "capture-1", content: "Call the dentist", state: "none" as const, createdAt: task.createdAt, detailUrl: task.detailUrl };
@@ -39,6 +39,14 @@ describe("result preview state", () => {
     expect(saved).toEqual({ status: "saved", item: task });
     expect(expirePreview(saved, 20000)).toBe(saved);
     expect(savePreview(saved)).toBe(saved);
+  });
+
+  test("opening details freezes the unattended timer and keeps the same result on return", () => {
+    const preview = resolvePreview(beginPreview("capture-1"), [task], 1000);
+    const reviewing = openPreviewReview(preview);
+    expect(reviewing).toEqual({ status: "reviewing", item: task });
+    expect(expirePreview(reviewing, 60_000)).toBe(reviewing);
+    expect(savePreview(reviewing)).toEqual({ status: "saved", item: task });
   });
 
   test("ignores stale results for another Capture", () => {

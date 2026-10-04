@@ -8,7 +8,7 @@ import { TaskNoteDetailScreen, type TaskNoteDetailDraft, type TaskNoteDetailItem
 import { entityTypes, type Entity, type EntityType, type MetadataClient, type MetadataItemKind, type MetadataLinks, type Tag } from "./metadata";
 import { createReviewClient, type ReviewClient, type ReviewContract } from "./review";
 import type { OrganizationProposal, OrganizationProposalCandidate, OrganizationProposalClient } from "./organization-proposals";
-import type { Space, SpacesClient } from "../spaces/spaces";
+import { findAssignedSpace, spacePath, type Space, type SpacesClient } from "../spaces/spaces";
 import { getDeviceTimeZone } from "../time-zone";
 
 interface ReviewScreenProps {
@@ -77,9 +77,8 @@ export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, onBack
     try {
       const [nextLinks, nextTags, nextSpaces] = await Promise.all([metadataClient.listLinks(itemId, itemKind, memberId), metadataClient.listTags(memberId), spacesClient.list(memberId)]);
       const activeSpaces = nextSpaces.filter((space) => !space.archivedAt);
-      const views = await Promise.all(activeSpaces.map((space) => spacesClient.read(memberId, space.id, "flat")));
-      const assigned = views.find((view) => view.items.some((entry) => entry.itemId === itemId && entry.itemKind === itemKind));
-      setLoadedDetailMetadata({ itemId, itemKind, selectedSpaceId: assigned?.space.id ?? null, spaces: activeSpaces.map((space) => ({ id: space.id, label: spacePath(nextSpaces, space.id) })), tags: nextTags.map((tag) => ({ id: tag.id, label: tag.name, selected: nextLinks.tags.some((linked) => linked.id === tag.id) })), error: null });
+      const assigned = await findAssignedSpace(spacesClient, activeSpaces, memberId, itemId, itemKind);
+      setLoadedDetailMetadata({ itemId, itemKind, selectedSpaceId: assigned?.id ?? null, spaces: activeSpaces.map((space) => ({ id: space.id, label: spacePath(nextSpaces, space.id) })), tags: nextTags.map((tag) => ({ id: tag.id, label: tag.name, selected: nextLinks.tags.some((linked) => linked.id === tag.id) })), error: null });
     } catch (cause) {
       setLoadedDetailMetadata({ itemId, itemKind, selectedSpaceId: null, spaces: [], tags: [], error: cause instanceof Error ? cause.message : "Unable to load item properties" });
     }
@@ -605,12 +604,6 @@ function detailItem(review: ReviewContract, metadata?: TaskNoteDetailMetadata): 
   const transcription = review.transcription?.text ? { text: review.transcription.text, ...(review.transcription.language ? { language: review.transcription.language } : {}) } : undefined;
   if (outcome.kind === "task") return { kind: "task", id: outcome.id, title: outcome.title, status: outcome.status, dueAt: outcome.dueAt ?? null, space, tags, source: `Capture ${review.capture.id} · source ${review.source.id}`, interpretation, ...(transcription ? { transcription } : {}) };
   return { kind: "note", id: outcome.id, content: outcome.content, reviewState: outcome.reviewState === "needs_review" ? "needs_review" : "saved", space, tags, source: `Capture ${review.capture.id} · source ${review.source.id}`, interpretation, ...(transcription ? { transcription } : {}) };
-}
-
-function spacePath(spaces: readonly Space[], spaceId: string): string {
-  const space = spaces.find((candidate) => candidate.id === spaceId);
-  if (!space) return "No Space";
-  return space.parentId ? `${spacePath(spaces, space.parentId)} > ${space.name}` : space.name;
 }
 
 function isValidIsoDate(value: string): boolean {

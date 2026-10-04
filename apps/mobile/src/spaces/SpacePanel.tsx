@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-native";
-import type { Space, SpaceTreeView, SpacesClient } from "./spaces";
+import { spacePath, type Space, type SpaceTreeView, type SpacesClient } from "./spaces";
 
 interface SpacePanelProps {
   readonly client: SpacesClient;
@@ -207,12 +207,12 @@ export function SpacePanel({ client, memberId, selectedSpaceId, onSelect, onSpac
           </Pressable>
           {mode === "hierarchical"
             ? tree.map((node) => <SpaceRow key={node.space.id} node={node} depth={0} {...rowProps} />)
-            : flatSpaces.map((space) => <SpaceRow key={space.id} node={{ space, children: [] }} depth={0} path={spacePath(space, spaces)} {...rowProps} />)}
+            : flatSpaces.map((space) => <SpaceRow key={space.id} node={{ space, children: [] }} depth={0} path={spacePath(spaces, space.id)} {...rowProps} />)}
           {selectedView ? <SpaceContents view={selectedView} mode={mode} /> : null}
           {archivedRoots.length > 0 ? <View>
             <Text style={{ fontWeight: "700", marginTop: 12 }}>Archived Spaces</Text>
             {archivedRoots.map((space) => <View key={space.id} style={{ paddingVertical: 6 }}>
-              <Text>{spacePath(space, spaces)}</Text>
+              <Text>{spacePath(spaces, space.id)}</Text>
               <Pressable accessibilityRole="button" accessibilityLabel={`Restore Space ${space.name}`} onPress={() => void run(() => client.restore(memberId, space.id))}>
                 <Text style={{ color: "#7A5C36", marginTop: 4 }}>Restore subtree</Text>
               </Pressable>
@@ -351,16 +351,6 @@ function buildTree(spaces: readonly Space[]): readonly SpaceNode[] {
     if (parent) parent.children.push(node); else roots.push(node);
   }
   return roots;
-}
-
-function spacePath(space: Space, spaces: readonly Space[]): string {
-  const names: string[] = [];
-  let current: Space | undefined = space;
-  while (current) {
-    names.unshift(current.name);
-    current = current.parentId ? spaces.find((candidate) => candidate.id === current?.parentId) : undefined;
-  }
-  return names.join(" / ");
 }
 
 function isDescendant(space: Space, ancestorId: string, spaces: readonly Space[]): boolean {

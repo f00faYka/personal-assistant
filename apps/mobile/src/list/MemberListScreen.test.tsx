@@ -17,6 +17,7 @@ vi.mock("react-native", async () => {
     PanResponder: { create: () => ({ panHandlers: {} }) },
     Pressable: host("Pressable"),
     RefreshControl: host("RefreshControl"),
+    ScrollView: host("ScrollView"),
     TextInput: host("TextInput"),
     StyleSheet: { create: <T,>(styles: T): T => styles },
     Text: host("Text"),
@@ -98,6 +99,37 @@ describe("MemberListScreen", () => {
     const firstRow = renderer.root.findAllByType(Pressable).find((node) => node.props.accessibilityLabel === "Task: Buy milk");
     firstRow?.props.onPress();
     expect(onOpenDetail).toHaveBeenCalledWith("/captures/capture-1/review");
+    renderer.unmount();
+  });
+
+  test("opens the read-only result review and returns to the same Capture preview", async () => {
+    const createdTask = { ...task, captureId: "capture-1", id: "task-new", detailUrl: "/captures/capture-1/review" };
+    const client: MemberItemsClient = {
+      list: vi.fn().mockResolvedValueOnce({ items: [], nextCursor: null }).mockResolvedValue({ items: [createdTask], nextCursor: null }),
+      search: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/captures/capture-1/review")) return jsonResponse({ review: { state: "completed", capture: { id: "capture-1", memberId: "member-1" }, source: { id: "source-1", content: { kind: "audio", contentType: "audio/m4a", byteLength: 1024, sha256: "hash" }, storageState: "stored" }, transcription: { status: "succeeded", text: "Buy milk" }, correction: null, interpretation: { id: "interpretation-1", classification: "clear_supported" }, outcome: { kind: "task", id: "task-new", title: "Buy milk", status: "open", version: 0 }, failure: null } });
+      if (url.includes("/metadata")) return jsonResponse({ tags: [], entities: [] });
+      if (url.includes("/spaces?")) return jsonResponse({ spaces: [] });
+      throw new Error(`Unexpected request ${url}`);
+    }));
+    const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn().mockResolvedValue({ uri: "file:///capture.m4a", contentType: "audio/m4a" }), cancel: vi.fn() };
+    const renderer = await renderScreen({ client, voiceRecorder: recorder, captureSubmitter: { submit: vi.fn().mockResolvedValue({ captureId: "capture-1" }) } });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
+    await act(async () => { findButton(renderer, "Finish recording").props.onPress(); });
+    await act(async () => { findButton(renderer, "Submit Capture").props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Buy milk");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Open result details" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("CAPTURE RESULT");
+    expect(textContent(renderer)).not.toContain("Buy milk Buy milk");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Show source and review history" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("Original transcription");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Back to Capture result" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("RESULT");
+    expect(textContent(renderer)).toContain("Buy milk");
     renderer.unmount();
   });
 

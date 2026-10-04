@@ -8,7 +8,8 @@ import { shouldPersistOfflineDraft } from "../http/request-error";
 import type { OfflineDraft, OfflineDraftStore } from "../offline/offline-drafts";
 import type { OfflineDraftSynchronizationResult, OfflineDraftSyncClient } from "../offline/synchronize-offline-drafts";
 import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, paginationStateFromError, type ListState, type MemberItemsClient, type MemberListItem, type SearchFilters } from "./member-items";
-import { beginPreview, expirePreview, resolvePreview, savePreview, timeOutPreview, type PreviewItem, type PreviewState } from "../preview/result-preview";
+import { beginPreview, expirePreview, openPreviewReview, resolvePreview, savePreview, timeOutPreview, type PreviewItem, type PreviewState } from "../preview/result-preview";
+import { CaptureResultFacts, CaptureResultReview } from "../review/CaptureResultReview";
 import { SpacePanel } from "../spaces/SpacePanel";
 import { createSpacesClient, type Space } from "../spaces/spaces";
 import { createMetadataClient, type Entity, type Tag } from "../review/metadata";
@@ -60,6 +61,7 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
   const [offlineDraftSync, setOfflineDraftSync] = useState<Record<string, OfflineDraftSynchronizationResult>>({});
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
+  const [captureReviewUrl, setCaptureReviewUrl] = useState<string | null>(null);
   const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0);
   const [spaces, setSpaces] = useState<readonly Space[]>([]);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
@@ -382,6 +384,11 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
     void refresh();
   }, [refresh]);
 
+  const openResultReview = useCallback((item: PreviewItem) => {
+    setPreview((current) => current ? openPreviewReview(current) : current);
+    setCaptureReviewUrl(item.detailUrl);
+  }, []);
+
   const assignItem = useCallback(async (item: AssignableItem, spaceId: string | null) => {
     setAssigningItemId(item.id); setSpaceError(null); setFailedAssignment(null);
     try { await spacesClient.assign(item.id, item.kind, memberId, spaceId); await refresh(); }
@@ -417,7 +424,7 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
   const homeDate = localDateKey(new Date(), effectiveTimeZone);
   const homeItems = (home ? completeHomeItems : state.items).filter((item): item is Extract<MemberListItem, { kind: "task" }> => item.kind === "task" && item.dueAt !== undefined && localDateKey(item.dueAt, effectiveTimeZone) === homeDate);
   const homeTimelineItems: readonly TimelineItem[] = homeItems.map((item): TimelineItem => ({ kind: "server_item", item }));
-  return (
+  return captureReviewUrl ? <CaptureResultReview apiBaseUrl={apiBaseUrl} memberId={memberId} detailUrl={captureReviewUrl} timeZone={effectiveTimeZone} onBack={() => setCaptureReviewUrl(null)} /> : (
     <SafeAreaView style={styles.safeArea}>
       {home ? <HomeHeader taskCount={homeItems.length} loading={homeLoadStatus === "loading"} /> : <View style={styles.header}>
         <Text style={styles.eyebrow}>D · SUMMARY TIMELINE</Text>
@@ -428,7 +435,7 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
       <SearchFilterPanel open={searchOpen} text={searchText} filters={filters} options={filterOptions} onOpen={openSearch} onTextChange={setSearchText} onApplyText={() => applyFilters(withTextFilter(filters, searchText))} onApply={applyFilters} onClear={clearFilters} onRetry={openSearch} /></> : null}
       {spaceError && failedAssignment ? <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{spaceError}</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry Space assignment" onPress={() => void assignItem(failedAssignment.item, failedAssignment.spaceId)}><Text style={styles.retryText}>Retry assignment</Text></Pressable></View> : null}
       {voiceRecorder && capture.status !== "idle" ? <CapturePanel state={capture} recordingElapsedSeconds={recordingElapsedSeconds} recordingMetering={recordingMetering} recordingInterrupted={recordingInterrupted} onStop={() => void stopCapture()} onCancel={() => void cancelCapture()} onSubmit={(audio) => void submitCapture(audio)} /> : null}
-      {preview ? <ResultPreview state={preview} onSave={saveResultPreview} onOpenReview={onOpenDetail} /> : null}
+      {preview ? <ResultPreview state={preview} apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={effectiveTimeZone} onSave={saveResultPreview} onOpenReview={setCaptureReviewUrl} onOpenResultReview={openResultReview} /> : null}
       {offlineDraftError ? <OfflineDraftErrorBanner message={offlineDraftError} /> : null}
       {state.status === "loading" && timelineItems.length === 0 ? <LoadingState /> : null}
       {state.status === "loading" && timelineItems.length > 0 ? <LoadingBanner message={hasSearch ? "Updating search results…" : "Refreshing your items…"} /> : null}
@@ -463,12 +470,13 @@ function HomeHeader({ taskCount, loading }: { readonly taskCount: number; readon
   return <View style={homeStyles.homeHeader}><View style={homeStyles.homeDigestLabel}><Text style={homeStyles.homeEyebrow}>TODAY AT A GLANCE</Text><Text style={homeStyles.homePrepared}>PREPARED DIGEST</Text></View><Text style={homeStyles.homeDigestTitle}>Your day, at a glance.</Text><Text style={homeStyles.homeDigestText}>{loading ? "Preparing today’s tasks…" : `${taskCount} ${taskCount === 1 ? "task" : "tasks"} scheduled for today`}</Text><Text style={homeStyles.homeDigestArrow}>↗</Text></View>;
 }
 
-function ResultPreview({ state, onSave, onOpenReview }: { readonly state: PreviewState; readonly onSave: () => void; readonly onOpenReview: ((detailUrl: string) => void) | undefined }) {
+function ResultPreview({ state, apiBaseUrl, memberId, timeZone, onSave, onOpenReview, onOpenResultReview }: { readonly state: PreviewState; readonly apiBaseUrl: string; readonly memberId: string; readonly timeZone: string; readonly onSave: () => void; readonly onOpenReview: ((detailUrl: string) => void) | undefined; readonly onOpenResultReview: (item: PreviewItem) => void }) {
   if (state.status === "processing") return <View accessibilityRole="alert" style={styles.previewPanel}><ActivityIndicator /><Text style={styles.captureTitle}>Processing your Capture…</Text><Text style={styles.captureText}>Your result will appear here when the server confirms it.</Text></View>;
   if (state.status === "failed") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Capture processing failed</Text><Text style={styles.captureText}>Your original Capture remains stored on the server.</Text><PreviewReviewButton captureId={state.captureId} onOpenReview={onOpenReview} /></View>;
   if (state.status === "timed_out") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Processing is taking longer than expected</Text><Text style={styles.captureText}>The server has not confirmed a result. Your original Capture remains stored on the server.</Text><PreviewReviewButton captureId={state.captureId} onOpenReview={onOpenReview} /></View>;
   if (state.status === "saved") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Saved</Text><Text style={styles.captureText}>{previewTitle(state.item)}</Text></View>;
-  return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.previewEyebrow}>RESULT</Text><Text style={styles.captureTitle}>{previewTitle(state.item)}</Text>{state.item.kind === "note" ? <Text style={styles.captureText}>{state.item.content}</Text> : state.item.dueAt ? <Text style={styles.captureText}>Due {formatDate(state.item.dueAt)}</Text> : null}<Pressable accessibilityRole="button" accessibilityLabel="Save result" onPress={onSave} style={styles.retry}><Text style={styles.retryText}>Save</Text></Pressable></View>;
+  if (state.status === "preview" || state.status === "reviewing") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.previewEyebrow}>RESULT</Text><Text style={styles.captureTitle}>{previewTitle(state.item)}</Text>{state.item.kind === "note" ? <Text style={styles.captureText}>{state.item.content}</Text> : null}<CaptureResultFacts apiBaseUrl={apiBaseUrl} memberId={memberId} item={state.item} timeZone={timeZone} /><Pressable accessibilityRole="button" accessibilityLabel="Open result details" onPress={() => onOpenResultReview(state.item)} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Open details</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Save result" onPress={onSave} style={styles.retry}><Text style={styles.retryText}>Save</Text></Pressable></View>;
+  return null;
 }
 
 function PreviewReviewButton({ captureId, onOpenReview }: { readonly captureId: string; readonly onOpenReview: ((detailUrl: string) => void) | undefined }) {

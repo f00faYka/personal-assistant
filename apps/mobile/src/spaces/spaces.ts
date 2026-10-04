@@ -25,6 +25,20 @@ export interface SpacesClient {
   assign(itemId: string, itemKind: "task" | "note", memberId: string, spaceId: string | null): Promise<void>;
 }
 
+export async function findAssignedSpace(client: SpacesClient, spaces: readonly Space[], memberId: string, itemId: string, itemKind: "task" | "note"): Promise<Space | undefined> {
+  for (const space of spaces.filter((entry) => !entry.archivedAt)) {
+    const view = await client.read(memberId, space.id, "flat");
+    if (view.items.some((entry) => entry.itemId === itemId && entry.itemKind === itemKind)) return space;
+  }
+  return undefined;
+}
+
+export function spacePath(spaces: readonly Space[], spaceId: string): string {
+  const space = spaces.find((candidate) => candidate.id === spaceId);
+  if (!space) return "No Space";
+  return space.parentId ? `${spacePath(spaces, space.parentId)} / ${space.name}` : space.name;
+}
+
 export type SpacesFetcher = (url: string, init?: RequestInit) => Promise<Response>;
 
 export function createSpacesClient(apiBaseUrl: string, fetcher: SpacesFetcher = (url, init) => fetch(url, init)): SpacesClient {
