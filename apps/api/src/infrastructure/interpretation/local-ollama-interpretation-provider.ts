@@ -28,6 +28,15 @@ const interpretationSchema = {
             dayPart: { type: "string", enum: ["morning", "afternoon", "evening", "night"] },
             special: { type: "string", enum: ["noon", "midnight"] },
           },
+          allOf: [
+            {
+              if: { required: ["period"] },
+              then: {
+                required: ["hour"],
+                properties: { hour: { type: "integer", minimum: 1, maximum: 12 } },
+              },
+            },
+          ],
           additionalProperties: false,
         },
       },

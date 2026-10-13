@@ -162,7 +162,13 @@ function classify(input: InterpretationInput): Pick<Interpretation, "classificat
       return { classification: "unsupported", rejectionReason: "malformed_model_output" };
     }
     const timeZone = input.timeZone ?? "UTC";
-    const modelSchedule = parseModelSchedule(input.rawOutput.schedule, input.capturedAt, timeZone);
+    const normalizedModelSchedule = normalizeRedundant24HourPeriod(
+      input.rawOutput.schedule,
+      input.transcriptionText,
+      input.capturedAt,
+      timeZone,
+    );
+    const modelSchedule = parseModelSchedule(normalizedModelSchedule, input.capturedAt, timeZone);
     if (modelSchedule === INVALID_SCHEDULE) {
       return { classification: "unsupported", rejectionReason: "malformed_model_output" };
     }
@@ -221,6 +227,24 @@ function hasExpectedFields(value: Record<string, unknown>, fields: readonly stri
 function serializeRawOutput(value: unknown): string {
   const serialized = JSON.stringify(value);
   return serialized === undefined ? "null" : serialized;
+}
+
+function normalizeRedundant24HourPeriod(
+  value: unknown,
+  transcriptionText: string,
+  capturedAt: string,
+  timeZone: string,
+): unknown {
+  if (!isRecord(value) || typeof value.hour !== "number" || value.hour <= 12 || value.hour > 23 || value.period !== "pm") {
+    return value;
+  }
+  const captured = new Date(capturedAt);
+  if (Number.isNaN(captured.getTime()) || !isValidTimeZone(timeZone)) return value;
+  const spoken = parseSpokenSchedule(transcriptionText, localCalendarDate(captured, timeZone)).time;
+  if (spoken?.hour !== value.hour || spoken.period !== "pm") return value;
+  if (value.minute !== undefined && value.minute !== null && spoken.minute !== value.minute) return value;
+
+  return { ...value, hour: value.hour % 12 || 12 };
 }
 
 const MONTHS = new Map([
@@ -363,8 +387,7 @@ function parseModelSchedule(value: unknown, capturedAt: string, timeZone: string
   if (dayPart !== undefined && hour === undefined) {
     return { ...(date === undefined ? {} : { date }), time: { dayPart } };
   }
-  if (period !== undefined && (hour === undefined || hour < 1 || hour > 23)) return INVALID_SCHEDULE;
-  if (period === "am" && hour !== undefined && hour > 12) return INVALID_SCHEDULE;
+  if (period !== undefined && (hour === undefined || hour < 1 || hour > 12)) return INVALID_SCHEDULE;
   if (hour === undefined && minute !== undefined) return INVALID_SCHEDULE;
   const effectivePeriod = period ?? periodForDayPart(dayPart);
   const time: ClockTime | undefined = special === undefined && hour === undefined && dayPart === undefined
@@ -372,7 +395,7 @@ function parseModelSchedule(value: unknown, capturedAt: string, timeZone: string
     : special !== undefined
       ? { special, hour: special === "noon" ? 12 : 0, minute: 0 }
       : {
-        ...(hour === undefined ? {} : { hour: effectivePeriod === undefined || hour > 12 ? hour : (hour % 12) + (effectivePeriod === "pm" ? 12 : 0) }),
+        ...(hour === undefined ? {} : { hour: hour > 12 ? hour : to24Hour(hour, effectivePeriod) }),
         ...(minute === undefined || minute === null ? {} : { minute }),
         ...(period === undefined ? {} : { period }),
         ...(dayPart === undefined ? {} : { dayPart }),
@@ -499,6 +522,20 @@ function extractDate(text: string, captured: CalendarDate): CalendarDate | undef
 function extractTime(text: string): ClockTime | undefined {
   if (/\bnoon\b|полдень/.test(text)) return { hour: 12, minute: 0, special: "noon" };
   if (/\bmidnight\b|полночь/.test(text)) return { hour: 0, minute: 0, special: "midnight" };
+  const russianLeadingDayPart = text.match(new RegExp(`(?<![а-яё])(утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью)(?![а-яё])\\s+(?:в\\s*)?(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:[:.](\\d{2}))?(?:\\s*час(?:а|ов)?)?(?=\\s|[.!?,]|$)`));
+  if (russianLeadingDayPart !== null) {
+    const hour = parseClockHour(russianLeadingDayPart[2] ?? "");
+    const minute = russianLeadingDayPart[3] === undefined ? undefined : Number(russianLeadingDayPart[3]);
+    const dayPart = normalizeDayPart(russianLeadingDayPart[1]);
+    const period = periodForDayPart(dayPart);
+    if (!Number.isInteger(hour) || hour < 1 || hour > 12 || period === undefined || (minute !== undefined && (minute < 0 || minute > 59))) return undefined;
+    return {
+      hour: to24Hour(hour, period),
+      ...(minute === undefined ? {} : { minute }),
+      period,
+      ...(dayPart === undefined ? {} : { dayPart }),
+    };
+  }
   const english = text.match(new RegExp(`\\bat\\s+(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:[:.](\\d{2}))?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?\\s+(am|pm|morning|afternoon|evening|night|in\\s+the\\s+(?:morning|afternoon|evening|night))\\b`))
     ?? text.match(new RegExp(`\\bat\\s+(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:[:.](\\d{2}))?\\s*(?:o['’]?clock)?(?:\\s+(?:oh\\s+)?(${ENGLISH_CLOCK_NUMBER_PATTERN})(?:\\s+minutes?)?)?(?=\\s|[.!?,]|$)`));
   const russian = text.match(new RegExp(`в\\s*(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:[:.](\\d{2}))?(?:\\s*час(?:а|ов)?)?(?:\\s+(?:ноль\\s+)?(${RUSSIAN_CLOCK_NUMBER_PATTERN})(?:\\s*минут(?:а|ы)?)?)?\\s+(утра|утром|дня|днём|днем|вечера|вечером|ночи|ночью)`))
@@ -516,7 +553,7 @@ function extractTime(text: string): ClockTime | undefined {
   const period = periodValue === "am" || periodValue === "pm" ? periodValue : periodForDayPart(dayPart);
   if (!Number.isInteger(hour) || hour < 1 || hour > 23 || (period !== undefined && hour > 12) || (minute !== undefined && (!Number.isInteger(minute) || minute < 0 || minute > 59))) return undefined;
   return {
-    hour: period === undefined ? hour : (hour % 12) + (period === "pm" ? 12 : 0),
+    hour: to24Hour(hour, period),
     ...(minute === undefined ? {} : { minute }),
     ...(period === undefined ? {} : { period }),
     ...(dayPart === undefined ? {} : { dayPart }),
@@ -603,6 +640,10 @@ function normalizeDayPart(value: string | undefined): ScheduleDayPart | undefine
 
 function periodForDayPart(dayPart: ScheduleDayPart | undefined): SchedulePeriod | undefined {
   return dayPart === "morning" ? "am" : dayPart === undefined ? undefined : "pm";
+}
+
+function to24Hour(hour: number, period: SchedulePeriod | undefined): number {
+  return period === undefined ? hour : (hour % 12) + (period === "pm" ? 12 : 0);
 }
 
 function localCalendarDateTime(value: Date, timeZone: string): CalendarDate & { readonly hour: number; readonly minute: number } {

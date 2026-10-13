@@ -161,6 +161,37 @@ describe("production interpretation runtime", () => {
     });
   });
 
+  test("materializes the Russian evening dot time once and preserves its interpretation provenance", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "personal-assistant-interpretation-russian-evening-time-"));
+    directories.push(directory);
+    const transcriptionText = "напомни что сегодня вечером 8.15 у нас встреча";
+    const rawOutput = {
+      action: "create_task",
+      title: "встреча",
+      schedule: { date: "сегодня", hour: 20, minute: 15, period: "pm" },
+    };
+    const harness = await createHarness(directory, new DeterministicInterpretationProvider(rawOutput), 3, transcriptionText, "UTC");
+    harnesses.push(harness);
+
+    const response = await harness.application.inject({
+      method: "POST",
+      url: "/captures",
+      payload: { ...submission(), capturedAt: "2026-10-13T08:00:00.000Z", timeZone: "Europe/Warsaw" },
+    });
+    const captureId = response.json<{ capture: { id: string } }>().capture.id;
+    const item = await waitForItem(harness, captureId);
+    const review = await waitForReviewState(harness, captureId, "completed");
+
+    expect(item).toMatchObject({ kind: "task", captureId, title: "встреча", dueAt: "2026-10-13T18:15:00.000Z" });
+    expect(review).toMatchObject({
+      transcription: { text: transcriptionText },
+      interpretation: { classification: "clear_supported", rawOutputJson: JSON.stringify(rawOutput) },
+      outcome: { kind: "task", title: "встреча", dueAt: "2026-10-13T18:15:00.000Z" },
+    });
+    const listedItems = await harness.application.inject({ method: "GET", url: "/items?memberId=member-1" });
+    expect(listedItems.json<{ items: Array<{ captureId: string }> }>().items.filter((candidate) => candidate.captureId === captureId)).toHaveLength(1);
+  });
+
   test("uses the Capture timezone when delayed interpretation crosses UTC midnight", async () => {
     const directory = await mkdtemp(join(tmpdir(), "personal-assistant-interpretation-capture-time-zone-"));
     directories.push(directory);
