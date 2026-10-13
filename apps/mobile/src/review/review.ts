@@ -7,7 +7,11 @@ export type ReviewOutcome =
 export interface ReviewContract {
   readonly state: "pending" | "failed" | "completed" | "needs_review";
   readonly capture: { readonly id: string; readonly memberId: string };
-  readonly source: { readonly id: string };
+  readonly source: {
+    readonly id: string;
+    readonly content?: { readonly kind: "audio"; readonly contentType: string; readonly byteLength: number; readonly sha256: string };
+    readonly storageState?: "pending" | "stored";
+  };
   readonly transcription: { readonly status: string; readonly text?: string; readonly language?: string } | null;
   readonly correction: { readonly text: string } | null;
   readonly interpretation: { readonly id: string; readonly classification?: string } | null;

@@ -8,7 +8,8 @@ import { shouldPersistOfflineDraft } from "../http/request-error";
 import type { OfflineDraft, OfflineDraftStore } from "../offline/offline-drafts";
 import type { OfflineDraftSynchronizationResult, OfflineDraftSyncClient } from "../offline/synchronize-offline-drafts";
 import { createMemberItemsClient, initialListState, listItemLabel, listStateFromError, listStateFromPage, paginationStateFromError, type ListState, type MemberItemsClient, type MemberListItem, type SearchFilters } from "./member-items";
-import { beginPreview, expirePreview, resolvePreview, savePreview, timeOutPreview, type PreviewItem, type PreviewState } from "../preview/result-preview";
+import { beginPreview, expirePreview, openPreviewReview, previewCountdown, resolvePreview, savePreview, timeOutPreview, type PreviewItem, type PreviewState } from "../preview/result-preview";
+import { CaptureResultFacts, CaptureResultReview } from "../review/CaptureResultReview";
 import { SpacePanel } from "../spaces/SpacePanel";
 import { createSpacesClient, type Space } from "../spaces/spaces";
 import { createMetadataClient, type Entity, type Tag } from "../review/metadata";
@@ -60,6 +61,7 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
   const [offlineDraftSync, setOfflineDraftSync] = useState<Record<string, OfflineDraftSynchronizationResult>>({});
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
+  const [captureReviewUrl, setCaptureReviewUrl] = useState<string | null>(null);
   const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0);
   const [spaces, setSpaces] = useState<readonly Space[]>([]);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
@@ -382,6 +384,11 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
     void refresh();
   }, [refresh]);
 
+  const openResultReview = useCallback((item: PreviewItem) => {
+    setPreview((current) => current ? openPreviewReview(current) : current);
+    setCaptureReviewUrl(item.detailUrl);
+  }, []);
+
   const assignItem = useCallback(async (item: AssignableItem, spaceId: string | null) => {
     setAssigningItemId(item.id); setSpaceError(null); setFailedAssignment(null);
     try { await spacesClient.assign(item.id, item.kind, memberId, spaceId); await refresh(); }
@@ -417,7 +424,7 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
   const homeDate = localDateKey(new Date(), effectiveTimeZone);
   const homeItems = (home ? completeHomeItems : state.items).filter((item): item is Extract<MemberListItem, { kind: "task" }> => item.kind === "task" && item.dueAt !== undefined && localDateKey(item.dueAt, effectiveTimeZone) === homeDate);
   const homeTimelineItems: readonly TimelineItem[] = homeItems.map((item): TimelineItem => ({ kind: "server_item", item }));
-  return (
+  return captureReviewUrl ? <CaptureResultReview apiBaseUrl={apiBaseUrl} memberId={memberId} detailUrl={captureReviewUrl} timeZone={effectiveTimeZone} onBack={() => setCaptureReviewUrl(null)} /> : (
     <SafeAreaView style={styles.safeArea}>
       {home ? <HomeHeader taskCount={homeItems.length} loading={homeLoadStatus === "loading"} /> : <View style={styles.header}>
         <Text style={styles.eyebrow}>D · SUMMARY TIMELINE</Text>
@@ -428,7 +435,7 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
       <SearchFilterPanel open={searchOpen} text={searchText} filters={filters} options={filterOptions} onOpen={openSearch} onTextChange={setSearchText} onApplyText={() => applyFilters(withTextFilter(filters, searchText))} onApply={applyFilters} onClear={clearFilters} onRetry={openSearch} /></> : null}
       {spaceError && failedAssignment ? <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{spaceError}</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry Space assignment" onPress={() => void assignItem(failedAssignment.item, failedAssignment.spaceId)}><Text style={styles.retryText}>Retry assignment</Text></Pressable></View> : null}
       {voiceRecorder && capture.status !== "idle" ? <CapturePanel state={capture} recordingElapsedSeconds={recordingElapsedSeconds} recordingMetering={recordingMetering} recordingInterrupted={recordingInterrupted} onStop={() => void stopCapture()} onCancel={() => void cancelCapture()} onSubmit={(audio) => void submitCapture(audio)} /> : null}
-      {preview ? <ResultPreview state={preview} onSave={saveResultPreview} onOpenReview={onOpenDetail} /> : null}
+      {preview ? <ResultPreview state={preview} apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={effectiveTimeZone} onSave={saveResultPreview} onOpenReview={setCaptureReviewUrl} onOpenResultReview={openResultReview} /> : null}
       {offlineDraftError ? <OfflineDraftErrorBanner message={offlineDraftError} /> : null}
       {state.status === "loading" && timelineItems.length === 0 ? <LoadingState /> : null}
       {state.status === "loading" && timelineItems.length > 0 ? <LoadingBanner message={hasSearch ? "Updating search results…" : "Refreshing your items…"} /> : null}
@@ -463,12 +470,40 @@ function HomeHeader({ taskCount, loading }: { readonly taskCount: number; readon
   return <View style={homeStyles.homeHeader}><View style={homeStyles.homeDigestLabel}><Text style={homeStyles.homeEyebrow}>TODAY AT A GLANCE</Text><Text style={homeStyles.homePrepared}>PREPARED DIGEST</Text></View><Text style={homeStyles.homeDigestTitle}>Your day, at a glance.</Text><Text style={homeStyles.homeDigestText}>{loading ? "Preparing today’s tasks…" : `${taskCount} ${taskCount === 1 ? "task" : "tasks"} scheduled for today`}</Text><Text style={homeStyles.homeDigestArrow}>↗</Text></View>;
 }
 
-function ResultPreview({ state, onSave, onOpenReview }: { readonly state: PreviewState; readonly onSave: () => void; readonly onOpenReview: ((detailUrl: string) => void) | undefined }) {
+function ResultPreview({ state, apiBaseUrl, memberId, timeZone, onSave, onOpenReview, onOpenResultReview }: { readonly state: PreviewState; readonly apiBaseUrl: string; readonly memberId: string; readonly timeZone: string; readonly onSave: () => void; readonly onOpenReview: ((detailUrl: string) => void) | undefined; readonly onOpenResultReview: (item: PreviewItem) => void }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (state.status !== "preview") return;
+    setNow(Date.now());
+    const interval = globalThis.setInterval(() => setNow(Date.now()), 250);
+    return () => globalThis.clearInterval(interval);
+  }, [state.status, state.status === "preview" ? state.expiresAt : null]);
+
   if (state.status === "processing") return <View accessibilityRole="alert" style={styles.previewPanel}><ActivityIndicator /><Text style={styles.captureTitle}>Processing your Capture…</Text><Text style={styles.captureText}>Your result will appear here when the server confirms it.</Text></View>;
   if (state.status === "failed") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Capture processing failed</Text><Text style={styles.captureText}>Your original Capture remains stored on the server.</Text><PreviewReviewButton captureId={state.captureId} onOpenReview={onOpenReview} /></View>;
   if (state.status === "timed_out") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Processing is taking longer than expected</Text><Text style={styles.captureText}>The server has not confirmed a result. Your original Capture remains stored on the server.</Text><PreviewReviewButton captureId={state.captureId} onOpenReview={onOpenReview} /></View>;
-  if (state.status === "saved") return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.captureTitle}>Saved</Text><Text style={styles.captureText}>{previewTitle(state.item)}</Text></View>;
-  return <View accessibilityRole="alert" style={styles.previewPanel}><Text style={styles.previewEyebrow}>RESULT</Text><Text style={styles.captureTitle}>{previewTitle(state.item)}</Text>{state.item.kind === "note" ? <Text style={styles.captureText}>{state.item.content}</Text> : state.item.dueAt ? <Text style={styles.captureText}>Due {formatDate(state.item.dueAt)}</Text> : null}<Pressable accessibilityRole="button" accessibilityLabel="Save result" onPress={onSave} style={styles.retry}><Text style={styles.retryText}>Save</Text></Pressable></View>;
+  if (state.status === "saved") return <View accessibilityRole="alert" style={resultStyles.savedCard}><View style={resultStyles.savedMark}><Text style={resultStyles.savedCheck}>✓</Text></View><View style={resultStyles.savedCopy}><Text style={resultStyles.savedTitle}>Saved to your items</Text><Text numberOfLines={2} style={resultStyles.savedDescription}>{previewTitle(state.item)}</Text></View></View>;
+  if (state.status === "preview" || state.status === "reviewing") {
+    const countdown = state.status === "preview" ? previewCountdown(state.expiresAt, now) : null;
+    return <View accessibilityRole="alert" style={resultStyles.card}>
+      <View style={resultStyles.header}>
+        <View style={resultStyles.readyBadge}><View style={resultStyles.readyDot} /><Text style={resultStyles.readyText}>CAPTURE RESULT</Text></View>
+        {countdown ? <View accessibilityRole="timer" accessibilityLabel={`Auto-save in ${countdown.seconds} seconds`} style={resultStyles.timerPill}><Text style={resultStyles.timerLabel}>AUTO-SAVE</Text><Text style={resultStyles.timerValue}>{formatCountdown(countdown.seconds)}</Text></View> : <View style={resultStyles.stoppedPill}><Text style={resultStyles.stoppedText}>TIMER STOPPED</Text></View>}
+      </View>
+      <Text style={resultStyles.title}>{previewTitle(state.item)}</Text>
+      <CaptureResultFacts apiBaseUrl={apiBaseUrl} memberId={memberId} item={state.item} timeZone={timeZone} />
+      {!countdown ? <Text style={resultStyles.timerHint}>The countdown stopped while you reviewed the details.</Text> : null}
+      <View style={resultStyles.actions}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Open result details" onPress={() => onOpenResultReview(state.item)} style={resultStyles.detailsButton}><Text style={resultStyles.detailsText}>Open details</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Save result" onPress={onSave} style={resultStyles.saveButton}><Text style={resultStyles.saveText}>Save now</Text></Pressable>
+      </View>
+    </View>;
+  }
+  return null;
+}
+
+function formatCountdown(totalSeconds: number): string {
+  return `0:${totalSeconds.toString().padStart(2, "0")}`;
 }
 
 function PreviewReviewButton({ captureId, onOpenReview }: { readonly captureId: string; readonly onOpenReview: ((detailUrl: string) => void) | undefined }) {
@@ -618,4 +653,30 @@ const styles = StyleSheet.create({
   filterToggle: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, marginHorizontal: 16, marginBottom: 12, padding: 12 }, filterToggleText: { color: "#5D5146", fontSize: 15, fontWeight: "600", textAlign: "center" }, filterPanel: { backgroundColor: "#FFFDF9", borderColor: "#E5E0D8", borderRadius: 14, borderWidth: 1, marginHorizontal: 16, marginBottom: 12, padding: 14 }, searchRow: { alignItems: "center", flexDirection: "row", gap: 8 }, searchInput: { borderColor: "#B9A895", borderRadius: 10, borderWidth: 1, color: "#24221F", flex: 1, minHeight: 44, paddingHorizontal: 12 }, filterButton: { backgroundColor: "#24221F", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12 }, filterButtonText: { color: "#FFFFFF", fontWeight: "700" }, filterSummary: { color: "#5D5146", fontSize: 13, marginTop: 10 }, filterStatus: { alignItems: "center", flexDirection: "row", gap: 8, marginTop: 12 }, filterError: { backgroundColor: "#FCE8DF", borderRadius: 8, marginTop: 12, padding: 10 }, filterHeading: { color: "#8B7355", fontSize: 12, fontWeight: "700", marginTop: 14, textTransform: "uppercase" }, filterOption: { color: "#5D5146", fontSize: 15, paddingVertical: 7 }, filterMuted: { color: "#908A82", fontSize: 14, paddingVertical: 7 }, clearFilters: { borderColor: "#B9A895", borderRadius: 10, borderWidth: 1, marginTop: 14, padding: 10 }, clearFiltersText: { color: "#8C3D25", fontSize: 14, fontWeight: "700", textAlign: "center" },
   spaceLabel: { color: "#716B64", fontSize: 13, marginTop: 12 }, spaceAction: { color: "#7A5C36", fontSize: 13, fontWeight: "600", marginTop: 8 },
   safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, header: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 34, fontWeight: "700", marginTop: 6 }, captureButton: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 12, paddingHorizontal: 16, paddingVertical: 11, alignSelf: "flex-start" }, captureButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, actionButton: { alignItems: "center", flex: 1, height: 48, justifyContent: "center", paddingHorizontal: 12 }, actionPrimaryButton: { alignSelf: "stretch", marginTop: 0 }, actionButtonContent: { alignItems: "center", flexDirection: "row", gap: 6 }, actionIcon: { fontSize: 16, fontWeight: "700", lineHeight: 18 }, capturePanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewPanel: { backgroundColor: "#FFF4E8", marginHorizontal: 16, marginBottom: 12, padding: 16, borderRadius: 14 }, previewEyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, recordingPanel: { backgroundColor: "#FCE8E5", borderColor: "#E5A49B", borderWidth: 1 }, captureTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, recordingTitle: { color: "#B43C32", fontSize: 17, fontWeight: "700" }, recordingText: { color: "#8C3D25", fontSize: 15, lineHeight: 21, marginTop: 6 }, meteringStatus: { color: "#8C3D25", fontSize: 12, lineHeight: 18, marginTop: 6 }, recordingHeader: { alignItems: "center", flexDirection: "row", gap: 8 }, recordingDot: { backgroundColor: "#C44739", borderRadius: 5, height: 10, width: 10 }, recordingTimer: { color: "#B43C32", fontSize: 16, fontVariant: ["tabular-nums"], marginLeft: "auto" }, waveform: { alignItems: "center", flexDirection: "row", gap: 3, height: 44, justifyContent: "center", marginTop: 14 }, recordingWaveform: { backgroundColor: "#F8D5D0", borderRadius: 14 }, waveformBar: { backgroundColor: "#D9A88A", borderRadius: 2, minHeight: 6, width: 4 }, recordingWaveformBar: { backgroundColor: "#E08B80" }, recordingWaveformBarActive: { backgroundColor: "#B43C32" }, captureText: { color: "#716B64", fontSize: 15, lineHeight: 21, marginTop: 6 }, captureActions: { alignItems: "stretch", flexDirection: "row", gap: 10, marginTop: 14 }, secondaryButton: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10 }, secondaryButtonText: { color: "#5D5146", fontSize: 15, fontWeight: "600" }, recordingButton: { backgroundColor: "#B43C32" }, recordingButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" }, recordingSecondaryButton: { borderColor: "#B43C32" }, recordingSecondaryButtonText: { color: "#B43C32", fontSize: 15, fontWeight: "600" }, recordingIcon: { color: "#B43C32", fontSize: 16, fontWeight: "700", lineHeight: 18 }, list: { padding: 16, paddingTop: 4, gap: 12 }, card: { backgroundColor: "#FFFFFF", borderColor: "#E5E0D8", borderRadius: 16, borderWidth: 1, padding: 18 }, offlineDraftCard: { backgroundColor: "#FFF8E8", borderColor: "#CFAE70", borderStyle: "dashed" }, offlineDraftLabel: { color: "#8C641F", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, offlineDraftStatus: { color: "#8C641F", fontSize: 14, fontWeight: "600", marginTop: 8 }, retryDraft: { color: "#8C641F", fontSize: 14, fontWeight: "700", marginTop: 14 }, deleteDraft: { color: "#8C3D25", fontSize: 14, fontWeight: "600", marginTop: 14 }, cardPressed: { opacity: 0.7 }, cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }, label: { color: "#7A5C36", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, date: { color: "#908A82", fontSize: 12 }, detail: { color: "#716B64", fontSize: 14, marginTop: 8 }, reviewHint: { color: "#A15B2A", fontSize: 14, marginTop: 8 }, errorBanner: { backgroundColor: "#FCE8DF", marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 10 }, errorText: { color: "#8C3D25", fontSize: 14 }, state: { alignItems: "center", flex: 1, justifyContent: "center", padding: 32 }, stateTitle: { color: "#24221F", fontSize: 20, fontWeight: "700", textAlign: "center" }, stateText: { color: "#716B64", fontSize: 16, lineHeight: 23, marginTop: 8, maxWidth: 300, textAlign: "center" }, retry: { backgroundColor: "#24221F", borderRadius: 12, marginTop: 20, paddingHorizontal: 20, paddingVertical: 12 }, retryText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" }, footer: { padding: 16 },
+});
+
+const resultStyles = StyleSheet.create({
+  card: { backgroundColor: "#FFFFFF", borderColor: "#D7E2DB", borderRadius: 22, borderWidth: 1, elevation: 5, marginHorizontal: 16, marginBottom: 14, padding: 20, shadowColor: "#173B2F", shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.13, shadowRadius: 14 },
+  header: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", gap: 10 },
+  readyBadge: { alignItems: "center", backgroundColor: "#EAF1ED", borderRadius: 99, flexDirection: "row", gap: 7, paddingHorizontal: 11, paddingVertical: 8 },
+  readyDot: { backgroundColor: "#31745D", borderRadius: 4, height: 8, width: 8 },
+  readyText: { color: "#245542", fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  timerPill: { alignItems: "center", backgroundColor: "#F4F7D8", borderColor: "#D7E373", borderRadius: 13, borderWidth: 1, flexDirection: "row", gap: 8, paddingHorizontal: 10, paddingVertical: 7 },
+  timerLabel: { color: "#56651B", fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
+  timerValue: { color: "#29350D", fontSize: 16, fontVariant: ["tabular-nums"], fontWeight: "800" },
+  stoppedPill: { backgroundColor: "#F1EFEB", borderRadius: 13, paddingHorizontal: 10, paddingVertical: 9 },
+  stoppedText: { color: "#716B64", fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
+  title: { color: "#24221F", fontSize: 23, fontWeight: "700", lineHeight: 30, marginTop: 18 },
+  timerHint: { color: "#716B64", fontSize: 12, lineHeight: 17, marginTop: 8 },
+  actions: { flexDirection: "row", gap: 10, marginTop: 17 },
+  detailsButton: { alignItems: "center", borderColor: "#B8C9BF", borderRadius: 13, borderWidth: 1, flex: 1, justifyContent: "center", minHeight: 48, paddingHorizontal: 12 },
+  detailsText: { color: "#245542", fontSize: 14, fontWeight: "700" },
+  saveButton: { alignItems: "center", backgroundColor: "#173B2F", borderRadius: 13, flex: 1, justifyContent: "center", minHeight: 48, paddingHorizontal: 12 },
+  saveText: { color: "#FFFFFF", fontSize: 14, fontWeight: "700" },
+  savedCard: { alignItems: "center", backgroundColor: "#EAF1ED", borderColor: "#C7D9CE", borderRadius: 17, borderWidth: 1, flexDirection: "row", gap: 12, marginHorizontal: 16, marginBottom: 14, padding: 15 },
+  savedMark: { alignItems: "center", backgroundColor: "#31745D", borderRadius: 14, height: 30, justifyContent: "center", width: 30 },
+  savedCheck: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" },
+  savedCopy: { flex: 1 },
+  savedTitle: { color: "#245542", fontSize: 15, fontWeight: "700" },
+  savedDescription: { color: "#566A5E", fontSize: 13, lineHeight: 18, marginTop: 2 },
 });

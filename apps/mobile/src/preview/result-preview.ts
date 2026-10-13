@@ -4,6 +4,7 @@ export type PreviewItem = TaskListItem | NoteListItem;
 export type PreviewState =
   | { readonly status: "processing"; readonly captureId: string; readonly startedAt: number }
   | { readonly status: "preview"; readonly item: PreviewItem; readonly expiresAt: number }
+  | { readonly status: "reviewing"; readonly item: PreviewItem }
   | { readonly status: "failed"; readonly captureId: string }
   | { readonly status: "timed_out"; readonly captureId: string }
   | { readonly status: "saved"; readonly item: PreviewItem };
@@ -11,6 +12,14 @@ export type PreviewState =
 export const PREVIEW_WINDOW_MS = 15_000;
 
 export const PROCESSING_TIMEOUT_MS = 30_000;
+
+export function previewCountdown(expiresAt: number, now: number): { readonly seconds: number; readonly progress: number } {
+  const remainingMilliseconds = Math.max(0, expiresAt - now);
+  return {
+    seconds: Math.ceil(remainingMilliseconds / 1000),
+    progress: Math.min(1, remainingMilliseconds / PREVIEW_WINDOW_MS),
+  };
+}
 
 export function beginPreview(captureId: string, startedAt = Date.now()): PreviewState {
   return { status: "processing", captureId, startedAt };
@@ -35,5 +44,9 @@ export function timeOutPreview(state: PreviewState, now: number): PreviewState {
 }
 
 export function savePreview(state: PreviewState): PreviewState {
-  return state.status === "preview" ? { status: "saved", item: state.item } : state;
+  return state.status === "preview" || state.status === "reviewing" ? { status: "saved", item: state.item } : state;
+}
+
+export function openPreviewReview(state: PreviewState): PreviewState {
+  return state.status === "preview" ? { status: "reviewing", item: state.item } : state;
 }
