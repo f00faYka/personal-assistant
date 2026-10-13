@@ -115,6 +115,24 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
+  test("keeps Space, Tags, and Entities in the Task detail metadata area", async () => {
+    const office: Space = { id: "space-1", memberId: "member-1", name: "Office", createdAt: "now" };
+    const metadataClient = metadataFixture({ listTags: vi.fn().mockResolvedValue([metadataTag("tag-1", "urgent")]), listLinks: vi.fn().mockResolvedValue({ tags: [], entities: [] }) });
+    const spacesClient = spacesFixture({
+      list: vi.fn().mockResolvedValue([office]),
+      read: vi.fn().mockResolvedValue({ space: office, path: "Office", children: [], items: [{ itemId: "task-1", itemKind: "task", spaceId: office.id, path: "Office", title: "Buy milk" }] }),
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient, spacesClient });
+
+    expect(renderer.root.findByProps({ accessibilityLabel: "Choose Space" })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" })).toBeDefined();
+    expect(textContent(renderer)).toContain("TAGS & ENTITIES");
+    expect(textContent(renderer)).not.toContain("Tags and Entities");
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Assign Space Office" })).toHaveLength(0);
+    renderer.unmount();
+  });
+
   test("validates Entity name before creating and supports each allowed type", async () => {
     const metadataClient = metadataFixture();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "none", version: 0 }) })));
@@ -194,11 +212,11 @@ describe("ReviewScreen", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
     expect(textContent(renderer)).toContain("urgent");
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Refresh Tags and Entities" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Refresh metadata" }).props.onPress(); });
     expect(textContent(renderer)).toContain("metadata unavailable");
     expect(textContent(renderer)).toContain("urgent");
     expect(renderer.root.findByProps({ accessibilityLabel: "Create and add Tag" })).toBeTruthy();
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry Tags and Entities" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry metadata" }).props.onPress(); });
     expect(textContent(renderer)).not.toContain("metadata unavailable");
     renderer.unmount();
   });
@@ -448,13 +466,14 @@ describe("ReviewScreen", () => {
     vi.stubGlobal("fetch", fetcher);
     const renderer = await renderScreen(vi.fn(), { spacesClient });
 
-    expect(textContent(renderer)).toContain("Space · Office");
+    expect(textContent(renderer)).toContain("Office");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Convert saved Note to Task" }).props.onPress(); });
 
     expect(textContent(renderer)).toContain("Converted to Task. Identity and provenance were kept.");
-    expect(textContent(renderer)).toContain("Space · Office");
-    expect(renderer.root.findByProps({ accessibilityLabel: "Remove Space Office" })).toBeDefined();
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Remove Space Office" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("Office");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Choose Space" })).toBeDefined();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Choose Space" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Choose Space Unassigned" }).props.onPress(); });
     expect(spacesClient.assign).toHaveBeenCalledWith("note-1", "task", "member-1", null);
     renderer.unmount();
   });

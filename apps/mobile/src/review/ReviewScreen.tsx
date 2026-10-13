@@ -8,7 +8,7 @@ import { TaskNoteDetailScreen, type TaskNoteDetailDraft, type TaskNoteDetailItem
 import { entityTypes, type Entity, type EntityType, type MetadataClient, type MetadataItemKind, type MetadataLinks, type Tag } from "./metadata";
 import { createReviewClient, type ReviewClient, type ReviewContract } from "./review";
 import type { OrganizationProposal, OrganizationProposalCandidate, OrganizationProposalClient } from "./organization-proposals";
-import { findAssignedSpace, spacePath, type Space, type SpacesClient } from "../spaces/spaces";
+import { findAssignedSpace, spacePath, type SpacesClient } from "../spaces/spaces";
 import { getDeviceTimeZone } from "../time-zone";
 
 interface ReviewScreenProps {
@@ -73,9 +73,13 @@ export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, onBack
   useEffect(() => { void load(); }, [load]);
 
   const loadDetailMetadata = useCallback(async (itemId: string, itemKind: MetadataItemKind) => {
-    if (!metadataClient || !spacesClient) return;
+    if (!spacesClient) return;
     try {
-      const [nextLinks, nextTags, nextSpaces] = await Promise.all([metadataClient.listLinks(itemId, itemKind, memberId), metadataClient.listTags(memberId), spacesClient.list(memberId)]);
+      const [nextLinks, nextTags, nextSpaces] = await Promise.all([
+        metadataClient ? metadataClient.listLinks(itemId, itemKind, memberId) : Promise.resolve({ tags: [], entities: [] }),
+        metadataClient ? metadataClient.listTags(memberId) : Promise.resolve([]),
+        spacesClient.list(memberId),
+      ]);
       const activeSpaces = nextSpaces.filter((space) => !space.archivedAt);
       const assigned = await findAssignedSpace(spacesClient, activeSpaces, memberId, itemId, itemKind);
       setLoadedDetailMetadata({ itemId, itemKind, selectedSpaceId: assigned?.id ?? null, spaces: activeSpaces.map((space) => ({ id: space.id, label: spacePath(nextSpaces, space.id) })), tags: nextTags.map((tag) => ({ id: tag.id, label: tag.name, selected: nextLinks.tags.some((linked) => linked.id === tag.id) })), error: null });
@@ -86,7 +90,7 @@ export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, onBack
 
   useEffect(() => {
     const outcome = state.status === "ready" ? state.review.outcome : null;
-    if (!detailMetadata && outcome && metadataClient && spacesClient) void loadDetailMetadata(outcome.id, outcome.kind);
+    if (!detailMetadata && outcome && spacesClient) void loadDetailMetadata(outcome.id, outcome.kind);
     else if (!outcome) setLoadedDetailMetadata(null);
   }, [detailMetadata, loadDetailMetadata, metadataClient, spacesClient, state.status, state.status === "ready" ? state.review.outcome?.id : null, state.status === "ready" ? state.review.outcome?.kind : null]);
 
@@ -233,65 +237,10 @@ export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, onBack
   return <ReviewShell onBack={onBack} showBack={false}>
     <ReviewStateBanner review={state.review} />
     {state.review.state === "failed" ? <Button label="Refresh processing status" onPress={() => void load()} /> : null}
-    {state.review.outcome ? <TaskNoteDetailScreen item={detailItem(state.review, resolvedDetailMetadata)} {...(resolvedDetailMetadata ? { metadata: resolvedDetailMetadata } : {})} onBack={onBack} onSave={(nextDraft) => void save(nextDraft)} onChangeStatus={() => void changeStatus()} onConvert={state.review.outcome.kind === "note" ? () => void convertNoteToTask() : undefined} saving={saving} statusBusy={completing} converting={converting} error={saveError ?? completionError ?? conversionError} notice={conversionNotice} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}
-    {state.review.outcome && metadataClient ? <MetadataControls client={metadataClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> : null}
-    {state.review.outcome && spacesClient ? <SpaceAssignmentControls client={spacesClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> : null}
+    {state.review.outcome ? <TaskNoteDetailScreen item={detailItem(state.review, resolvedDetailMetadata)} {...(resolvedDetailMetadata ? { metadata: resolvedDetailMetadata } : {})} {...(metadataClient ? { metadataContent: <MetadataControls client={metadataClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> } : {})} onBack={onBack} onSave={(nextDraft) => void save(nextDraft)} onChangeStatus={() => void changeStatus()} onConvert={state.review.outcome.kind === "note" ? () => void convertNoteToTask() : undefined} saving={saving} statusBusy={completing} converting={converting} error={saveError ?? completionError ?? conversionError} notice={conversionNotice} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}
     {state.review.outcome && organizationProposalClient ? <OrganizationProposalControls client={organizationProposalClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> : null}
     {!state.review.outcome ? <><Text style={styles.sectionTitle}>Source and provenance</Text><Text style={styles.provenance}>Capture {state.review.capture.id} · source {state.review.source.id}</Text>{state.review.transcription ? <><Text style={styles.fieldLabel}>Original transcription{state.review.transcription.language ? ` · ${state.review.transcription.language}` : ""}</Text><Text style={styles.originalText}>{state.review.transcription.text ?? `Status: ${state.review.transcription.status}`}</Text></> : <Text style={styles.provenance}>Original transcription · pending</Text>}</> : null}
   </ReviewShell>;
-}
-
-function SpaceAssignmentControls({ client, memberId, itemId, itemKind }: { readonly client: SpacesClient; readonly memberId: string; readonly itemId: string; readonly itemKind: "task" | "note" }) {
-  const [spaces, setSpaces] = useState<readonly Space[]>([]);
-  const [assignedSpaceId, setAssignedSpaceId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [inFlight, setInFlight] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const nextSpaces = await client.list(memberId);
-      const activeSpaces = nextSpaces.filter((space) => !space.archivedAt);
-      const views = await Promise.all(activeSpaces.map((space) => client.read(memberId, space.id, "flat")));
-      const assigned = views.find((view) => view.items.some((item) => item.itemId === itemId && item.itemKind === itemKind));
-      setSpaces(nextSpaces);
-      setAssignedSpaceId(assigned?.space.id ?? null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to load Space assignment");
-    } finally {
-      setLoading(false);
-    }
-  }, [client, itemId, itemKind, memberId]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const assign = async (spaceId: string | null) => {
-    if (inFlight) return;
-    setInFlight(true);
-    setError(null);
-    try {
-      await client.assign(itemId, itemKind, memberId, spaceId);
-      setAssignedSpaceId(spaceId);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to update Space assignment");
-    } finally {
-      setInFlight(false);
-    }
-  };
-
-  const assigned = assignedSpaceId === null ? undefined : spaces.find((space) => space.id === assignedSpaceId);
-  return <View style={styles.metadata}>
-    <Text style={styles.sectionTitle}>Space</Text>
-    {loading ? <Text style={styles.stateText}>Loading Space assignment…</Text> : null}
-    {error ? <><Text accessibilityRole="alert" style={styles.error}>{error}</Text><Button label="Retry Space assignment" onPress={() => void load()} disabled={inFlight} /></> : null}
-    {!loading && !error ? <>
-      <Text style={styles.metadataValue}>{assigned ? `Space · ${assigned.name}` : "Space · Unassigned"}</Text>
-      {assigned ? <Button label={`Remove Space ${assigned.name}`} onPress={() => void assign(null)} disabled={inFlight} /> : null}
-      {spaces.filter((space) => !space.archivedAt && space.id !== assignedSpaceId).map((space) => <Button key={space.id} label={`Assign Space ${space.name}`} onPress={() => void assign(space.id)} disabled={inFlight} />)}
-    </> : null}
-  </View>;
 }
 
 function OrganizationProposalControls({ client, memberId, itemId, itemKind }: { readonly client: OrganizationProposalClient; readonly memberId: string; readonly itemId: string; readonly itemKind: "task" | "note" }) {
@@ -468,19 +417,19 @@ function MetadataControls({ client, memberId, itemId, itemKind }: { readonly cli
   };
 
   if (loading) {
-    return <View style={styles.metadata}>
-      <Text style={styles.sectionTitle}>Tags and Entities</Text>
+    return <View style={styles.metadataInline}>
+      <Text style={styles.fieldLabel}>TAGS & ENTITIES</Text>
       <Text style={styles.stateText}>Loading metadata…</Text>
     </View>;
   }
 
-  return <View style={styles.metadata}>
-    <Text style={styles.sectionTitle}>Tags and Entities</Text>
+  return <View style={styles.metadataInline}>
+    <Text style={styles.fieldLabel}>TAGS & ENTITIES</Text>
     {error ? <>
       <Text accessibilityRole="alert" style={styles.error}>{error}</Text>
-      <Button label="Retry Tags and Entities" onPress={() => void load()} disabled={mutationInFlight} />
-    </> : <Button label="Refresh Tags and Entities" onPress={() => void load()} disabled={mutationInFlight} />}
-    <Text style={styles.stateText}>Tags are flat markers. Entities are named {entityTypes.join(", ")}. Spaces and Task importance are separate controls.</Text>
+      <Button label="Retry metadata" onPress={() => void load()} disabled={mutationInFlight} />
+    </> : <Button label="Refresh metadata" onPress={() => void load()} disabled={mutationInFlight} />}
+    <Text style={styles.stateText}>Tags are flat markers. Entities are named {entityTypes.join(", ")}.</Text>
     <Text style={styles.fieldLabel}>Tags</Text>
     {links.tags.map((tag) => <MetadataTagRow
       key={tag.id}
@@ -554,8 +503,7 @@ function MetadataTagRow({ tag, linked, editing, editDraft, disabled, onEdit, onE
     <Button label={`Save Tag ${tag.name}`} onPress={onSave} disabled={disabled} />
   </View>;
   return <View style={styles.metadataRow}>
-    <Text style={styles.metadataValue}>Tag · {tag.name}</Text>
-    <Button label={`Edit Tag ${tag.name}`} onPress={onEdit} disabled={disabled} />
+    <Pressable accessibilityRole="button" accessibilityLabel={`Edit Tag ${tag.name}`} onPress={onEdit} disabled={disabled} style={styles.inlineEdit}><Text style={styles.metadataValue}>Tag · {tag.name}</Text></Pressable>
     {linked && onRemove ? <Button label={`Remove Tag ${tag.name}`} onPress={onRemove} disabled={disabled} /> : null}
     {!linked && onAdd ? <Button label={`Add existing Tag ${tag.name}`} onPress={onAdd} disabled={disabled} /> : null}
   </View>;
@@ -569,8 +517,7 @@ function MetadataEntityRow({ entity, linked, editing, editDraft, editType, disab
     <Button label={`Save Entity ${entity.name}`} onPress={onSave} disabled={disabled} />
   </View>;
   return <View style={styles.metadataRow}>
-    <Text style={styles.metadataValue}>{entity.type} · {entity.name}</Text>
-    <Button label={`Edit Entity ${entity.name}`} onPress={onEdit} disabled={disabled} />
+    <Pressable accessibilityRole="button" accessibilityLabel={`Edit Entity ${entity.name}`} onPress={onEdit} disabled={disabled} style={styles.inlineEdit}><Text style={styles.metadataValue}>{entity.type} · {entity.name}</Text></Pressable>
     {linked && onRemove ? <Button label={`Remove Entity ${entity.name}`} onPress={onRemove} disabled={disabled} /> : null}
     {!linked && onAdd ? <Button label={`Add existing Entity ${entity.name}`} onPress={onAdd} disabled={disabled} /> : null}
   </View>;
@@ -616,4 +563,4 @@ function isValidIsoDate(value: string): boolean {
 function ReviewShell({ children, onBack, showBack = true }: { readonly children: ReactNode; readonly onBack: () => void; readonly showBack?: boolean }) { return <SafeAreaView style={styles.safeArea}>{showBack ? <Pressable accessibilityRole="button" accessibilityLabel="Back to items" onPress={onBack}><Text style={styles.back}>‹ Items</Text></Pressable> : null}<ScrollView contentContainerStyle={styles.content}>{children}</ScrollView></SafeAreaView>; }
 function Button({ label, onPress, disabled = false }: { readonly label: string; readonly onPress: () => void; readonly disabled?: boolean }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress} style={styles.button}><Text style={styles.buttonText}>{label}</Text></Pressable>; }
 
-const styles = StyleSheet.create({ safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, content: { padding: 24 }, back: { color: "#7A5C36", fontSize: 16, paddingHorizontal: 24, paddingTop: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 32, fontWeight: "700", marginTop: 6 }, stateText: { color: "#716B64", fontSize: 15, lineHeight: 22, marginTop: 8 }, reviewState: { color: "#8C3D25", fontSize: 15, fontWeight: "600", lineHeight: 22, marginTop: 18 }, field: { marginTop: 24 }, fieldLabel: { color: "#8B7355", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, value: { color: "#24221F", fontSize: 19, lineHeight: 27, marginTop: 5 }, originalText: { color: "#716B64", fontSize: 16, lineHeight: 24, marginTop: 5 }, input: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", fontSize: 19, lineHeight: 27, paddingVertical: 5 }, editInput: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", flex: 1, fontSize: 16, paddingVertical: 5 }, sectionTitle: { color: "#24221F", fontSize: 17, fontWeight: "700", marginTop: 32 }, provenance: { color: "#716B64", fontSize: 14, lineHeight: 21, marginTop: 6 }, metadata: { borderTopColor: "#D8CFC2", borderTopWidth: 1, marginTop: 30, paddingTop: 4 }, organization: { borderTopColor: "#D8CFC2", borderTopWidth: 1, marginTop: 30, paddingTop: 4 }, proposalCard: { backgroundColor: "#FFF8E8", borderColor: "#D5B98D", borderRadius: 14, borderWidth: 1, marginTop: 14, padding: 14 }, proposalCandidate: { borderBottomColor: "#E5D8C3", borderBottomWidth: 1, paddingBottom: 10, paddingTop: 8 }, proposalMeta: { color: "#716B64", fontSize: 13 }, proposalConfidence: { color: "#7A5C36", fontSize: 13, marginTop: 4 }, proposalActions: { flexDirection: "row", flexWrap: "wrap", gap: 10 }, metadataRow: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" }, metadataValue: { color: "#24221F", flex: 1, fontSize: 16, marginTop: 18 }, typeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 }, typeOption: { borderColor: "#B9A895", borderRadius: 10, borderWidth: 1, padding: 8 }, typeSelected: { backgroundColor: "#D5B98D", borderColor: "#8B7355", borderRadius: 10, borderWidth: 1, padding: 8 }, button: { alignSelf: "flex-start", backgroundColor: "#24221F", borderRadius: 12, marginTop: 24, paddingHorizontal: 20, paddingVertical: 12 }, buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, error: { color: "#A33B31", fontSize: 14, marginTop: 12 }, success: { color: "#356445", fontSize: 14, marginTop: 12 }, dueBubbles: { flexDirection: "row", gap: 8, marginTop: 10 }, dueBubble: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 }, dueBubbleText: { color: "#24221F", fontSize: 16 }, clearDue: { color: "#8C3D25", fontSize: 14, marginTop: 12 }, pickerPanel: { backgroundColor: "#EFEAE2", borderRadius: 16, marginTop: 14, padding: 16 }, pickerHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" }, pickerTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, pickerHint: { color: "#716B64", fontSize: 13, marginTop: 8 }, monthRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginVertical: 18 }, calendarGrid: { flexDirection: "row", flexWrap: "wrap" }, calendarDay: { alignItems: "center", justifyContent: "center", minHeight: 38, width: "14.285%" }, calendarDaySelected: { backgroundColor: "#D5B98D", borderRadius: 19 } });
+const styles = StyleSheet.create({ safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, content: { padding: 24 }, back: { color: "#7A5C36", fontSize: 16, paddingHorizontal: 24, paddingTop: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 32, fontWeight: "700", marginTop: 6 }, stateText: { color: "#716B64", fontSize: 15, lineHeight: 22, marginTop: 8 }, reviewState: { color: "#8C3D25", fontSize: 15, fontWeight: "600", lineHeight: 22, marginTop: 18 }, field: { marginTop: 24 }, fieldLabel: { color: "#8B7355", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, value: { color: "#24221F", fontSize: 19, lineHeight: 27, marginTop: 5 }, originalText: { color: "#716B64", fontSize: 16, lineHeight: 24, marginTop: 5 }, input: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", fontSize: 19, lineHeight: 27, paddingVertical: 5 }, editInput: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", flex: 1, fontSize: 16, paddingVertical: 5 }, sectionTitle: { color: "#24221F", fontSize: 17, fontWeight: "700", marginTop: 32 }, provenance: { color: "#716B64", fontSize: 14, lineHeight: 21, marginTop: 6 }, metadataInline: { marginTop: 14 }, organization: { borderTopColor: "#D8CFC2", borderTopWidth: 1, marginTop: 30, paddingTop: 4 }, proposalCard: { backgroundColor: "#FFF8E8", borderColor: "#D5B98D", borderRadius: 14, borderWidth: 1, marginTop: 14, padding: 14 }, proposalCandidate: { borderBottomColor: "#E5D8C3", borderBottomWidth: 1, paddingBottom: 10, paddingTop: 8 }, proposalMeta: { color: "#716B64", fontSize: 13 }, proposalConfidence: { color: "#7A5C36", fontSize: 13, marginTop: 4 }, proposalActions: { flexDirection: "row", flexWrap: "wrap", gap: 10 }, metadataRow: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" }, inlineEdit: { flex: 1 }, metadataValue: { color: "#24221F", flex: 1, fontSize: 16, marginTop: 18 }, typeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 }, typeOption: { borderColor: "#B9A895", borderRadius: 10, borderWidth: 1, padding: 8 }, typeSelected: { backgroundColor: "#D5B98D", borderColor: "#8B7355", borderRadius: 10, borderWidth: 1, padding: 8 }, button: { alignSelf: "flex-start", backgroundColor: "#24221F", borderRadius: 12, marginTop: 24, paddingHorizontal: 20, paddingVertical: 12 }, buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, error: { color: "#A33B31", fontSize: 14, marginTop: 12 }, success: { color: "#356445", fontSize: 14, marginTop: 12 }, dueBubbles: { flexDirection: "row", gap: 8, marginTop: 10 }, dueBubble: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 }, dueBubbleText: { color: "#24221F", fontSize: 16 }, clearDue: { color: "#8C3D25", fontSize: 14, marginTop: 12 }, pickerPanel: { backgroundColor: "#EFEAE2", borderRadius: 16, marginTop: 14, padding: 16 }, pickerHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" }, pickerTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, pickerHint: { color: "#716B64", fontSize: 13, marginTop: 8 }, monthRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginVertical: 18 }, calendarGrid: { flexDirection: "row", flexWrap: "wrap" }, calendarDay: { alignItems: "center", justifyContent: "center", minHeight: 38, width: "14.285%" }, calendarDaySelected: { backgroundColor: "#D5B98D", borderRadius: 19 } });
