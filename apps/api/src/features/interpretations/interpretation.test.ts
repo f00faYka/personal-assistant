@@ -174,6 +174,54 @@ describe("InterpretationService", () => {
     });
   });
 
+  test("normalizes a redundant 24-hour PM model value against the Russian evening transcription", () => {
+    const transcriptionText = "напомни что сегодня вечером 8.15 у нас встреча";
+    const rawOutput = {
+      action: "create_task",
+      title: "встреча",
+      schedule: { date: "сегодня", hour: 20, minute: 15, period: "pm" },
+    };
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input(rawOutput, undefined, "russian-evening-dot-time"),
+      transcriptionText,
+      capturedAt: "2026-10-13T08:00:00.000Z",
+      timeZone: "Europe/Warsaw",
+    });
+
+    expect(interpretation).toMatchObject({
+      classification: "clear_supported",
+      action: { kind: "create_task", title: "встреча", dueAt: "2026-10-13T18:15:00.000Z" },
+      rawOutputJson: JSON.stringify(rawOutput),
+    });
+  });
+
+  test.each([
+    ["Remind me today at 8.15 PM to call the office.", { date: "today", hour: 8, minute: 15, period: "pm" }, "2026-08-23T18:15:00.000Z"],
+    ["Remind me today at 20.15 to call the office.", { date: "today", hour: 20, minute: 15 }, "2026-08-23T18:15:00.000Z"],
+  ] as const)("accepts a valid 12-hour or 24-hour model representation for dot-separated minutes: $0", (transcriptionText, schedule, expectedDueAt) => {
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Call the office", schedule }, undefined, transcriptionText),
+      transcriptionText,
+      timeZone: "Europe/Warsaw",
+    });
+
+    expect(interpretation).toMatchObject({
+      classification: "clear_supported",
+      action: { kind: "create_task", dueAt: expectedDueAt },
+    });
+  });
+
+  test("rejects a redundant 24-hour model period when it contradicts the spoken time", () => {
+    const transcriptionText = "Remind me today at 8:15 AM to call the office.";
+    const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
+      ...input({ action: "create_task", title: "Call the office", schedule: { date: "today", hour: 20, minute: 15, period: "pm" } }, undefined, "contradictory-24-hour-period"),
+      transcriptionText,
+      timeZone: "Europe/Warsaw",
+    });
+
+    expect(interpretation).toMatchObject({ classification: "unsupported", rejectionReason: "malformed_model_output" });
+  });
+
   test("preserves an explicit morning period for a past clock time today", () => {
     const transcriptionText = "напомни сегодня в 4.30 утра забрать детей";
     const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
@@ -189,7 +237,7 @@ describe("InterpretationService", () => {
     });
   });
 
-  test("accepts a redundant 24-hour PM value from the model", () => {
+  test("normalizes a redundant 24-hour PM value when the transcription confirms it", () => {
     const transcriptionText = "напомни сегодня в 11 вечера поцеловать жену";
     const interpretation = new InterpretationService(new MemoryRepository()).evaluate({
       ...input({ action: "create_task", title: "поцеловать жену", schedule: { date: "today", hour: 23, period: "pm" } }, undefined, transcriptionText),

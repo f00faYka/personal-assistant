@@ -60,6 +60,15 @@ describe("LocalOllamaInterpretationProvider", () => {
       format: { type: "object", oneOf: expect.any(Array) },
     });
     expect(requestBody.format.oneOf[0]?.properties).not.toHaveProperty("dueAt");
+    const schedule = (requestBody.format.oneOf[0]?.properties as { readonly schedule: { readonly properties: Record<string, unknown>; readonly allOf: readonly Record<string, unknown>[] } }).schedule;
+    expect(schedule.properties.hour).toEqual({ type: "integer", minimum: 0, maximum: 23 });
+    expect(schedule.allOf).toContainEqual({
+      if: { required: ["period"] },
+      then: {
+        required: ["hour"],
+        properties: { hour: { type: "integer", minimum: 1, maximum: 12 } },
+      },
+    });
     expect(requestBody.messages[0]?.content).not.toContain("capturedAt");
     expect(requestBody.messages[0]?.content).toContain("twenty three");
     expect(requestBody.messages[0]?.content).toContain("двадцать три");
