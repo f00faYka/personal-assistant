@@ -11,7 +11,7 @@ import { createStaticMemberItemsClient, type MemberListItem } from "../list/memb
 import { createExpoOfflineDraftStore } from "../offline/expo-offline-drafts";
 import { createMemoryOfflineDraftStore } from "../offline/offline-drafts";
 import { createOfflineDraftSyncClient } from "../offline/synchronize-offline-drafts";
-import { createMetadataClient } from "../review/metadata";
+import { createMetadataClient, type MetadataClient, type MetadataLinks } from "../review/metadata";
 import { createOrganizationProposalClient } from "../review/organization-proposals";
 import { ReviewScreen } from "../review/ReviewScreen";
 import { createReviewFixtureClient } from "../review/review";
@@ -47,18 +47,18 @@ export default function AppRoot() {
   const [fixtureTagIds, setFixtureTagIds] = useState<Record<string, readonly string[]>>({});
   const fixtureItems = useMemo(() => fixtureData ? createStaticMemberItemsClient([...fixtureData.tasks.map((task, index) => fixtureTaskItem(task, index)), ...fixtureData.notes.map((note, index) => fixtureNoteItem(note, index))]) : undefined, [fixtureData]);
   const fixtureSpacesClient = useMemo(() => fixtureData ? createFixtureSpacesClient(fixtureData.spaces, memberId) : undefined, [fixtureData, memberId]);
-  const fixtureMetadataClient = useMemo(() => fixtureData ? createFixtureMetadataClient(fixtureData.tags, fixtureData.entities, memberId) : undefined, [fixtureData, memberId]);
+  const fixtureMetadataClient = useMemo(() => fixtureData ? createFixtureMetadataClient(fixtureData, memberId) : undefined, [fixtureData, memberId]);
   const fixtureKind = process.env.EXPO_PUBLIC_REVIEW_FIXTURE === "task" ? "task" : "note";
   const reviewUrl = detailUrl ?? materialsDetailUrl;
   const activeFixtureMode = fixtureMode || (uiFixture && reviewUrl !== null);
   const fixtureOutcome = useMemo(() => fixtureData && reviewUrl ? fixtureOutcomeForUrl(fixtureData, reviewUrl) : undefined, [fixtureData, reviewUrl]);
   const fixtureClient = useMemo(() => uiFixture && activeFixtureMode ? createReviewFixtureClient(fixtureOutcome?.kind ?? fixtureKind, fixtureOutcome) : undefined, [activeFixtureMode, fixtureKind, fixtureOutcome, uiFixture]);
   const fixtureMetadata = uiFixture && fixtureData && reviewUrl ? fixtureDetailMetadata(fixtureData, reviewUrl, fixtureSpaceIds, fixtureTagIds, setFixtureSpaceIds, setFixtureTagIds) : undefined;
-  const materialsDetail = materialsDetailUrl ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} detailUrl={materialsDetailUrl} {...(fixtureMetadata ? { detailMetadata: fixtureMetadata } : {})} {...(!activeFixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(activeFixtureMode ? { client: fixtureClient ?? createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => setMaterialsDetailUrl(null)} /> : undefined;
+  const materialsDetail = materialsDetailUrl ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} detailUrl={materialsDetailUrl} {...(fixtureMetadata ? { detailMetadata: fixtureMetadata } : {})} {...(!activeFixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(activeFixtureMode && fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} {...(activeFixtureMode ? { client: fixtureClient ?? createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => setMaterialsDetailUrl(null)} /> : undefined;
   const materialsScreen = <MaterialsScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} {...(fixtureItems ? { client: fixtureItems } : {})} {...(fixtureSpacesClient ? { spacesClient: fixtureSpacesClient } : {})} {...(fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} onOpenDetail={setMaterialsDetailUrl} detailUrl={materialsDetailUrl} detail={materialsDetail} />;
   const openCapture = () => { setTab("home"); setCaptureRequest((request) => request + 1); };
   const content = detailUrl || fixtureMode
-    ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} detailUrl={detailUrl ?? "/captures/demo-capture-1/review"} {...(fixtureMetadata ? { detailMetadata: fixtureMetadata } : {})} {...(!activeFixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(activeFixtureMode ? { client: fixtureClient ?? createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => { setDetailUrl(null); setFixtureMode(false); }} />
+    ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} detailUrl={detailUrl ?? "/captures/demo-capture-1/review"} {...(fixtureMetadata ? { detailMetadata: fixtureMetadata } : {})} {...(!activeFixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(activeFixtureMode && fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} {...(activeFixtureMode ? { client: fixtureClient ?? createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => { setDetailUrl(null); setFixtureMode(false); }} />
     : showToday ? <SelectedDayTaskScreen apiBaseUrl={apiBaseUrl} memberId={memberId} selectedDate={localDateKey(new Date(), timeZone)} timeZone={timeZone} renderTask={(task) => <PressableTaskRow title={task.title} detailUrl={task.detailUrl} timeZone={timeZone} onOpenDetail={setDetailUrl} />} />
     : tab === "find" ? materialsScreen
     : tab === "calendar" ? <CalendarSurface />
@@ -71,10 +71,25 @@ function createFixtureSpacesClient(spaces: BrowserFixtureData["spaces"], memberI
   return { list: async () => spaces.map((space) => ({ id: space.id, memberId, name: space.name, ...(space.parentId ? { parentId: space.parentId } : {}), createdAt: "fixture" })) };
 }
 
-function createFixtureMetadataClient(tags: BrowserFixtureData["tags"], entities: BrowserFixtureData["entities"], memberId: string): { readonly listTags: () => Promise<readonly Tag[]>; readonly listEntities: () => Promise<readonly Entity[]> } {
+function createFixtureMetadataClient(fixture: BrowserFixtureData, memberId: string): MetadataClient {
+  let tags: Tag[] = fixture.tags.map((tag) => ({ ...tag, memberId, createdAt: "fixture" }));
+  let entities: Entity[] = fixture.entities.map((entity) => ({ ...entity, memberId, createdAt: "fixture", type: entity.type === "Person" || entity.type === "Place" || entity.type === "Organization" || entity.type === "Object" ? entity.type : "Object" }));
+  const itemLinks = new Map<string, MetadataLinks>();
+  for (const task of fixture.tasks) itemLinks.set(`task:${task.id}`, { tags: tags.filter((tag) => task.tagIds.includes(tag.id)), entities: entities.filter((entity) => task.entityIds.includes(entity.id)) });
+  for (const note of fixture.notes) itemLinks.set(`note:${note.id}`, { tags: tags.filter((tag) => note.tagIds.includes(tag.id)), entities: entities.filter((entity) => note.entityIds.includes(entity.id)) });
+  const linksFor = (itemId: string, itemKind: "task" | "note") => itemLinks.get(`${itemKind}:${itemId}`) ?? { tags: [], entities: [] };
   return {
-    listTags: async () => tags.map((tag) => ({ ...tag, memberId, createdAt: "fixture" })),
-    listEntities: async () => entities.map((entity) => ({ ...entity, memberId, createdAt: "fixture", type: entity.type === "Person" || entity.type === "Place" || entity.type === "Organization" || entity.type === "Object" ? entity.type : "Object" })),
+    listTags: async () => tags,
+    createTag: async (_memberId, name) => { const tag = { id: `fixture-tag-${tags.length + 1}`, memberId, name, createdAt: "fixture" }; tags = [...tags, tag]; return tag; },
+    updateTag: async (id, _memberId, name) => { const updated = { ...tags.find((tag) => tag.id === id)!, name }; tags = tags.map((tag) => tag.id === id ? updated : tag); for (const [key, links] of itemLinks) itemLinks.set(key, { ...links, tags: links.tags.map((tag) => tag.id === id ? updated : tag) }); return updated; },
+    listEntities: async () => entities,
+    createEntity: async (_memberId, name, type) => { const entity = { id: `fixture-entity-${entities.length + 1}`, memberId, name, type, createdAt: "fixture" }; entities = [...entities, entity]; return entity; },
+    updateEntity: async (id, _memberId, name, type) => { const updated = { ...entities.find((entity) => entity.id === id)!, name, type }; entities = entities.map((entity) => entity.id === id ? updated : entity); for (const [key, links] of itemLinks) itemLinks.set(key, { ...links, entities: links.entities.map((entity) => entity.id === id ? updated : entity) }); return updated; },
+    listLinks: async (itemId, itemKind) => linksFor(itemId, itemKind),
+    linkTag: async (itemId, itemKind, tagId) => { const links = linksFor(itemId, itemKind); const tag = tags.find((entry) => entry.id === tagId); const updated = tag && !links.tags.some((entry) => entry.id === tag.id) ? { ...links, tags: [...links.tags, tag] } : links; itemLinks.set(`${itemKind}:${itemId}`, updated); return updated; },
+    unlinkTag: async (itemId, itemKind, tagId) => { const links = linksFor(itemId, itemKind); const updated = { ...links, tags: links.tags.filter((tag) => tag.id !== tagId) }; itemLinks.set(`${itemKind}:${itemId}`, updated); return updated; },
+    linkEntity: async (itemId, itemKind, entityId) => { const links = linksFor(itemId, itemKind); const entity = entities.find((entry) => entry.id === entityId); const updated = entity && !links.entities.some((entry) => entry.id === entity.id) ? { ...links, entities: [...links.entities, entity] } : links; itemLinks.set(`${itemKind}:${itemId}`, updated); return updated; },
+    unlinkEntity: async (itemId, itemKind, entityId) => { const links = linksFor(itemId, itemKind); const updated = { ...links, entities: links.entities.filter((entity) => entity.id !== entityId) }; itemLinks.set(`${itemKind}:${itemId}`, updated); return updated; },
   };
 }
 

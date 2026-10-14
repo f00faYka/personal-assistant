@@ -133,6 +133,22 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
+  test("keeps Space, Tags, and Entities in the Note detail metadata area", async () => {
+    const office: Space = { id: "space-1", memberId: "member-1", name: "Office", createdAt: "now" };
+    const metadataClient = metadataFixture({ listTags: vi.fn().mockResolvedValue([metadataTag("tag-1", "urgent")]), listEntities: vi.fn().mockResolvedValue([metadataEntity("entity-1", "Alex", "Person")]), listLinks: vi.fn().mockResolvedValue({ tags: [], entities: [] }) });
+    const spacesClient = spacesFixture({ list: vi.fn().mockResolvedValue([office]), read: vi.fn().mockResolvedValue({ space: office, path: "Office", children: [], items: [{ itemId: "note-1", itemKind: "note", spaceId: office.id, path: "Office", content: "Call" }] }) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "none", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient, spacesClient });
+
+    expect(renderer.root.findByProps({ accessibilityLabel: "Choose Space" })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Add existing Entity Alex" })).toBeDefined();
+    expect(textContent(renderer)).toContain("TAGS & ENTITIES");
+    expect(textContent(renderer)).not.toContain("Tags and Entities");
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Assign Space Office" })).toHaveLength(0);
+    renderer.unmount();
+  });
+
   test("validates Entity name before creating and supports each allowed type", async () => {
     const metadataClient = metadataFixture();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "none", version: 0 }) })));

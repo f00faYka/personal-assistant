@@ -26,7 +26,7 @@ interface TaskNoteDetailScreenProps {
   readonly onChangeStatus?: () => void | Promise<void>;
   readonly onConvert?: (() => void | Promise<void>) | undefined;
   readonly metadata?: TaskNoteDetailMetadata;
-  readonly metadataContent?: ReactNode;
+  readonly tagEntityControls?: ReactNode;
   readonly saving?: boolean;
   readonly statusBusy?: boolean;
   readonly converting?: boolean;
@@ -34,7 +34,7 @@ interface TaskNoteDetailScreenProps {
   readonly notice?: string | null;
 }
 
-export function TaskNoteDetailScreen({ item, onBack, onSave, onChangeStatus, onConvert, metadata, metadataContent, saving = false, statusBusy = false, converting = false, error, notice }: TaskNoteDetailScreenProps) {
+export function TaskNoteDetailScreen({ item, onBack, onSave, onChangeStatus, onConvert, metadata, tagEntityControls, saving = false, statusBusy = false, converting = false, error, notice }: TaskNoteDetailScreenProps) {
   const initialText = item.kind === "task" ? item.title : item.content;
   const [draftText, setDraftText] = useState(initialText);
   const [draftDue, setDraftDue] = useState(item.kind === "task" ? item.dueAt : null);
@@ -58,7 +58,7 @@ export function TaskNoteDetailScreen({ item, onBack, onSave, onChangeStatus, onC
       <View style={styles.statusLine}><Text style={[styles.badge, item.kind === "note" && styles.noteBadge, item.kind === "task" && item.status === "completed" && styles.doneBadge]}>{item.kind.toUpperCase()}</Text><Text style={styles.muted}>{statusLabel}</Text></View>
       <View style={styles.titleRow}>{editingText ? <TextInput accessibilityLabel={item.kind === "task" ? "Title" : "Note"} autoFocus value={draftText} onChangeText={setDraftText} multiline={item.kind === "note"} style={styles.input} /> : <Pressable accessibilityRole="button" accessibilityLabel={`Edit ${item.kind === "task" ? "Title" : "Note"}`} onPress={() => setEditingText(true)}><Text style={[styles.title, item.kind === "note" && styles.noteTitle, item.kind === "task" && item.status === "completed" && styles.struck]}>{draftText}</Text></Pressable>}</View>
       {item.kind === "task" ? <DueEditor dueAt={draftDue} editing={editingDue} setEditing={setEditingDue} setDueAt={setDraftDue} /> : <Text style={styles.helper}>Editable Note content stays separate from the original Capture.</Text>}
-      <Metadata item={item} metadata={metadata} panel={metadataPanel} setPanel={setMetadataPanel} content={metadataContent} />
+      <Metadata item={item} metadata={metadata} panel={metadataPanel} setPanel={setMetadataPanel} tagEntityControls={tagEntityControls} />
       <SourceDisclosure item={item} open={showHistory} setOpen={setShowHistory} />
       <View style={styles.actions}>
         {item.kind === "task" && onChangeStatus ? <Pressable accessibilityRole="button" accessibilityLabel={item.status === "completed" ? "Reopen task" : "Complete task"} onPress={onChangeStatus} disabled={statusBusy || saving || converting} style={styles.primary}><Text style={styles.primaryText}>{statusBusy ? "Updating…" : item.status === "completed" ? "Reopen task" : "Complete task"}</Text></Pressable> : null}
@@ -95,8 +95,37 @@ function TimePicker({ value, onCancel, onDone }: { readonly value: string; reado
   return <View style={styles.sheet}><View style={styles.sheetHeading}><Text style={styles.sheetTitle}>Choose due time</Text><Pressable accessibilityRole="button" accessibilityLabel="Cancel due time" onPress={onCancel}><Text style={styles.cancel}>Cancel</Text></Pressable></View><View style={styles.timeGrid}>{["09:30", "13:00", "18:00"].map((time) => <Pressable key={time} accessibilityRole="button" accessibilityLabel={`Due time option ${time}`} onPress={() => setDraft(time)} style={[styles.timeOption, draft === time && styles.timeOptionSelected]}><Text style={[styles.timeOptionText, draft === time && styles.timeOptionSelectedText]}>{time}</Text></Pressable>)}</View><TextInput accessibilityLabel="Due time" value={draft} onChangeText={setDraft} keyboardType="numbers-and-punctuation" style={styles.input} /><Text style={styles.pickerHint}>Or enter another time in 24-hour format.</Text><Pressable accessibilityRole="button" accessibilityLabel="Done due time" onPress={() => onDone(draft)} style={styles.doneButton}><Text style={styles.done}>Done</Text></Pressable></View>;
 }
 
-function Metadata({ item, metadata, panel, setPanel, content }: { readonly item: TaskNoteDetailItem; readonly metadata: TaskNoteDetailMetadata | undefined; readonly panel: "space" | "tags" | null; readonly setPanel: (value: "space" | "tags" | null) => void; readonly content?: ReactNode }) {
-  return <View style={styles.metadata}><View style={styles.propertyRow}><View style={styles.propertyCopy}><Text style={styles.fieldLabel}>SPACE</Text><Text style={styles.value}>{item.space}</Text></View>{metadata ? <Pressable accessibilityRole="button" accessibilityLabel="Choose Space" onPress={() => setPanel(panel === "space" ? null : "space")} style={styles.propertyButton}><Text style={styles.propertyButtonText}>Change</Text></Pressable> : null}</View>{content ? content : <><View style={styles.tagProperty}><View style={styles.propertyCopy}><Text style={styles.fieldLabel}>TAGS</Text><View style={styles.tagRow}>{item.tags.length > 0 ? item.tags.map((tag) => <Text key={tag} style={styles.tag}>{tag}</Text>) : <Text style={styles.muted}>No tags</Text>}</View></View>{metadata ? <Pressable accessibilityRole="button" accessibilityLabel="Choose Tags" onPress={() => setPanel(panel === "tags" ? null : "tags")} style={styles.propertyButton}><Text style={styles.propertyButtonText}>Change</Text></Pressable> : null}</View>{metadata?.error ? <Text accessibilityRole="alert" style={styles.error}>{metadata.error}</Text> : null}{panel === "tags" && metadata ? <View style={styles.sheet}><View style={styles.sheetHeading}><Text style={styles.sheetTitle}>Choose tags</Text><Pressable accessibilityRole="button" accessibilityLabel="Close Tags picker" onPress={() => setPanel(null)}><Text style={styles.cancel}>Done</Text></Pressable></View>{metadata.tags.map((tag) => <Pressable key={tag.id} accessibilityRole="checkbox" accessibilityState={{ checked: tag.selected }} accessibilityLabel={`${tag.selected ? "Remove" : "Add"} tag ${tag.label}`} onPress={() => void metadata.onTagToggle(tag.id)} style={[styles.choice, tag.selected && styles.choiceSelected]}><Text style={styles.choiceText}>{tag.selected ? "✓ " : "○ "}#{tag.label}</Text></Pressable>)}</View> : null}</>}{metadata?.error ? content ? <Text accessibilityRole="alert" style={styles.error}>{metadata.error}</Text> : null : null}{panel === "space" && metadata ? <View style={styles.sheet}><View style={styles.sheetHeading}><Text style={styles.sheetTitle}>Choose Space</Text><Pressable accessibilityRole="button" accessibilityLabel="Close Space picker" onPress={() => setPanel(null)}><Text style={styles.cancel}>Done</Text></Pressable></View><Pressable accessibilityRole="button" accessibilityLabel="Choose Space Unassigned" onPress={() => { void metadata.onSpaceChange(null); setPanel(null); }} style={[styles.choice, metadata.selectedSpaceId === null && styles.choiceSelected]}><Text style={styles.choiceText}>No Space</Text></Pressable>{metadata.spaces.map((space) => <Pressable key={space.id} accessibilityRole="button" accessibilityLabel={`Choose Space ${space.label}`} onPress={() => { void metadata.onSpaceChange(space.id); setPanel(null); }} style={[styles.choice, metadata.selectedSpaceId === space.id && styles.choiceSelected]}><Text style={styles.choiceText}>{space.label}</Text></Pressable>)}</View> : null}</View>;
+function Metadata({ item, metadata, panel, setPanel, tagEntityControls }: { readonly item: TaskNoteDetailItem; readonly metadata: TaskNoteDetailMetadata | undefined; readonly panel: "space" | "tags" | null; readonly setPanel: (value: "space" | "tags" | null) => void; readonly tagEntityControls?: ReactNode }) {
+  return <View style={styles.metadata}>
+    <View style={styles.propertyRow}>
+      <View style={styles.propertyCopy}><Text style={styles.fieldLabel}>SPACE</Text><Text style={styles.value}>{item.space}</Text></View>
+      {metadata ? <Pressable accessibilityRole="button" accessibilityLabel="Choose Space" onPress={() => setPanel(panel === "space" ? null : "space")} style={styles.propertyButton}><Text style={styles.propertyButtonText}>Change</Text></Pressable> : null}
+    </View>
+    {tagEntityControls ?? <BasicTagControls item={item} metadata={metadata} panel={panel} setPanel={setPanel} />}
+    {metadata?.error ? <Text accessibilityRole="alert" style={styles.error}>{metadata.error}</Text> : null}
+    {panel === "space" && metadata ? <SpacePicker metadata={metadata} close={() => setPanel(null)} /> : null}
+  </View>;
+}
+
+function BasicTagControls({ item, metadata, panel, setPanel }: { readonly item: TaskNoteDetailItem; readonly metadata: TaskNoteDetailMetadata | undefined; readonly panel: "space" | "tags" | null; readonly setPanel: (value: "space" | "tags" | null) => void }) {
+  return <>
+    <View style={styles.tagProperty}>
+      <View style={styles.propertyCopy}><Text style={styles.fieldLabel}>TAGS</Text><View style={styles.tagRow}>{item.tags.length > 0 ? item.tags.map((tag) => <Text key={tag} style={styles.tag}>{tag}</Text>) : <Text style={styles.muted}>No tags</Text>}</View></View>
+      {metadata ? <Pressable accessibilityRole="button" accessibilityLabel="Choose Tags" onPress={() => setPanel(panel === "tags" ? null : "tags")} style={styles.propertyButton}><Text style={styles.propertyButtonText}>Change</Text></Pressable> : null}
+    </View>
+    {panel === "tags" && metadata ? <View style={styles.sheet}>
+      <View style={styles.sheetHeading}><Text style={styles.sheetTitle}>Choose tags</Text><Pressable accessibilityRole="button" accessibilityLabel="Close Tags picker" onPress={() => setPanel(null)}><Text style={styles.cancel}>Done</Text></Pressable></View>
+      {metadata.tags.map((tag) => <Pressable key={tag.id} accessibilityRole="checkbox" accessibilityState={{ checked: tag.selected }} accessibilityLabel={`${tag.selected ? "Remove" : "Add"} tag ${tag.label}`} onPress={() => void metadata.onTagToggle(tag.id)} style={[styles.choice, tag.selected && styles.choiceSelected]}><Text style={styles.choiceText}>{tag.selected ? "✓ " : "○ "}#{tag.label}</Text></Pressable>)}
+    </View> : null}
+  </>;
+}
+
+function SpacePicker({ metadata, close }: { readonly metadata: TaskNoteDetailMetadata; readonly close: () => void }) {
+  return <View style={styles.sheet}>
+    <View style={styles.sheetHeading}><Text style={styles.sheetTitle}>Choose Space</Text><Pressable accessibilityRole="button" accessibilityLabel="Close Space picker" onPress={close}><Text style={styles.cancel}>Done</Text></Pressable></View>
+    <Pressable accessibilityRole="button" accessibilityLabel="Choose Space Unassigned" onPress={() => { void metadata.onSpaceChange(null); close(); }} style={[styles.choice, metadata.selectedSpaceId === null && styles.choiceSelected]}><Text style={styles.choiceText}>No Space</Text></Pressable>
+    {metadata.spaces.map((space) => <Pressable key={space.id} accessibilityRole="button" accessibilityLabel={`Choose Space ${space.label}`} onPress={() => { void metadata.onSpaceChange(space.id); close(); }} style={[styles.choice, metadata.selectedSpaceId === space.id && styles.choiceSelected]}><Text style={styles.choiceText}>{space.label}</Text></Pressable>)}
+  </View>;
 }
 
 function SourceDisclosure({ item, open, setOpen }: { readonly item: TaskNoteDetailItem; readonly open: boolean; readonly setOpen: (value: boolean) => void }) {
