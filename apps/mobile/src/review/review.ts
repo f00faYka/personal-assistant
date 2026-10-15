@@ -24,6 +24,7 @@ export interface ReviewContract {
   readonly failure: {
     readonly stage: "capture" | "transcription" | "interpretation";
     readonly message: string;
+    readonly classification?: "unusable_transcription";
     readonly retryable?: boolean;
   } | null;
 }

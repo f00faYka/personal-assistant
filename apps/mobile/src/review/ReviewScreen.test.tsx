@@ -661,6 +661,23 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
+  test("shows a safe unusable transcription failure without promising retry", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith(null, {
+      state: "failed",
+      transcription: { status: "failed", text: "[speaking russian]", provider: "whisper-local", model: "large-v3" },
+      failure: { stage: "transcription", classification: "unusable_transcription", message: "Transcription could not be used. The Capture and original audio are saved." },
+    }) })));
+    const renderer = await renderScreen(vi.fn());
+    const content = textContent(renderer);
+
+    expect(content).toContain("Transcription could not be used. The Capture and original audio are saved.");
+    expect(content).not.toContain("[speaking russian]");
+    expect(content).not.toContain("whisper-local");
+    expect(content).not.toContain("try again when processing is available");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Refresh processing status" })).toBeDefined();
+    renderer.unmount();
+  });
+
   test("labels an ambiguous Note as Needs review", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Maybe book a trip", reviewState: "needs_review", version: 0 }, { state: "needs_review", interpretation: { id: "interpretation-1", classification: "ambiguous" } }) })));
     const renderer = await renderScreen(vi.fn());

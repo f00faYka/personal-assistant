@@ -50,6 +50,28 @@ describe("TranscriptionService", () => {
     expect(provider.audio).toEqual(Uint8Array.from([1, 2, 3]));
   });
 
+  test.each(["[speaking russian]", "[speaking english]"])(
+    "records a language marker as an unusable transcription instead of succeeding: %s",
+    async (text) => {
+      const repository = new MemoryRepository();
+      const provider = new MemoryProvider();
+      provider.result = { text, provider: "test-provider", model: "test-model" };
+      const service = new TranscriptionService(repository, new MemoryAudioReader(), provider);
+      await service.enqueue({ captureId: "capture-1", sourceId: "source-1", contentType: "audio/m4a" });
+
+      await expect(service.process("capture-1")).rejects.toThrow("Transcription result could not be used");
+
+      expect(service.get("capture-1")).toMatchObject({
+        status: "failed",
+        error: "unusable_transcription",
+        provider: "test-provider",
+        model: "test-model",
+        attemptCount: 1,
+      });
+      expect(service.get("capture-1").text).toBeUndefined();
+    },
+  );
+
   test("retains a failed processing state and can retry it", async () => {
     const repository = new MemoryRepository();
     const provider = new MemoryProvider();
@@ -97,10 +119,10 @@ class MemoryRepository {
     return updated;
   }
 
-  fail(captureId: string, error: string): Transcription {
+  fail(captureId: string, error: string, provenance?: { language?: string; provider: string; model: string }): Transcription {
     const value = this.findByCaptureId(captureId);
     if (!value) throw new Error("missing transcription");
-    const updated = { ...value, status: "failed" as const, error };
+    const updated = { ...value, ...provenance, status: "failed" as const, error };
     this.values[this.values.indexOf(value)] = updated;
     return updated;
   }
@@ -117,6 +139,7 @@ class MemoryAudioReader {
 class MemoryProvider {
   audio?: Uint8Array;
   failures = 0;
+  result = { text: "buy milk tomorrow", provider: "test-provider", model: "test-model" };
 
   async transcribe(input: { audio: Uint8Array; contentType: string }): Promise<{
     text: string;
@@ -128,6 +151,6 @@ class MemoryProvider {
       this.failures -= 1;
       throw new Error("provider unavailable");
     }
-    return { text: "buy milk tomorrow", provider: "test-provider", model: "test-model" };
+    return this.result;
   }
 }
