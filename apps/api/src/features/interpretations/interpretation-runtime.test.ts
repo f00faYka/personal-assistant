@@ -293,6 +293,39 @@ describe("production interpretation runtime", () => {
     }
   });
 
+  test("retains an unusable language-marker Capture without interpreting or materializing it", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "personal-assistant-transcription-marker-"));
+    directories.push(directory);
+    const interpretationProvider = new DeterministicInterpretationProvider({ action: "create_task", title: "Buy milk" });
+    const harness = await createHarness(directory, interpretationProvider, 3, "[speaking russian]");
+    harnesses.push(harness);
+
+    const response = await harness.application.inject({ method: "POST", url: "/captures", payload: submission() });
+    const captureId = response.json<{ capture: { id: string } }>().capture.id;
+    const review = await waitForReviewState(harness, captureId, "failed");
+
+    expect(review).toMatchObject({
+      state: "failed",
+      source: { storageState: "stored", content: { kind: "audio", byteLength: 3 } },
+      transcription: {
+        status: "failed",
+        error: "unusable_transcription",
+        provider: "deterministic-whisper",
+        model: "test-model",
+      },
+      failure: {
+        stage: "transcription",
+        classification: "unusable_transcription",
+        message: "Transcription could not be used. The Capture and original audio are saved.",
+      },
+      interpretation: null,
+      outcome: null,
+    });
+    expect(review.transcription).not.toHaveProperty("text");
+    expect(JSON.stringify(review)).not.toContain("[speaking russian]");
+    expect(interpretationProvider.calls).toBe(0);
+  });
+
   test("provider failure is retryable and restart recovery preserves the Capture before producing one item", async () => {
     const directory = await mkdtemp(join(tmpdir(), "personal-assistant-interpretation-restart-"));
     directories.push(directory);

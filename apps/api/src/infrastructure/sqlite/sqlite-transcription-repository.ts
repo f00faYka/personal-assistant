@@ -4,6 +4,7 @@ import type {
   Transcription,
   TranscriptionCapture,
   TranscriptionRepository,
+  TranscriptionProvenance,
   TranscriptionResult,
 } from "../../features/transcriptions/transcription.js";
 
@@ -135,14 +136,17 @@ export class SqliteTranscriptionRepository implements TranscriptionRepository {
     return this.require(captureId);
   }
 
-  fail(captureId: string, error: string): Transcription {
+  fail(captureId: string, error: string, provenance?: TranscriptionProvenance): Transcription {
     const updatedAt = new Date().toISOString();
     this.database
       .prepare(
-        `UPDATE transcriptions SET status = 'failed', error = ?, updated_at = ?
+        `UPDATE transcriptions
+         SET status = 'failed', error = ?,
+             language = COALESCE(?, language), provider = COALESCE(?, provider), model = COALESCE(?, model),
+             updated_at = ?
          WHERE capture_id = ?`,
       )
-      .run(error, updatedAt, captureId);
+      .run(error, provenance?.language ?? null, provenance?.provider ?? null, provenance?.model ?? null, updatedAt, captureId);
     return this.require(captureId);
   }
 

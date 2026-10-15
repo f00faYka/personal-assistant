@@ -79,7 +79,10 @@ An explicit, typed relationship between durable items. A Member creates a relati
 A state for captured content, an unclear Direct instruction, or an AI interpretation that needs Member attention. It must remain visible to the Member for correction or acknowledgment. It is not a path for the assistant to guess a Task or Reminder from an ordinary Note.
 
 **Transcription confirmation**:
-The point at which a voice recording's transcription is accepted for downstream use. A normal transcription is confirmed automatically after a bounded review window if the Member does not respond; a severely unusable transcription remains in Needs review with its audio retained.
+The point at which a voice recording's transcription is accepted for downstream use. A normal transcription is confirmed automatically after a bounded review window if the Member does not respond; an unusable transcription remains available with its audio retained.
+
+**Unusable transcription**:
+A result identified as a non-transcription marker rather than a reliable representation of spoken content. It is not used to create a Task or Note; the Capture and original audio remain available to the Member.
 
 **Digest**:
 A Member-facing summary of due Tasks, scheduled reminders, and items needing review. New items may appear when they are soon due or in an expandable additional section; an item leaves the digest after the Member actions on or acknowledges it.

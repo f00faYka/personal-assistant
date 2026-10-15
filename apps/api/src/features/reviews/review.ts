@@ -5,7 +5,7 @@ import type {
   InterpretationJobRepository,
 } from "../interpretations/interpretation-worker.js";
 import type { Outcome, OutcomeRepository } from "../outcomes/outcome.js";
-import type { Transcription, TranscriptionRepository } from "../transcriptions/transcription.js";
+import { UNUSABLE_TRANSCRIPTION_ERROR, type Transcription, type TranscriptionRepository } from "../transcriptions/transcription.js";
 
 export type ReviewState = "pending" | "failed" | "completed" | "needs_review";
 
@@ -46,6 +46,7 @@ export interface ReviewContract {
   readonly failure: {
     readonly stage: "capture" | "transcription" | "interpretation";
     readonly message: string;
+    readonly classification?: "unusable_transcription";
     readonly retryable?: boolean;
   } | null;
 }
@@ -133,6 +134,13 @@ function failureFor(
     return { stage: "capture", message: "Capture source is not stored" };
   }
   if (transcription?.status === "failed") {
+    if (transcription.error === UNUSABLE_TRANSCRIPTION_ERROR) {
+      return {
+        stage: "transcription",
+        classification: "unusable_transcription",
+        message: "Transcription could not be used. The Capture and original audio are saved.",
+      };
+    }
     return { stage: "transcription", message: transcription.error ?? "Transcription failed" };
   }
   if (interpretationProcessing?.status === "failed") {

@@ -12,7 +12,7 @@ export interface ReviewContract {
     readonly content?: { readonly kind: "audio"; readonly contentType: string; readonly byteLength: number; readonly sha256: string };
     readonly storageState?: "pending" | "stored";
   };
-  readonly transcription: { readonly status: string; readonly text?: string; readonly language?: string } | null;
+  readonly transcription: { readonly status: string; readonly text?: string; readonly language?: string; readonly provider?: string; readonly model?: string } | null;
   readonly correction: { readonly text: string } | null;
   readonly interpretation: { readonly id: string; readonly classification?: string } | null;
   readonly interpretationProcessing?: {
@@ -24,6 +24,7 @@ export interface ReviewContract {
   readonly failure: {
     readonly stage: "capture" | "transcription" | "interpretation";
     readonly message: string;
+    readonly classification?: "unusable_transcription";
     readonly retryable?: boolean;
   } | null;
 }

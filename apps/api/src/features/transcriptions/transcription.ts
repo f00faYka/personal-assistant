@@ -31,6 +31,15 @@ export interface TranscriptionResult {
   readonly model: string;
 }
 
+export interface TranscriptionProvenance {
+  readonly language?: string;
+  readonly provider: string;
+  readonly model: string;
+}
+
+export const UNUSABLE_TRANSCRIPTION_ERROR = "unusable_transcription";
+const unusableTranscriptionMessage = "Transcription result could not be used";
+
 export interface TranscriptionProvider {
   transcribe(input: {
     readonly audio: Uint8Array;
@@ -47,7 +56,7 @@ export interface TranscriptionRepository {
   create(transcription: Transcription): Transcription;
   markProcessing(captureId: string): Transcription;
   complete(captureId: string, result: TranscriptionResult): Transcription;
-  fail(captureId: string, error: string): Transcription;
+  fail(captureId: string, error: string, provenance?: TranscriptionProvenance): Transcription;
 }
 
 export interface SucceededTranscriptionReader {
@@ -89,8 +98,15 @@ export class TranscriptionService {
         audio: await this.audioReader.readAudio(captureId),
         contentType: processing.contentType,
       });
+      if (isLanguageMarker(result.text)) {
+        throw new UnusableTranscriptionResultError(result);
+      }
       return this.repository.complete(captureId, result);
     } catch (error) {
+      if (error instanceof UnusableTranscriptionResultError) {
+        this.repository.fail(captureId, UNUSABLE_TRANSCRIPTION_ERROR, error.provenance);
+        throw new Error(unusableTranscriptionMessage);
+      }
       const message = error instanceof Error ? error.message : "Transcription failed";
       this.repository.fail(captureId, message);
       throw error;
@@ -101,6 +117,24 @@ export class TranscriptionService {
     const transcription = this.repository.findByCaptureId(captureId);
     if (!transcription) throw new TranscriptionNotFoundError(captureId);
     return transcription;
+  }
+}
+
+function isLanguageMarker(text: string): boolean {
+  return /^\[\s*speaking\s+[\p{L}\p{M}]+(?:[\s-]+[\p{L}\p{M}]+)*\s*\]$/iu.test(text.trim());
+}
+
+class UnusableTranscriptionResultError extends Error {
+  readonly provenance: TranscriptionProvenance;
+
+  constructor(result: TranscriptionResult) {
+    super(unusableTranscriptionMessage);
+    this.name = "UnusableTranscriptionResultError";
+    this.provenance = {
+      ...(result.language === undefined ? {} : { language: result.language }),
+      provider: result.provider,
+      model: result.model,
+    };
   }
 }
 
