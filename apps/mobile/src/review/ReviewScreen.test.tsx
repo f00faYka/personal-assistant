@@ -671,8 +671,8 @@ describe("ReviewScreen", () => {
     const content = textContent(renderer);
 
     expect(content).toContain("Transcription could not be used. The Capture and original audio are saved.");
+    expect(content.replace(/\s+/g, " ")).toContain("Transcription source · whisper-local · large-v3");
     expect(content).not.toContain("[speaking russian]");
-    expect(content).not.toContain("whisper-local");
     expect(content).not.toContain("try again when processing is available");
     expect(renderer.root.findByProps({ accessibilityLabel: "Refresh processing status" })).toBeDefined();
     renderer.unmount();
