@@ -470,7 +470,7 @@ describe("ReviewScreen", () => {
   test("saves a Task draft once and leaves the detail clean", async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", dueAt: "2026-08-15T09:00:00.000Z", status: "open", version: 0 }) }))
-      .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "task-1", title: "Buy oat milk", dueAt: "2026-08-15T09:00:00.000Z", status: "open", version: 1 } }));
+      .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "task-1", title: "Buy oat milk (saved)", dueAt: "2026-08-15T09:00:00.000Z", status: "open", version: 1 } }));
     vi.stubGlobal("fetch", fetcher);
     const onBack = vi.fn();
     const renderer = await renderScreen(onBack);
@@ -481,7 +481,7 @@ describe("ReviewScreen", () => {
 
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(onBack).not.toHaveBeenCalled();
-    expect(textContent(renderer)).toContain("Buy oat milk");
+    expect(textContent(renderer)).toContain("Buy oat milk (saved)");
     expect(textContent(renderer)).toContain("Task changes saved.");
     expect(renderer.root.findByProps({ accessibilityLabel: "Save" }).props.disabled).toBe(true);
     renderer.unmount();

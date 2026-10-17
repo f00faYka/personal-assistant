@@ -116,11 +116,11 @@ export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, onBack
     },
   } satisfies TaskNoteDetailMetadata : undefined);
 
-  const save = useCallback(async (nextDraft: TaskNoteDetailDraft): Promise<boolean> => {
-    if (state.status !== "ready" || !state.review.outcome || savingInFlight.current) return false;
+  const save = useCallback(async (nextDraft: TaskNoteDetailDraft): Promise<TaskNoteDetailDraft | undefined> => {
+    if (state.status !== "ready" || !state.review.outcome || savingInFlight.current) return undefined;
     if (state.review.outcome.kind === "task" && nextDraft.dueAt !== null && !isValidIsoDate(nextDraft.dueAt)) {
       setSaveError("Due information must be a valid date and time");
-      return false;
+      return undefined;
     }
     savingInFlight.current = true;
     setSaving(true);
@@ -135,12 +135,14 @@ export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, onBack
           const updated = await client.updateTask(outcome.id, memberId, outcome.version, changes);
           if (updated.kind !== "task") throw new Error("Task update response did not include a Task");
           setState({ status: "ready", review: { ...state.review, outcome: updated } });
+          return { text: updated.title, dueAt: updated.dueAt ?? null };
         }
+        return { text: outcome.title, dueAt: outcome.dueAt ?? null };
       } else if (nextDraft.text !== outcome.content) {
         await client.updateNote(outcome.id, memberId, outcome.version, nextDraft.text);
       }
-      if (outcome.kind === "note") onBack();
-      return true;
+      onBack();
+      return undefined;
     } catch (error) {
       const saveMessage = error instanceof Error ? error.message : "Unable to save review";
       const text = nextDraft.text;
@@ -163,7 +165,7 @@ export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, onBack
       if (outcome.kind === "note" && refreshed?.outcome?.kind === "task" && refreshed.outcome.id === outcome.id) {
         setSaveError("This Note was converted to a Task elsewhere. The review was refreshed.");
       }
-      return false;
+      return undefined;
     } finally {
       savingInFlight.current = false;
       setSaving(false);

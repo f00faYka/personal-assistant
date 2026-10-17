@@ -22,7 +22,7 @@ export interface TaskNoteDetailMetadata {
 interface TaskNoteDetailScreenProps {
   readonly item: TaskNoteDetailItem;
   readonly onBack: () => void;
-  readonly onSave: (draft: TaskNoteDetailDraft) => void | boolean | Promise<void | boolean>;
+  readonly onSave: (draft: TaskNoteDetailDraft) => void | TaskNoteDetailDraft | Promise<void | TaskNoteDetailDraft>;
   readonly onChangeStatus?: () => void | Promise<void>;
   readonly onConvert?: (() => void | Promise<void>) | undefined;
   readonly metadata?: TaskNoteDetailMetadata;
@@ -63,7 +63,9 @@ export function TaskNoteDetailScreen({ item, onBack, onSave, onChangeStatus, onC
   const saveDraft = async () => {
     setTaskSaved(false);
     const saved = await onSave({ text: draftText, dueAt: draftDue });
-    if (item.kind === "task" && saved === true) {
+    if (item.kind === "task" && saved) {
+      setDraftText(saved.text);
+      setDraftDue(saved.dueAt);
       setEditingText(false);
       setEditingDue(false);
       setTaskSaved(true);
