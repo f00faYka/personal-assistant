@@ -22,7 +22,7 @@ export interface TaskNoteDetailMetadata {
 interface TaskNoteDetailScreenProps {
   readonly item: TaskNoteDetailItem;
   readonly onBack: () => void;
-  readonly onSave: (draft: TaskNoteDetailDraft) => void | Promise<void>;
+  readonly onSave: (draft: TaskNoteDetailDraft) => void | boolean | Promise<void | boolean>;
   readonly onChangeStatus?: () => void | Promise<void>;
   readonly onConvert?: (() => void | Promise<void>) | undefined;
   readonly metadata?: TaskNoteDetailMetadata;
@@ -42,31 +42,51 @@ export function TaskNoteDetailScreen({ item, onBack, onSave, onChangeStatus, onC
   const [editingDue, setEditingDue] = useState(false);
   const [metadataPanel, setMetadataPanel] = useState<"space" | "tags" | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [taskSaved, setTaskSaved] = useState(false);
 
   useEffect(() => {
     setDraftText(initialText);
     setDraftDue(item.kind === "task" ? item.dueAt : null);
     setEditingText(false);
     setEditingDue(false);
-  }, [initialText, item.id, item.kind, item.kind === "task" ? item.dueAt : null]);
+  }, [item.id, item.kind, item.kind === "note" ? item.content : null]);
 
   const dirty = item.kind === "task" ? draftText !== item.title || draftDue !== item.dueAt : draftText !== item.content;
+  const cancelTaskDraft = () => {
+    if (saving) return;
+    setDraftText(item.kind === "task" ? item.title : item.content);
+    setDraftDue(item.kind === "task" ? item.dueAt : null);
+    setEditingText(false);
+    setEditingDue(false);
+    setTaskSaved(false);
+  };
+  const saveDraft = async () => {
+    setTaskSaved(false);
+    const saved = await onSave({ text: draftText, dueAt: draftDue });
+    if (item.kind === "task" && saved === true) {
+      setEditingText(false);
+      setEditingDue(false);
+      setTaskSaved(true);
+    }
+  };
   const statusLabel = item.kind === "task" ? item.status === "completed" ? "Completed" : "Open" : item.reviewState === "needs_review" ? "Needs review" : "Saved";
   return <View style={styles.product}>
     <View style={styles.productTop}><Pressable accessibilityRole="button" accessibilityLabel="Back to items" onPress={onBack}><Text style={styles.breadcrumb}>‹ Items  ·  Focused editor</Text></Pressable><Text style={styles.afterCapture}>After Capture</Text></View>
     <View style={styles.body}>
       <View style={styles.statusLine}><Text style={[styles.badge, item.kind === "note" && styles.noteBadge, item.kind === "task" && item.status === "completed" && styles.doneBadge]}>{item.kind.toUpperCase()}</Text><Text style={styles.muted}>{statusLabel}</Text></View>
-      <View style={styles.titleRow}>{editingText ? <TextInput accessibilityLabel={item.kind === "task" ? "Title" : "Note"} autoFocus value={draftText} onChangeText={setDraftText} multiline={item.kind === "note"} style={styles.input} /> : <Pressable accessibilityRole="button" accessibilityLabel={`Edit ${item.kind === "task" ? "Title" : "Note"}`} onPress={() => setEditingText(true)}><Text style={[styles.title, item.kind === "note" && styles.noteTitle, item.kind === "task" && item.status === "completed" && styles.struck]}>{draftText}</Text></Pressable>}</View>
-      {item.kind === "task" ? <DueEditor dueAt={draftDue} editing={editingDue} setEditing={setEditingDue} setDueAt={setDraftDue} /> : <Text style={styles.helper}>Editable Note content stays separate from the original Capture.</Text>}
+      <View style={styles.titleRow}>{editingText ? <TextInput accessibilityLabel={item.kind === "task" ? "Title" : "Note"} autoFocus value={draftText} onChangeText={(value) => { setDraftText(value); setTaskSaved(false); }} multiline={item.kind === "note"} style={styles.input} /> : <Pressable accessibilityRole="button" accessibilityLabel={`Edit ${item.kind === "task" ? "Title" : "Note"}`} onPress={() => setEditingText(true)}><Text style={[styles.title, item.kind === "note" && styles.noteTitle, item.kind === "task" && item.status === "completed" && styles.struck]}>{draftText}</Text></Pressable>}</View>
+      {item.kind === "task" ? <DueEditor dueAt={draftDue} editing={editingDue} setEditing={setEditingDue} setDueAt={(value) => { setDraftDue(value); setTaskSaved(false); }} /> : <Text style={styles.helper}>Editable Note content stays separate from the original Capture.</Text>}
       <Metadata item={item} metadata={metadata} panel={metadataPanel} setPanel={setMetadataPanel} tagEntityControls={tagEntityControls} />
       <SourceDisclosure item={item} open={showHistory} setOpen={setShowHistory} />
       <View style={styles.actions}>
         {item.kind === "task" && onChangeStatus ? <Pressable accessibilityRole="button" accessibilityLabel={item.status === "completed" ? "Reopen task" : "Complete task"} onPress={onChangeStatus} disabled={statusBusy || saving || converting} style={styles.primary}><Text style={styles.primaryText}>{statusBusy ? "Updating…" : item.status === "completed" ? "Reopen task" : "Complete task"}</Text></Pressable> : null}
+        {item.kind === "task" && dirty ? <Pressable accessibilityRole="button" accessibilityLabel="Cancel Task editing" onPress={cancelTaskDraft} disabled={saving || statusBusy || converting} style={styles.ghost}><Text style={styles.cancel}>Cancel</Text></Pressable> : null}
         {item.kind === "note" && editingText ? <Pressable accessibilityRole="button" accessibilityLabel="Cancel Note editing" onPress={() => { setDraftText(initialText); setEditingText(false); }} disabled={saving || statusBusy || converting} style={styles.ghost}><Text style={styles.cancel}>Cancel</Text></Pressable> : null}
-        <Pressable accessibilityRole="button" accessibilityLabel="Save" onPress={() => void onSave({ text: draftText, dueAt: draftDue })} disabled={!dirty || saving || statusBusy || converting} style={[styles.secondary, (!dirty || saving || statusBusy || converting) && styles.disabled]}><Text style={styles.secondaryText}>{saving ? "Saving…" : item.kind === "note" ? "Save note" : "Save changes"}</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Save" onPress={() => void saveDraft()} disabled={!dirty || saving || statusBusy || converting} style={[styles.secondary, (!dirty || saving || statusBusy || converting) && styles.disabled]}><Text style={styles.secondaryText}>{saving ? "Saving…" : item.kind === "note" ? "Save note" : "Save changes"}</Text></Pressable>
         {item.kind === "note" && onConvert ? <Pressable accessibilityRole="button" accessibilityLabel="Convert saved Note to Task" onPress={onConvert} disabled={saving || statusBusy || converting} style={styles.ghost}><Text style={styles.ghostText}>{converting ? "Converting…" : "Convert to Task"}</Text></Pressable> : null}
       </View>
       {notice ? <Text accessibilityRole="alert" style={styles.success}>{notice}</Text> : null}
+      {taskSaved ? <Text accessibilityRole="alert" style={styles.success}>Task changes saved.</Text> : null}
       {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
     </View>
   </View>;
@@ -79,6 +99,13 @@ function DueEditor({ dueAt, editing, setEditing, setDueAt }: { readonly dueAt: s
   const [draftDate, setDraftDate] = useState(initial);
   const [draftTime, setDraftTime] = useState(formatTime(initial));
   const [timeError, setTimeError] = useState<string | null>(null);
+  useEffect(() => {
+    const next = parseDue(dueAt) ?? new Date();
+    setDraftDate(next);
+    setDraftTime(formatTime(next));
+    setPicker(null);
+    setTimeError(null);
+  }, [dueAt]);
   if (!editing) return <View style={styles.dueRow}><Pressable accessibilityRole="button" accessibilityLabel="Edit Due information" onPress={() => setEditing(true)} style={styles.dueCard}><Text style={styles.fieldLabel}>DUE DATE</Text><Text style={styles.dueValue}>{hasDue && isValidIsoDate(dueAt) ? formatDateBubble(new Date(dueAt)) : "No due date"}</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Choose due time" onPress={() => { setEditing(true); setPicker("time"); }} style={styles.dueCard}><Text style={styles.fieldLabel}>DUE TIME</Text><Text style={styles.dueValue}>{hasDue && isValidIsoDate(dueAt) ? formatTime(new Date(dueAt)) : "Set time"}</Text></Pressable></View>;
   const commitDate = (date: Date) => { const [hour, minute] = draftTime.split(":").map(Number); const next = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), hour, minute)); setDraftDate(next); setDueAt(next.toISOString()); setPicker(null); };
   const commitTime = (time: string) => { if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) { setTimeError("Enter a valid time between 00:00 and 23:59"); return; } const [hour, minute] = time.split(":").map(Number); const next = new Date(Date.UTC(draftDate.getUTCFullYear(), draftDate.getUTCMonth(), draftDate.getUTCDate(), hour, minute)); setDraftTime(time); setDraftDate(next); setDueAt(next.toISOString()); setTimeError(null); setPicker(null); };

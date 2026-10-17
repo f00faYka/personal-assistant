@@ -46,6 +46,27 @@ describe("TaskNoteDetailScreen", () => {
     expect(JSON.stringify(renderer.toJSON())).not.toContain("Changed Note");
   });
 
+  test("cancels Task title and due edits without saving the draft", () => {
+    const onSave = vi.fn();
+    let renderer!: ReturnType<typeof create>;
+    act(() => { renderer = create(<TaskNoteDetailScreen item={task} onBack={vi.fn()} onSave={onSave} />); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Title" }).props.onPress(); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Title" }).props.onChangeText("Buy oat milk"); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Choose due time" }).props.onPress(); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Due time" }).props.onChangeText("13:00"); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Done due time" }).props.onPress(); });
+
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Cancel Task editing" }).props.onPress(); });
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(JSON.stringify(renderer.toJSON())).toContain("Buy milk");
+    expect(JSON.stringify(renderer.toJSON())).not.toContain("Buy oat milk");
+    expect(JSON.stringify(renderer.toJSON())).toContain("09:30");
+    expect(JSON.stringify(renderer.toJSON())).not.toContain("13:00");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Save" }).props.disabled).toBe(true);
+  });
+
   test("edits date and time through the shared due editor", () => {
     const onSave = vi.fn();
     let renderer!: ReturnType<typeof create>;
