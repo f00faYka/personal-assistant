@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@expo/metro-runtime": "^6.1.0",
+    "@react-native-community/datetimepicker": "^9.1.0",
     "expo": "^57.0.21",
     "expo-audio": "~57.0.4",
     "expo-file-system": "~57.0.6",
