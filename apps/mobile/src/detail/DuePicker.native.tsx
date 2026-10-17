@@ -30,11 +30,12 @@ export function DuePicker({ mode, date, time, onDateChange, onTimeChange, disabl
     themeVariant="light"
     accentColor="#FF3B30"
     disabled={disabled}
-    onChange={(event, selected) => {
-      if (disabled || event.type !== "set" || !selected || Number.isNaN(selected.getTime())) return;
+    onValueChange={(_event, selected) => {
+      if (disabled || Number.isNaN(selected.getTime())) return;
       if (mode === "date") onDateChange(localDate(selected));
       else onTimeChange(localTime(selected));
     }}
+    onDismiss={() => undefined}
     style={{ alignSelf: "flex-start" }}
   />
     </View>

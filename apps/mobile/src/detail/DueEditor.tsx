@@ -73,8 +73,8 @@ export function DueEditor({ dueAt, editing, disabled, setEditing, setDueAt }: Du
 }
 
 const styles = StyleSheet.create({
-  group: { backgroundColor: "#FFFFFF", borderRadius: 12, borderTopColor: "#D1D1D6", borderTopWidth: 1, overflow: "hidden", paddingBottom: 0, paddingTop: 4 },
-  row: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, paddingVertical: 4 },
+  group: { backgroundColor: "#FFFFFF", borderBottomColor: "#D1D1D6", borderBottomWidth: 1, borderRadius: 12, borderTopColor: "#D1D1D6", borderTopWidth: 1, marginVertical: 8, overflow: "hidden", paddingVertical: 8 },
+  row: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
   label: { fontSize: 17, color: "#000000", flexGrow: 1 },
   values: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   value: { backgroundColor: "#F2F2F7", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
