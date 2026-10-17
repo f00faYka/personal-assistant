@@ -116,11 +116,11 @@ export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, onBack
     },
   } satisfies TaskNoteDetailMetadata : undefined);
 
-  const save = useCallback(async (nextDraft: TaskNoteDetailDraft) => {
-    if (state.status !== "ready" || !state.review.outcome || savingInFlight.current) return;
+  const save = useCallback(async (nextDraft: TaskNoteDetailDraft): Promise<TaskNoteDetailDraft | undefined> => {
+    if (state.status !== "ready" || !state.review.outcome || savingInFlight.current) return undefined;
     if (state.review.outcome.kind === "task" && nextDraft.dueAt !== null && !isValidIsoDate(nextDraft.dueAt)) {
       setSaveError("Due information must be a valid date and time");
-      return;
+      return undefined;
     }
     savingInFlight.current = true;
     setSaving(true);
@@ -131,11 +131,18 @@ export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, onBack
         const changes: { title?: string; dueAt?: string | null } = {};
         if (nextDraft.text !== outcome.title) changes.title = nextDraft.text;
         if (nextDraft.dueAt !== (outcome.dueAt ?? null)) changes.dueAt = nextDraft.dueAt;
-        if (Object.keys(changes).length > 0) await client.updateTask(outcome.id, memberId, outcome.version, changes);
+        if (Object.keys(changes).length > 0) {
+          const updated = await client.updateTask(outcome.id, memberId, outcome.version, changes);
+          if (updated.kind !== "task") throw new Error("Task update response did not include a Task");
+          setState({ status: "ready", review: { ...state.review, outcome: updated } });
+          return { text: updated.title, dueAt: updated.dueAt ?? null };
+        }
+        return { text: outcome.title, dueAt: outcome.dueAt ?? null };
       } else if (nextDraft.text !== outcome.content) {
         await client.updateNote(outcome.id, memberId, outcome.version, nextDraft.text);
       }
       onBack();
+      return undefined;
     } catch (error) {
       const saveMessage = error instanceof Error ? error.message : "Unable to save review";
       const text = nextDraft.text;
@@ -158,6 +165,7 @@ export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, onBack
       if (outcome.kind === "note" && refreshed?.outcome?.kind === "task" && refreshed.outcome.id === outcome.id) {
         setSaveError("This Note was converted to a Task elsewhere. The review was refreshed.");
       }
+      return undefined;
     } finally {
       savingInFlight.current = false;
       setSaving(false);
@@ -237,7 +245,7 @@ export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, onBack
   return <ReviewShell onBack={onBack} showBack={false}>
     <ReviewStateBanner review={state.review} />
     {state.review.state === "failed" ? <Button label="Refresh processing status" onPress={() => void load()} /> : null}
-    {state.review.outcome ? <TaskNoteDetailScreen item={detailItem(state.review, resolvedDetailMetadata)} {...(resolvedDetailMetadata ? { metadata: resolvedDetailMetadata } : {})} {...(metadataClient ? { tagEntityControls: <MetadataControls client={metadataClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> } : {})} onBack={onBack} onSave={(nextDraft) => void save(nextDraft)} onChangeStatus={() => void changeStatus()} onConvert={state.review.outcome.kind === "note" ? () => void convertNoteToTask() : undefined} saving={saving} statusBusy={completing} converting={converting} error={saveError ?? completionError ?? conversionError} notice={conversionNotice} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}
+    {state.review.outcome ? <TaskNoteDetailScreen item={detailItem(state.review, resolvedDetailMetadata)} {...(resolvedDetailMetadata ? { metadata: resolvedDetailMetadata } : {})} {...(metadataClient ? { tagEntityControls: <MetadataControls client={metadataClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> } : {})} onBack={onBack} onSave={save} onChangeStatus={() => void changeStatus()} onConvert={state.review.outcome.kind === "note" ? () => void convertNoteToTask() : undefined} saving={saving} statusBusy={completing} converting={converting} error={saveError ?? completionError ?? conversionError} notice={conversionNotice} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}
     {state.review.outcome && organizationProposalClient ? <OrganizationProposalControls client={organizationProposalClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> : null}
     {!state.review.outcome ? <><Text style={styles.sectionTitle}>Source and provenance</Text><Text style={styles.provenance}>Capture {state.review.capture.id} · source {state.review.source.id}</Text>{state.review.failure?.classification === "unusable_transcription" ? <><Text style={styles.provenance}>Original transcription · unavailable</Text>{state.review.transcription?.provider ? <Text style={styles.provenance}>Transcription source · {state.review.transcription.provider}{state.review.transcription.model ? ` · ${state.review.transcription.model}` : ""}</Text> : null}</> : state.review.transcription ? <><Text style={styles.fieldLabel}>Original transcription{state.review.transcription.language ? ` · ${state.review.transcription.language}` : ""}</Text><Text style={styles.originalText}>{state.review.transcription.text ?? `Status: ${state.review.transcription.status}`}</Text></> : <Text style={styles.provenance}>Original transcription · pending</Text>}</> : null}
   </ReviewShell>;

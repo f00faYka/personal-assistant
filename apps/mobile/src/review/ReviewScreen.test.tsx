@@ -41,7 +41,9 @@ describe("ReviewScreen", () => {
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
 
     expect(fetcher).toHaveBeenLastCalledWith("http://api.test/tasks/task-1", expect.objectContaining({ method: "PATCH" }));
-    expect(onBack).toHaveBeenCalledOnce();
+    expect(onBack).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByType(TextInput)).toHaveLength(0);
+    expect(textContent(renderer)).toContain("Task changes saved.");
     renderer.unmount();
   });
 
@@ -446,6 +448,79 @@ describe("ReviewScreen", () => {
     resolveSave(jsonResponse({ note: { kind: "note", id: "note-1", content: "Call the dentist tomorrow", reviewState: "none", version: 1 } }));
     await act(async () => { await save; });
     expect(onBack).toHaveBeenCalledOnce();
+    renderer.unmount();
+  });
+
+  test("cancels the Task draft without sending a mutation", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", dueAt: "2026-08-15T09:00:00.000Z", status: "open", version: 0 }) }));
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen(vi.fn());
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Title" }).props.onPress(); });
+    await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Buy oat milk"); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Cancel Task editing" }).props.onPress(); });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(textContent(renderer)).toContain("Buy milk");
+    expect(textContent(renderer)).not.toContain("Buy oat milk");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Save" }).props.disabled).toBe(true);
+    renderer.unmount();
+  });
+
+  test("saves a Task draft once and leaves the detail clean", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", dueAt: "2026-08-15T09:00:00.000Z", status: "open", version: 0 }) }))
+      .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "task-1", title: "Buy oat milk (saved)", dueAt: "2026-08-15T09:00:00.000Z", status: "open", version: 1 } }));
+    vi.stubGlobal("fetch", fetcher);
+    const onBack = vi.fn();
+    const renderer = await renderScreen(onBack);
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Title" }).props.onPress(); });
+    await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Buy oat milk"); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(onBack).not.toHaveBeenCalled();
+    expect(textContent(renderer)).toContain("Buy oat milk (saved)");
+    expect(textContent(renderer)).toContain("Task changes saved.");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Save" }).props.disabled).toBe(true);
+    renderer.unmount();
+  });
+
+  test("preserves a failed Task draft for retry and ignores duplicate Save taps", async () => {
+    let resolveSave!: (response: Response) => void;
+    const pendingSave = new Promise<Response>((resolve) => { resolveSave = resolve; });
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", dueAt: "2026-08-15T09:00:00.000Z", status: "open", version: 0 }) }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "offline" }), { status: 503 }))
+      .mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", dueAt: "2026-08-15T09:00:00.000Z", status: "open", version: 0 }) }))
+      .mockReturnValueOnce(pendingSave);
+    vi.stubGlobal("fetch", fetcher);
+    const renderer = await renderScreen(vi.fn());
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Title" }).props.onPress(); });
+    await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Buy oat milk"); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("offline");
+    expect(renderer.root.findByType(TextInput).props.value).toBe("Buy oat milk");
+
+    act(() => {
+      const button = renderer.root.findByProps({ accessibilityLabel: "Save" });
+      button.props.onPress();
+      button.props.onPress();
+    });
+    act(() => {
+      const cancel = renderer.root.findByProps({ accessibilityLabel: "Cancel Task editing" });
+      cancel.props.onPress();
+      cancel.props.onPress();
+    });
+    expect(renderer.root.findByType(TextInput).props.value).toBe("Buy oat milk");
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    resolveSave(jsonResponse({ task: { kind: "task", id: "task-1", title: "Buy oat milk", dueAt: "2026-08-15T09:00:00.000Z", status: "open", version: 1 } }));
+    await act(async () => { await pendingSave; });
+
+    expect(textContent(renderer)).toContain("Task changes saved.");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Save" }).props.disabled).toBe(true);
     renderer.unmount();
   });
 
