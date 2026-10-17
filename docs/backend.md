@@ -125,6 +125,25 @@ Interpretation is a separate durable record keyed one-to-one to a succeeded tran
 
 Automatic outcomes are separate durable records keyed one-to-one to an Interpretation. A clear `create_task` interpretation creates one open Task with its member and source lineage; ordinary, ambiguous, and unsupported interpretations create one Note containing the transcription text. Ambiguous and unsupported Notes are marked `Needs review`. Retrying materialization returns the existing outcome, and `complete_task` creates no new item. Task mutation uses an integer version for optimistic concurrency: edits require the current version, preserve all provenance identifiers, and may change only the title or non-notifying due information. An open Task may transition to `completed` once; repeating completion returns the completed Task unchanged, while stale edits and invalid transitions are rejected. No mutation invokes notification scheduling or delivery. Corrections and shared visibility remain outside this slice.
 
+### Future Task mutation errors and retention
+
+These rules extend the future Task mutation contract only. They do not change the current MVP endpoints, which do not implement authenticated membership, operation replay, completed-Task edits, Reopen, or status-transition history.
+
+Current route handlers commonly return `{ "error": "<message>" }`, with the HTTP status indicating the error class; the API does not define a central error handler or machine-readable error-code convention. Future Task mutation errors retain that body and add a stable `code`; a stale-version conflict also includes the current Task, as `{ "error": "Task version conflict", "code": "task_version_conflict", "task": <current task> }`. The Task contract uses these responses:
+
+| Condition | HTTP status | `code` | Response details |
+| --- | ---: | --- | --- |
+| Invalid or incomplete mutation payload | `400` | `validation_error` | No mutation is applied. |
+| Request has no authenticated Member identity | `401` | `unauthorized` | No mutation is applied. |
+| Task is missing or not discoverable by this Member | `404` | `task_not_found` | Use the same response so private Task existence is not disclosed. |
+| Current authenticated Member lacks permission for a discoverable Task | `403` | `forbidden` | No mutation is applied. |
+| Operation ID was already used for a different operation or request | `409` | `idempotency_key_mismatch` | Do not apply or return the other operation's result. |
+| `expectedVersion` is stale | `409` | `task_version_conflict` | Include the current Task for refresh; do not retry the mutation at the newer version. |
+
+Check current authorization before looking up or returning a stored operation result. Errors never mutate the Task, operation result, or status history.
+
+Retain each operation result and append-only status-transition record for as long as its Task data is retained. Do not expire or compact either record by age. Retention ends only when the associated Task data is explicitly deleted under the product's deletion policy; after that deletion, replay is no longer guaranteed. This preserves retries throughout the retained lifetime of the Task without changing the product's explicit-deletion rule.
+
 Notes use the same integer version for optimistic concurrency. `PATCH /notes/<note-id>` accepts `memberId`, `expectedVersion`, and editable `content`; it changes only the Note content and rejects empty content, wrong-member access, and stale versions without changing Capture, Source content, transcription, interpretation, or review state. A review may explicitly save a Note with `POST /captures/<capture-id>/review/note`; this requires a completed transcription and interpretation, creates at most one Note for that interpretation, marks the explicitly saved Note as accepted (`reviewState: "none"`), and returns the existing accepted Note on retry. Saving an existing `Needs review` Note requires matching member and provenance identifiers and resolves that Note to the accepted state. The response retains all provenance identifiers and returns `version: 0` for a new Note.
 
 An explicit `POST /notes/<note-id>/convert-to-task` operation accepts `memberId` and `expectedVersion`. It atomically mutates the existing Note row into an open Task: the editable Note content becomes the Task title, the durable item ID and all provenance identifiers remain unchanged, `Needs review` is cleared, and no duplicate item is created. A successful conversion increments the version. Repeating the operation for the already-converted item returns the existing Task; a stale version or wrong Member is rejected. This operation has no Reminder or notification side effect.
