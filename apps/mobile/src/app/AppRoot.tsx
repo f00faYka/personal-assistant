@@ -1,13 +1,14 @@
 import { useAudioRecorder, useAudioRecorderState, RecordingPresets } from "expo-audio";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Animated, Easing, StyleSheet, useWindowDimensions } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
-import { AppShell, CalendarSurface, MeSurface, type ShellTab } from "../AppShell";
+import { AppShell, MeSurface, type ShellTab } from "../AppShell";
 import { createCaptureSubmitter } from "../capture/voice-capture";
 import { createExpoVoiceRecorder, readRecordedAudioAsBase64 } from "../capture/expo-voice-recorder";
 import { SelectedDayTaskScreen } from "../day/SelectedDayTaskScreen";
 import { MemberListScreen } from "../list/MemberListScreen";
-import { createStaticMemberItemsClient, type MemberListItem } from "../list/member-items";
+import { createMemberItemsClient, createStaticMemberItemsClient, type MemberListItem } from "../list/member-items";
 import { createExpoOfflineDraftStore } from "../offline/expo-offline-drafts";
 import { createMemoryOfflineDraftStore } from "../offline/offline-drafts";
 import { createOfflineDraftSyncClient } from "../offline/synchronize-offline-drafts";
@@ -24,6 +25,8 @@ import { getDeviceTimeZone } from "../time-zone";
 import { MaterialsPrototype } from "../materials/MaterialsPrototype";
 import { MaterialsScreen } from "../materials/MaterialsScreen";
 import { TaskActionsPrototype } from "../list/TaskActionsPrototype";
+import { CalendarScreen, CalendarSelectedDayScreen } from "../calendar/CalendarScreen";
+import type { LocalDate } from "../day/selected-day";
 import type { Entity, Tag } from "../review/metadata";
 
 export default function AppRoot() {
@@ -36,6 +39,9 @@ export default function AppRoot() {
   const [tab, setTab] = useState<ShellTab>("home");
   const [captureRequest, setCaptureRequest] = useState(0);
   const [showToday, setShowToday] = useState(false);
+  const [calendarSelectedDate, setCalendarSelectedDate] = useState<LocalDate>(() => localDateKey(new Date(), getDeviceTimeZone()));
+  const [calendarDayOpen, setCalendarDayOpen] = useState(false);
+  const [calendarDayClosing, setCalendarDayClosing] = useState(false);
   const [showMaterialsPrototype, setShowMaterialsPrototype] = useState(false);
   const [materialsDetailUrl, setMaterialsDetailUrl] = useState<string | null>(null);
   const [materialsInitialEditing, setMaterialsInitialEditing] = useState(false);
@@ -51,6 +57,7 @@ export default function AppRoot() {
   const [fixtureSpaceIds, setFixtureSpaceIds] = useState<Record<string, string | null>>({});
   const [fixtureTagIds, setFixtureTagIds] = useState<Record<string, readonly string[]>>({});
   const fixtureItems = useMemo(() => fixtureData ? createStaticMemberItemsClient([...fixtureData.tasks.map((task, index) => fixtureTaskItem(task, index)), ...fixtureData.notes.map((note, index) => fixtureNoteItem(note, index))]) : undefined, [fixtureData]);
+  const calendarItemsClient = useMemo(() => fixtureItems ?? createMemberItemsClient(apiBaseUrl), [apiBaseUrl, fixtureItems]);
   const fixtureSpacesClient = useMemo(() => fixtureData ? createFixtureSpacesClient(fixtureData.spaces, memberId) : undefined, [fixtureData, memberId]);
   const fixtureMetadataClient = useMemo(() => fixtureData ? createFixtureMetadataClient(fixtureData, memberId) : undefined, [fixtureData, memberId]);
   const fixtureKind = process.env.EXPO_PUBLIC_REVIEW_FIXTURE === "task" ? "task" : "note";
@@ -62,16 +69,42 @@ export default function AppRoot() {
   const materialsDetail = materialsDetailUrl ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} detailUrl={materialsDetailUrl} initialEditing={materialsInitialEditing} {...(fixtureMetadata ? { detailMetadata: fixtureMetadata } : {})} {...(!activeFixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(activeFixtureMode && fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} {...(activeFixtureMode ? { client: fixtureClient ?? createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => { setMaterialsDetailUrl(null); setMaterialsInitialEditing(false); }} /> : undefined;
   const materialsScreen = <MaterialsScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} {...(fixtureItems ? { client: fixtureItems } : {})} {...(fixtureSpacesClient ? { spacesClient: fixtureSpacesClient } : {})} {...(fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} onOpenDetail={(url) => { setMaterialsInitialEditing(false); setMaterialsDetailUrl(url); }} onEditDetail={(url) => { setMaterialsInitialEditing(true); setMaterialsDetailUrl(url); }} detailUrl={materialsDetailUrl} detail={materialsDetail} />;
   const openCapture = () => { setTab("home"); setCaptureRequest((request) => request + 1); };
+  const detailScreen = <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} detailUrl={detailUrl ?? "/captures/demo-capture-1/review"} initialEditing={detailInitialEditing} {...(fixtureMetadata ? { detailMetadata: fixtureMetadata } : {})} {...(!activeFixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(activeFixtureMode && fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} {...(activeFixtureMode ? { client: fixtureClient ?? createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => { setDetailUrl(null); setDetailInitialEditing(false); setFixtureMode(false); }} />;
+  const calendarDayFlow = tab === "calendar" && calendarDayOpen;
+  const closeCalendarScreen = () => setCalendarDayClosing(true);
+  const calendarDayScreen = detailUrl || fixtureMode
+    ? detailScreen
+    : <CalendarSelectedDayScreen apiBaseUrl={apiBaseUrl} memberId={memberId} selectedDate={calendarSelectedDate} timeZone={timeZone} client={calendarItemsClient} onBack={closeCalendarScreen} renderTask={(task) => <PressableTaskRow task={task} memberId={memberId} client={reviewClient} timeZone={timeZone} onOpenDetail={(url) => { setDetailInitialEditing(false); setDetailUrl(url); }} onEditDetail={(url) => { setDetailInitialEditing(true); setDetailUrl(url); }} />} />;
+  const calendarScreen = <CalendarScreen apiBaseUrl={apiBaseUrl} memberId={memberId} selectedDate={calendarSelectedDate} timeZone={timeZone} client={calendarItemsClient} onSelectDate={(date) => { setCalendarSelectedDate(date); setCalendarDayClosing(false); setCalendarDayOpen(true); }} onReturnToToday={setCalendarSelectedDate} />;
   const content = taskActionsPrototype ? <TaskActionsPrototype />
+    : calendarDayFlow ? calendarScreen
     : detailUrl || fixtureMode
-    ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} detailUrl={detailUrl ?? "/captures/demo-capture-1/review"} initialEditing={detailInitialEditing} {...(fixtureMetadata ? { detailMetadata: fixtureMetadata } : {})} {...(!activeFixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(activeFixtureMode && fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} {...(activeFixtureMode ? { client: fixtureClient ?? createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => { setDetailUrl(null); setDetailInitialEditing(false); setFixtureMode(false); }} />
+    ? detailScreen
     : showToday ? <SelectedDayTaskScreen apiBaseUrl={apiBaseUrl} memberId={memberId} selectedDate={localDateKey(new Date(), timeZone)} timeZone={timeZone} renderTask={(task) => <PressableTaskRow task={task} memberId={memberId} client={reviewClient} timeZone={timeZone} onOpenDetail={(url) => { setDetailInitialEditing(false); setDetailUrl(url); }} onEditDetail={(url) => { setDetailInitialEditing(true); setDetailUrl(url); }} />} />
     : tab === "find" ? materialsScreen
-    : tab === "calendar" ? <CalendarSurface />
+    : tab === "calendar" ? calendarScreen
     : tab === "me" ? (materialsPrototype && showMaterialsPrototype ? <MaterialsPrototype timeZone={timeZone} /> : <MeSurface onOpenMaterials={() => materialsPrototype ? setShowMaterialsPrototype(true) : setTab("find")} />)
     : <MemberListScreen apiBaseUrl={apiBaseUrl} {...(fixtureItems ? { client: fixtureItems } : {})} memberId={memberId} timeZone={timeZone} home={tab === "home" && process.env.NODE_ENV !== "test"} onOpenToday={() => setShowToday(true)} onOpenDetail={(url) => { setDetailInitialEditing(false); setDetailUrl(url); }} onEditDetail={(url) => { setDetailInitialEditing(true); setDetailUrl(url); }} voiceRecorder={createExpoVoiceRecorder(recorder)} recordingMetering={recorderState.metering} recordingInterrupted={recorderState.mediaServicesDidReset} captureSubmitter={createCaptureSubmitter(apiBaseUrl, readRecordedAudioAsBase64)} offlineDraftStore={offlineDraftStore} offlineDraftSyncClient={offlineDraftSyncClient} captureRequest={captureRequest} />;
-  return <SafeAreaProvider><AppShell tab={tab} onTabChange={(nextTab) => { setTab(nextTab); setShowToday(false); }} onCapture={openCapture}>{content}</AppShell></SafeAreaProvider>;
+  return <SafeAreaProvider><>
+    <AppShell tab={tab} onTabChange={(nextTab) => { setTab(nextTab); setShowToday(false); setCalendarDayOpen(false); setCalendarDayClosing(false); }} onCapture={openCapture}>{content}</AppShell>
+    {calendarDayFlow ? <CalendarScreenTransition closing={calendarDayClosing} onClosed={() => { setCalendarDayOpen(false); setCalendarDayClosing(false); }}>{calendarDayScreen}</CalendarScreenTransition> : null}
+  </></SafeAreaProvider>;
 }
+
+function CalendarScreenTransition({ children, closing, onClosed }: { readonly children: ReactNode; readonly closing: boolean; readonly onClosed: () => void }) {
+  const { width } = useWindowDimensions();
+  const [translateX] = useState(() => new Animated.Value(width));
+  const onClosedRef = useRef(onClosed);
+  onClosedRef.current = onClosed;
+  useEffect(() => {
+    const animation = Animated.timing(translateX, { toValue: closing ? width : 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true });
+    animation.start(({ finished }) => { if (finished && closing) onClosedRef.current(); });
+    return () => animation.stop();
+  }, [closing, translateX, width]);
+  return <Animated.View style={[calendarTransitionStyles.overlay, { transform: [{ translateX }] }]}>{children}</Animated.View>;
+}
+
+const calendarTransitionStyles = StyleSheet.create({ overlay: { backgroundColor: "#F8F6F1", bottom: 0, left: 0, position: "absolute", right: 0, top: 0 } });
 
 function createFixtureSpacesClient(spaces: BrowserFixtureData["spaces"], memberId: string) {
   return { list: async () => spaces.map((space) => ({ id: space.id, memberId, name: space.name, ...(space.parentId ? { parentId: space.parentId } : {}), createdAt: "fixture" })) };
