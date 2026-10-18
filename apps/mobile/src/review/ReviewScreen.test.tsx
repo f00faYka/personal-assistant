@@ -35,7 +35,7 @@ describe("ReviewScreen", () => {
 
     expect(textContent(renderer)).toContain("Buy milk");
     expect(renderer.root.findAllByType(TextInput)).toHaveLength(0);
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Title" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Task" }).props.onPress(); });
     expect(renderer.root.findAllByType(TextInput)).toHaveLength(1);
     await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Buy bread"); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
@@ -108,6 +108,7 @@ describe("ReviewScreen", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
     await act(async () => { await Promise.resolve(); });
+    await enterEditMode(renderer);
 
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" }).props.onPress(); });
     expect(metadataClient.linkTag).toHaveBeenCalledWith("task-1", "task", "tag-1", "member-1");
@@ -126,6 +127,7 @@ describe("ReviewScreen", () => {
     });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient, spacesClient });
+    await enterEditMode(renderer);
 
     expect(renderer.root.findByProps({ accessibilityLabel: "Choose Space" })).toBeDefined();
     expect(renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" })).toBeDefined();
@@ -141,6 +143,7 @@ describe("ReviewScreen", () => {
     const spacesClient = spacesFixture({ list: vi.fn().mockResolvedValue([office]), read: vi.fn().mockResolvedValue({ space: office, path: "Office", children: [], items: [{ itemId: "note-1", itemKind: "note", spaceId: office.id, path: "Office", content: "Call" }] }) });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "none", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient, spacesClient });
+    await enterEditMode(renderer, "note");
 
     expect(renderer.root.findByProps({ accessibilityLabel: "Choose Space" })).toBeDefined();
     expect(renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" })).toBeDefined();
@@ -155,6 +158,7 @@ describe("ReviewScreen", () => {
     const metadataClient = metadataFixture();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "none", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
+    await enterEditMode(renderer, "note");
 
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Create and add Entity" }).props.onPress(); });
     expect(textContent(renderer)).toContain("Entity name must not be empty");
@@ -168,6 +172,7 @@ describe("ReviewScreen", () => {
     const metadataClient = metadataFixture({ listTags: vi.fn().mockResolvedValue([tag]), listLinks: vi.fn().mockResolvedValue({ tags: [tag], entities: [] }), unlinkTag: vi.fn().mockRejectedValueOnce(new Error("network unavailable")).mockResolvedValueOnce({ tags: [], entities: [] }) });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
+    await enterEditMode(renderer);
 
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Remove Tag urgent" }).props.onPress(); });
     expect(textContent(renderer)).toContain("network unavailable");
@@ -183,6 +188,7 @@ describe("ReviewScreen", () => {
     const metadataClient = metadataFixture({ createTag: vi.fn().mockResolvedValue(tag), linkTag: vi.fn().mockRejectedValueOnce(new Error("link unavailable")).mockResolvedValueOnce({ tags: [tag], entities: [] }) });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
+    await enterEditMode(renderer);
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "New Tag name" }).props.onChangeText("urgent"); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Create and add Tag" }).props.onPress(); });
     expect(textContent(renderer)).toContain("link unavailable");
@@ -201,6 +207,7 @@ describe("ReviewScreen", () => {
     const metadataClient = metadataFixture({ listTags: vi.fn().mockResolvedValue([tag]), linkTag });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
+    await enterEditMode(renderer);
     const addButton = renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" });
 
     act(() => { addButton.props.onPress(); addButton.props.onPress(); });
@@ -216,6 +223,7 @@ describe("ReviewScreen", () => {
     const metadataClient = metadataFixture({ listEntities: vi.fn().mockResolvedValue([entity]), linkEntity: vi.fn().mockResolvedValue({ tags: [], entities: [entity] }), unlinkEntity: vi.fn().mockResolvedValue({ tags: [], entities: [] }) });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "none", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
+    await enterEditMode(renderer, "note");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add existing Entity Office" }).props.onPress(); });
     expect(metadataClient.linkEntity).toHaveBeenCalledWith("note-1", "note", "entity-1", "member-1");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Remove Entity Office" }).props.onPress(); });
@@ -229,6 +237,7 @@ describe("ReviewScreen", () => {
     const metadataClient = metadataFixture({ listTags, listLinks: vi.fn().mockResolvedValue({ tags: [tag], entities: [] }) });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
+    await enterEditMode(renderer);
     expect(textContent(renderer)).toContain("urgent");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Refresh metadata" }).props.onPress(); });
     expect(textContent(renderer)).toContain("metadata unavailable");
@@ -245,6 +254,7 @@ describe("ReviewScreen", () => {
     const metadataClient = metadataFixture({ listTags: vi.fn().mockResolvedValue([tag]), listEntities: vi.fn().mockResolvedValue([entity]), listLinks: vi.fn().mockResolvedValue({ tags: [tag], entities: [entity] }), updateTag: vi.fn().mockResolvedValue({ ...tag, name: "later" }), updateEntity: vi.fn().mockResolvedValue({ ...entity, name: "HQ", type: "Organization" }) });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
+    await enterEditMode(renderer);
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Tag urgent" }).props.onPress(); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Tag urgent" }).props.onChangeText("later"); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save Tag urgent" }).props.onPress(); });
@@ -265,6 +275,7 @@ describe("ReviewScreen", () => {
     const renderer = await renderScreen(vi.fn());
 
     expect(textContent(renderer)).toContain("Due");
+    await enterEditMode(renderer);
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
     expect(renderer.root.findByProps({ accessibilityLabel: "Choose due date" })).toBeTruthy();
     expect(renderer.root.findByProps({ accessibilityLabel: "Choose due time" })).toBeTruthy();
@@ -280,6 +291,8 @@ describe("ReviewScreen", () => {
     vi.stubGlobal("fetch", fetcher);
     const renderer = await renderScreen(vi.fn());
 
+    await enterEditMode(renderer);
+    await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Buy bread"); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
 
     expect(textContent(renderer)).toContain("Due information must be a valid date and time");
@@ -297,6 +310,7 @@ describe("ReviewScreen", () => {
     try {
       vi.stubGlobal("fetch", fetcher);
       const renderer = await renderScreen(vi.fn());
+      await enterEditMode(renderer);
       await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
       await act(async () => { renderer.root.findByProps({ "aria-label": "Due date" }).props.onChange({ currentTarget: { value: "2026-08-20" } }); });
       await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Choose due time" }).props.onPress(); });
@@ -317,6 +331,7 @@ describe("ReviewScreen", () => {
       .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "task-1", title: "Buy milk", dueAt: new Date("2026-08-20T10:30:00").toISOString(), status: "open", version: 1 } }));
     vi.stubGlobal("fetch", fetcher);
     const renderer = await renderScreen(vi.fn());
+    await enterEditMode(renderer);
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
     await act(async () => { renderer.root.findByProps({ "aria-label": "Due date" }).props.onChange({ currentTarget: { value: "2026-08-20" } }); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Choose due time" }).props.onPress(); });
@@ -339,6 +354,7 @@ describe("ReviewScreen", () => {
       .mockResolvedValueOnce(jsonResponse({ task: { kind: "task", id: "task-1", title: "Buy milk", dueAt, status: "open", version: 1 } }));
     vi.stubGlobal("fetch", fetcher);
     const renderer = await renderScreen(vi.fn());
+    await enterEditMode(renderer);
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
     await act(async () => { renderer.root.findByProps({ "aria-label": "Due date" }).props.onChange({ currentTarget: { value: "2026-08-20" } }); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Choose due time" }).props.onPress(); });
@@ -420,13 +436,26 @@ describe("ReviewScreen", () => {
   });
 
   test("keeps original transcription distinct from editable Note content", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 2 }, { transcription: { status: "succeeded", text: "Call the dentist tomorrow" } }) })));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call the dentist", reviewState: "none", version: 2 }, {
+      source: { id: "source-1", content: { kind: "audio", contentType: "audio/m4a", byteLength: 1024, sha256: "abc123" } },
+      transcription: { status: "succeeded", text: "Call the dentist tomorrow", language: "en" },
+      correction: { text: "Call the dentist on Friday" },
+      interpretation: { id: "interpretation-1", classification: "clear_supported" },
+    }) })));
     const renderer = await renderScreen(vi.fn());
 
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Toggle source and review history" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("Audio source · audio/m4a · 1,024 bytes · SHA-256 abc123");
     expect(textContent(renderer)).toContain("Original transcription");
+    expect(textContent(renderer)).toContain("· en");
     expect(textContent(renderer)).toContain("Call the dentist tomorrow");
+    expect(textContent(renderer)).toContain("Call the dentist on Friday");
+    expect(textContent(renderer)).toContain("clear supported");
+    expect(textContent(renderer)).toContain("Saved outcome");
     expect(textContent(renderer)).toContain("Call the dentist");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Note" }).props.onPress(); });
+    expect(renderer.root.findByType(TextInput).props.value).toBe("Call the dentist");
+    expect(textContent(renderer)).toContain("Call the dentist tomorrow");
     renderer.unmount();
   });
 
@@ -439,6 +468,28 @@ describe("ReviewScreen", () => {
     expect(textContent(renderer)).toContain("ru");
     expect(textContent(renderer)).toContain("Позвони врачу завтра");
     expect(textContent(renderer)).not.toContain("Call the doctor tomorrow");
+    renderer.unmount();
+  });
+
+  test("shows Task source and interpretation history separately from the Task fields", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }, {
+      source: { id: "source-1", content: { kind: "audio", contentType: "audio/m4a", byteLength: 512, sha256: "task-hash" } },
+      transcription: { status: "succeeded", text: "Купи молоко", language: "ru" },
+      interpretation: { id: "interpretation-1", classification: "clear_supported" },
+    }) })));
+    const renderer = await renderScreen(vi.fn());
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Toggle source and review history" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("Audio source · audio/m4a · 512 bytes · SHA-256 task-hash");
+    expect(textContent(renderer)).toContain("Original transcription");
+    expect(textContent(renderer)).toContain("· ru");
+    expect(textContent(renderer)).toContain("Купи молоко");
+    expect(textContent(renderer)).toContain("clear supported");
+    expect(textContent(renderer)).toContain("Buy milk");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Task" }).props.onPress(); });
+    expect(renderer.root.findByProps({ accessibilityLabel: "Title" }).props.value).toBe("Buy milk");
+    expect(textContent(renderer)).toContain("Купи молоко");
     renderer.unmount();
   });
 
@@ -479,14 +530,14 @@ describe("ReviewScreen", () => {
     vi.stubGlobal("fetch", fetcher);
     const renderer = await renderScreen(vi.fn());
 
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Title" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Task" }).props.onPress(); });
     await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Buy oat milk"); });
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Cancel Task editing" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Cancel editing" }).props.onPress(); });
 
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(textContent(renderer)).toContain("Buy milk");
     expect(textContent(renderer)).not.toContain("Buy oat milk");
-    expect(renderer.root.findByProps({ accessibilityLabel: "Save" }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Task" })).toBeDefined();
     renderer.unmount();
   });
 
@@ -498,7 +549,7 @@ describe("ReviewScreen", () => {
     const onBack = vi.fn();
     const renderer = await renderScreen(onBack);
 
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Title" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Task" }).props.onPress(); });
     await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Buy oat milk"); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
 
@@ -506,7 +557,7 @@ describe("ReviewScreen", () => {
     expect(onBack).not.toHaveBeenCalled();
     expect(textContent(renderer)).toContain("Buy oat milk (saved)");
     expect(textContent(renderer)).toContain("Task changes saved.");
-    expect(renderer.root.findByProps({ accessibilityLabel: "Save" }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Task" })).toBeDefined();
     renderer.unmount();
   });
 
@@ -521,7 +572,7 @@ describe("ReviewScreen", () => {
     vi.stubGlobal("fetch", fetcher);
     const renderer = await renderScreen(vi.fn());
 
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Title" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Task" }).props.onPress(); });
     await act(async () => { renderer.root.findByType(TextInput).props.onChangeText("Buy oat milk"); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save" }).props.onPress(); });
     expect(textContent(renderer)).toContain("offline");
@@ -533,7 +584,7 @@ describe("ReviewScreen", () => {
       button.props.onPress();
     });
     act(() => {
-      const cancel = renderer.root.findByProps({ accessibilityLabel: "Cancel Task editing" });
+      const cancel = renderer.root.findByProps({ accessibilityLabel: "Cancel editing" });
       cancel.props.onPress();
       cancel.props.onPress();
     });
@@ -543,7 +594,7 @@ describe("ReviewScreen", () => {
     await act(async () => { await pendingSave; });
 
     expect(textContent(renderer)).toContain("Task changes saved.");
-    expect(renderer.root.findByProps({ accessibilityLabel: "Save" }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Task" })).toBeDefined();
     renderer.unmount();
   });
 
@@ -560,7 +611,7 @@ describe("ReviewScreen", () => {
     expect(fetcher).toHaveBeenLastCalledWith("http://api.test/notes/note-1/convert-to-task", expect.objectContaining({ method: "POST", body: JSON.stringify({ memberId: "member-1", expectedVersion: 1 }) }));
     expect(textContent(renderer)).toContain("Converted to Task. Identity and provenance were kept.");
     expect(renderer.root.findAllByProps({ accessibilityLabel: "Edit Note" })).toHaveLength(0);
-    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Title" })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Task" })).toBeDefined();
     expect(renderer.root.findAllByProps({ accessibilityLabel: "Convert saved Note to Task" })).toHaveLength(0);
     expect(onBack).not.toHaveBeenCalled();
     renderer.unmount();
@@ -585,6 +636,7 @@ describe("ReviewScreen", () => {
 
     expect(textContent(renderer)).toContain("Converted to Task. Identity and provenance were kept.");
     expect(textContent(renderer)).toContain("Office");
+    await enterEditMode(renderer);
     expect(renderer.root.findByProps({ accessibilityLabel: "Choose Space" })).toBeDefined();
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Choose Space" }).props.onPress(); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Choose Space Unassigned" }).props.onPress(); });
@@ -634,7 +686,7 @@ describe("ReviewScreen", () => {
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Convert saved Note to Task" }).props.onPress(); });
 
     expect(fetcher).toHaveBeenLastCalledWith("http://api.test/notes/note-1/convert-to-task", expect.objectContaining({ body: JSON.stringify({ memberId: "member-1", expectedVersion: 1 }) }));
-    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Title" })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Task" })).toBeDefined();
     renderer.unmount();
   });
 
@@ -652,7 +704,7 @@ describe("ReviewScreen", () => {
 
     expect(textContent(renderer)).toContain("This Note was converted to a Task elsewhere. The review was refreshed.");
     expect(renderer.root.findByProps({ accessibilityRole: "alert" })).toBeDefined();
-    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Title" })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Task" })).toBeDefined();
     expect(renderer.root.findAllByProps({ accessibilityLabel: "Edit Note" })).toHaveLength(0);
     expect(textContent(renderer)).not.toContain("Call the dentist tomorrow");
     renderer.unmount();
@@ -670,7 +722,7 @@ describe("ReviewScreen", () => {
 
     expect(textContent(renderer)).toContain("Conversion confirmed after refreshing.");
     expect(textContent(renderer)).toContain("Call the dentist");
-    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Title" })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Task" })).toBeDefined();
     expect(renderer.root.findAllByProps({ accessibilityLabel: "Convert saved Note to Task" })).toHaveLength(0);
     expect(textContent(renderer)).not.toContain("Unable to convert Note");
     renderer.unmount();
@@ -782,7 +834,7 @@ describe("ReviewScreen", () => {
 
     expect(textContent(renderer)).toContain("The Capture was ambiguous");
     expect(textContent(renderer)).toContain("Maybe book a trip");
-    expect(renderer.root.findAllByProps({ accessibilityLabel: "Edit Title" })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Edit Task" })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ accessibilityLabel: "Complete task" })).toHaveLength(0);
     renderer.unmount();
   });
@@ -801,6 +853,10 @@ async function renderScreen(onBack: () => void, props: Partial<React.ComponentPr
   let renderer!: ReactTestRenderer;
   await act(async () => { renderer = create(<ReviewScreen apiBaseUrl="http://api.test" memberId="member-1" detailUrl="/captures/capture-1/review" onBack={onBack} {...props} />); });
   return renderer;
+}
+
+async function enterEditMode(renderer: ReactTestRenderer, kind: "task" | "note" = "task"): Promise<void> {
+  await act(async () => { renderer.root.findByProps({ accessibilityLabel: `Edit ${kind === "task" ? "Task" : "Note"}` }).props.onPress(); });
 }
 
 function reviewWith(outcome: object | null, overrides: object = {}) {

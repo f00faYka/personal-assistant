@@ -6,7 +6,18 @@ vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 vi.mock("react-native", async () => {
   const React = await import("react");
   const host = (name: string) => (props: { readonly children?: React.ReactNode; readonly [key: string]: unknown }) => React.createElement(name, props, props.children);
-  return { Dimensions: { get: () => ({ width: 1024 }) }, Modal: (props: { readonly visible: boolean; readonly children?: React.ReactNode }) => props.visible ? React.createElement("Modal", props, props.children) : null, PanResponder: { create: (handlers: object) => ({ panHandlers: handlers }) }, Pressable: host("Pressable"), StyleSheet: { create: <T,>(styles: T): T => styles }, Text: host("Text"), View: host("View") };
+  class AnimatedValue {
+    constructor(private value: number) {}
+    setValue(value: number) { this.value = value; }
+    interpolate() { return this.value; }
+  }
+  const Animated = {
+    Value: AnimatedValue,
+    View: host("AnimatedView"),
+    timing: () => ({ start: (callback?: (result: { readonly finished: boolean }) => void) => callback?.({ finished: true }), stop: vi.fn() }),
+  };
+  const easing = (value: unknown) => value;
+  return { Animated, Dimensions: { get: () => ({ width: 1024 }) }, Easing: { cubic: easing, out: easing }, Modal: (props: { readonly visible: boolean; readonly children?: React.ReactNode }) => props.visible ? React.createElement("Modal", props, props.children) : null, PanResponder: { create: (handlers: object) => ({ panHandlers: handlers }) }, Pressable: host("Pressable"), StyleSheet: { create: <T,>(styles: T): T => styles }, Text: host("Text"), View: host("View") };
 });
 
 import { NoteCard, TaskCard } from "../web/TaskNoteCardPrototype";

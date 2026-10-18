@@ -77,7 +77,7 @@ describe("App review navigation", () => {
     expect(renderer.root.findAllByType(Pressable).filter((node) => node.props.accessibilityLabel === "Task: Call the dentist")).toHaveLength(1);
     expect(renderer.root.findAllByType(Pressable).filter((node) => node.props.accessibilityLabel === "Note: Call the dentist")).toHaveLength(0);
     await act(async () => { findButton(renderer, "Task: Call the dentist").props.onPress(); });
-    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Title" })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Task" })).toBeDefined();
     expect(renderer.root.findAllByProps({ accessibilityLabel: "Edit Note" })).toHaveLength(0);
     renderer.unmount();
   });

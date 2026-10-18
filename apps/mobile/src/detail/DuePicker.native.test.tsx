@@ -33,9 +33,9 @@ test("fits the entire native calendar into a narrow detail card", () => {
 test("native date selection preserves the separate time and ignores dismissal", () => {
   const { renderer, onDateChange, onTimeChange } = renderPicker();
   const picker = renderer.root.findByType(DateTimePicker);
-  act(() => { picker.props.onChange({ type: "dismissed" }, new Date("2026-10-25T09:00:00")); });
+  act(() => { picker.props.onDismiss(); });
   expect(onDateChange).not.toHaveBeenCalled();
-  act(() => { picker.props.onChange({ type: "set" }, new Date("2026-10-25T09:00:00")); });
+  act(() => { picker.props.onValueChange({ type: "set" }, new Date("2026-10-25T09:00:00")); });
   expect(onDateChange).toHaveBeenCalledWith("2026-10-25");
   expect(onTimeChange).not.toHaveBeenCalled();
 });

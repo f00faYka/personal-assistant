@@ -8,10 +8,23 @@ vi.mock("react-native", async () => {
   type HostProps = { readonly children?: React.ReactNode; readonly refreshControl?: React.ReactNode; readonly ListFooterComponent?: React.ReactNode; readonly [key: string]: unknown };
   const host = (name: string) => function Host(props: HostProps) { return React.createElement(name, props, props.children); };
   const FlatList = (props: HostProps & { readonly data?: readonly unknown[]; readonly renderItem?: (info: { readonly item: unknown; readonly index: number }) => React.ReactNode }) => React.createElement("FlatList", props, props.refreshControl, React.Children.toArray(props.data?.map((item, index) => props.renderItem?.({ item, index }))), props.ListFooterComponent);
+  class AnimatedValue {
+    constructor(private value: number) {}
+    setValue(value: number) { this.value = value; }
+    interpolate() { return this.value; }
+  }
+  const Animated = {
+    Value: AnimatedValue,
+    View: host("AnimatedView"),
+    timing: () => ({ start: (callback?: (result: { readonly finished: boolean }) => void) => callback?.({ finished: true }), stop: vi.fn() }),
+  };
+  const easing = (value: unknown) => value;
   return {
+    Animated,
     AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
     ActivityIndicator: host("ActivityIndicator"),
     Dimensions: { get: vi.fn(() => ({ width: 390, height: 844 })) },
+    Easing: { cubic: easing, out: easing },
     FlatList,
     Modal: host("Modal"),
     PanResponder: { create: () => ({ panHandlers: {} }) },

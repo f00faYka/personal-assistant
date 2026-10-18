@@ -40,7 +40,7 @@ describe("TaskNoteDetailScreen", () => {
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Note" }).props.onPress(); });
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Note" }).props.onChangeText("Changed Note"); });
     expect(JSON.stringify(renderer.toJSON())).toContain("Changed Note");
-    act(() => { renderer.root.findByProps({ accessibilityLabel: "Cancel Note editing" }).props.onPress(); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Cancel editing" }).props.onPress(); });
     expect(onSave).not.toHaveBeenCalled();
     expect(JSON.stringify(renderer.toJSON())).toContain("Call the dentist");
     expect(JSON.stringify(renderer.toJSON())).not.toContain("Changed Note");
@@ -50,26 +50,27 @@ describe("TaskNoteDetailScreen", () => {
     const onSave = vi.fn();
     let renderer!: ReturnType<typeof create>;
     act(() => { renderer = create(<TaskNoteDetailScreen item={task} onBack={vi.fn()} onSave={onSave} />); });
-    act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Title" }).props.onPress(); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Task" }).props.onPress(); });
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Title" }).props.onChangeText("Buy oat milk"); });
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Choose due time" }).props.onPress(); });
     act(() => { renderer.root.findByProps({ "aria-label": "Due time" }).props.onChange({ currentTarget: { value: "13:00" } }); });
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Choose due time" }).props.onPress(); });
 
-    act(() => { renderer.root.findByProps({ accessibilityLabel: "Cancel Task editing" }).props.onPress(); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Cancel editing" }).props.onPress(); });
 
     expect(onSave).not.toHaveBeenCalled();
     expect(JSON.stringify(renderer.toJSON())).toContain("Buy milk");
     expect(JSON.stringify(renderer.toJSON())).not.toContain("Buy oat milk");
     expect(JSON.stringify(renderer.toJSON())).toContain(new Date("2026-09-15T09:30:00.000Z").toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }));
     expect(JSON.stringify(renderer.toJSON())).not.toContain("13:00");
-    expect(renderer.root.findByProps({ accessibilityLabel: "Save" }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Task" })).toBeDefined();
   });
 
   test("clearing due information applies immediately", () => {
     let renderer!: ReturnType<typeof create>;
     act(() => { renderer = create(<TaskNoteDetailScreen item={task} onBack={vi.fn()} onSave={vi.fn()} />); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Task" }).props.onPress(); });
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Clear due information" }).props.onPress(); });
     expect(renderer.root.findByProps({ accessibilityLabel: "Save" }).props.disabled).toBe(false);
@@ -80,6 +81,7 @@ describe("TaskNoteDetailScreen", () => {
     const onSave = vi.fn();
     let renderer!: ReturnType<typeof create>;
     act(() => { renderer = create(<TaskNoteDetailScreen item={task} onBack={vi.fn()} onSave={onSave} />); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Task" }).props.onPress(); });
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Choose due time" }).props.onPress(); });
     act(() => { renderer.root.findByProps({ "aria-label": "Due time" }).props.onChange({ currentTarget: { value: "13:00" } }); });
@@ -91,6 +93,7 @@ describe("TaskNoteDetailScreen", () => {
     const onSave = vi.fn();
     let renderer!: ReturnType<typeof create>;
     act(() => { renderer = create(<TaskNoteDetailScreen item={{ ...task, dueAt: "2026-09-15T09:30:45.123Z" }} onBack={vi.fn()} onSave={onSave} />); });
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Task" }).props.onPress(); });
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Due information" }).props.onPress(); });
     act(() => { renderer.root.findByProps({ "aria-label": "Due date" }).props.onChange({ currentTarget: { value: "2026-09-15" } }); });
     act(() => { renderer.root.findByProps({ accessibilityLabel: "Choose due date" }).props.onPress(); });

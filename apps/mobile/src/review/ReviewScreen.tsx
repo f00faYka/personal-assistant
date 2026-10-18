@@ -571,9 +571,13 @@ function detailItem(review: ReviewContract, metadata?: TaskNoteDetailMetadata): 
   const space = metadata?.selectedSpaceId === null ? "No Space" : metadata?.spaces.find((candidate) => candidate.id === metadata.selectedSpaceId)?.label ?? "No Space";
   const tags = metadata?.tags.filter((tag) => tag.selected).map((tag) => `#${tag.label}`) ?? [];
   const interpretation = review.interpretation?.classification?.replaceAll("_", " ") ?? "Saved result";
+  const sourceDetails = review.source.content?.kind === "audio"
+    ? `Audio source · ${review.source.content.contentType} · ${review.source.content.byteLength.toLocaleString()} bytes · SHA-256 ${review.source.content.sha256}`
+    : undefined;
   const transcription = review.transcription?.text ? { text: review.transcription.text, ...(review.transcription.language ? { language: review.transcription.language } : {}) } : undefined;
-  if (outcome.kind === "task") return { kind: "task", id: outcome.id, title: outcome.title, status: outcome.status, dueAt: outcome.dueAt ?? null, space, tags, source: `Capture ${review.capture.id} · source ${review.source.id}`, interpretation, ...(transcription ? { transcription } : {}) };
-  return { kind: "note", id: outcome.id, content: outcome.content, reviewState: outcome.reviewState === "needs_review" ? "needs_review" : "saved", space, tags, source: `Capture ${review.capture.id} · source ${review.source.id}`, interpretation, ...(transcription ? { transcription } : {}) };
+  const provenance = { source: `Capture ${review.capture.id} · source ${review.source.id}`, ...(sourceDetails ? { sourceDetails } : {}), ...(review.correction ? { correction: review.correction.text } : {}), interpretation, ...(transcription ? { transcription } : {}) };
+  if (outcome.kind === "task") return { kind: "task", id: outcome.id, title: outcome.title, status: outcome.status, dueAt: outcome.dueAt ?? null, space, tags, ...provenance };
+  return { kind: "note", id: outcome.id, content: outcome.content, reviewState: outcome.reviewState === "needs_review" ? "needs_review" : "saved", space, tags, ...provenance };
 }
 
 function isValidIsoDate(value: string): boolean {
