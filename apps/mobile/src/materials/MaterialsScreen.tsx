@@ -6,6 +6,7 @@ import { localDateKey } from "../day/selected-day";
 import { tokens } from "../design-system";
 import { createMemberItemsClient, type MemberItemsClient, type SearchFilters } from "../list/member-items";
 import { createMetadataClient, type Entity, type MetadataClient, type Tag } from "../review/metadata";
+import { createReviewClient, setTaskCompletion } from "../review/review";
 import { createSpacesClient, type Space, type SpacesClient } from "../spaces/spaces";
 import { NoteCard, TaskCard } from "../web/TaskNoteCardPrototype";
 import { appendUniqueMaterials, childSpaces, directItems, findSpace, loadMaterialsPage, spacePath, type MaterialItem } from "./materials";
@@ -18,6 +19,7 @@ interface MaterialsScreenProps {
   readonly spacesClient?: Pick<SpacesClient, "list">;
   readonly metadataClient?: Pick<MetadataClient, "listTags" | "listEntities">;
   readonly onOpenDetail?: (detailUrl: string) => void;
+  readonly onEditDetail?: (detailUrl: string) => void;
   /** The parent keeps this screen mounted while rendering the existing detail surface. */
   readonly detailUrl?: string | null;
   readonly detail?: ReactNode;
@@ -34,12 +36,15 @@ type FilterOptionsState =
   | { readonly status: "ready"; readonly spaces: readonly Space[]; readonly tags: readonly Tag[]; readonly entities: readonly Entity[] }
   | { readonly status: "error"; readonly message: string };
 
-export function MaterialsScreen({ apiBaseUrl, memberId, timeZone, client: providedClient, spacesClient: providedSpacesClient, metadataClient: providedMetadataClient, onOpenDetail, detailUrl = null, detail }: MaterialsScreenProps) {
+export function MaterialsScreen({ apiBaseUrl, memberId, timeZone, client: providedClient, spacesClient: providedSpacesClient, metadataClient: providedMetadataClient, onOpenDetail, onEditDetail, detailUrl = null, detail }: MaterialsScreenProps) {
   const client = useMemo(() => providedClient ?? createMemberItemsClient(apiBaseUrl), [apiBaseUrl, providedClient]);
   const spacesClient = useMemo(() => providedSpacesClient ?? createSpacesClient(apiBaseUrl), [apiBaseUrl, providedSpacesClient]);
   const metadataClient = useMemo(() => providedMetadataClient ?? createMetadataClient(apiBaseUrl), [apiBaseUrl, providedMetadataClient]);
+  const reviewClient = useMemo(() => createReviewClient(apiBaseUrl), [apiBaseUrl]);
   const [mode, setMode] = useState<MaterialsMode>("all");
   const [items, setItems] = useState<readonly MaterialItem[]>([]);
+  const [taskSaveStates, setTaskSaveStates] = useState<Record<string, "pending" | "error">>({});
+  const [taskSaveError, setTaskSaveError] = useState<string | null>(null);
   const [spaces, setSpaces] = useState<readonly Space[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +57,21 @@ export function MaterialsScreen({ apiBaseUrl, memberId, timeZone, client: provid
   const [filters, setFilters] = useState<SearchFilters>({});
   const [filterOptions, setFilterOptions] = useState<FilterOptionsState>({ status: "idle" });
   const requestGeneration = useRef(0);
+
+  const changeTaskStatus = useCallback(async (item: Extract<MaterialItem, { kind: "task" }>, completed: boolean): Promise<boolean> => {
+    setTaskSaveStates((current) => ({ ...current, [item.id]: "pending" }));
+    setTaskSaveError(null);
+    try {
+      const saved = await setTaskCompletion(reviewClient, item.detailUrl, memberId, completed);
+      setItems((current) => current.map((candidate) => candidate.id === item.id && candidate.kind === "task" ? { ...candidate, state: saved.status } : candidate));
+      setTaskSaveStates((current) => { const next = { ...current }; delete next[item.id]; return next; });
+      return true;
+    } catch (cause) {
+      setTaskSaveStates((current) => ({ ...current, [item.id]: "error" }));
+      setTaskSaveError(cause instanceof Error ? cause.message : "Unable to update Task status");
+      return false;
+    }
+  }, [memberId, reviewClient]);
 
   const load = useCallback(async (nextFilters: SearchFilters, isRefresh = false, retryCursor?: string, retainedItems: readonly MaterialItem[] = []) => {
     const generation = ++requestGeneration.current;
@@ -179,8 +199,9 @@ export function MaterialsScreen({ apiBaseUrl, memberId, timeZone, client: provid
       {loadState === "error" && items.length === 0 ? <StateMessage title="Couldn’t load Materials" detail={error ?? "Try again."} onRetry={() => void load(filters)} /> : null}
       {loadState === "pagination_error" ? <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>Couldn’t load more Materials: {paginationError?.message}</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry loading more Materials" onPress={retryPagination}><Text style={styles.retryText}>Retry</Text></Pressable></View> : null}
       {error && items.length > 0 ? <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry loading Materials" onPress={() => void load(filters)}><Text style={styles.retryText}>Retry</Text></Pressable></View> : null}
+      {taskSaveError ? <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{taskSaveError}</Text></View> : null}
       {loadState === "ready" && visibleItems.length === 0 ? <StateMessage title={filterCount(filters) > 0 ? "No matching materials" : mode === "spaces" && selectedSpaceId !== null ? "No direct materials here" : "Nothing here yet"} detail={filterCount(filters) > 0 ? "Try a different search or clear the filters." : "Your Tasks and Notes will appear here."} /> : null}
-      {mode === "all" ? <AllMaterials items={visibleItems} spaces={spaces} timeZone={timeZone} today={today} onOpenDetail={onOpenDetail} /> : <SpaceMaterials items={visibleItems} spaces={spaces} selectedSpaceId={selectedSpaceId} onSelectSpace={setSelectedSpaceId} timeZone={timeZone} today={today} onOpenDetail={onOpenDetail} />}
+      {mode === "all" ? <AllMaterials items={visibleItems} spaces={spaces} timeZone={timeZone} today={today} onOpenDetail={onOpenDetail} onEditDetail={onEditDetail} onSetTaskCompleted={changeTaskStatus} taskSaveStates={taskSaveStates} /> : <SpaceMaterials items={visibleItems} spaces={spaces} selectedSpaceId={selectedSpaceId} onSelectSpace={setSelectedSpaceId} timeZone={timeZone} today={today} onOpenDetail={onOpenDetail} onEditDetail={onEditDetail} onSetTaskCompleted={changeTaskStatus} taskSaveStates={taskSaveStates} />}
       </ScrollView>
     </View>
     {detailUrl !== null && detail ? <View style={styles.detailSurface}>{detail}</View> : null}
@@ -191,11 +212,11 @@ function ModeTab({ active, label, hint, onPress }: { readonly active: boolean; r
   return <Pressable accessibilityRole="tab" accessibilityLabel={`View ${label}`} accessibilityState={{ selected: active }} onPress={onPress} style={[styles.modeTab, active && styles.modeTabActive]}><Text style={[styles.modeTabLabel, active && styles.modeTabLabelActive]}>{label}</Text><Text style={[styles.modeTabHint, active && styles.modeTabHintActive]}>{hint}</Text></Pressable>;
 }
 
-function AllMaterials({ items, spaces, timeZone, today, onOpenDetail }: { readonly items: readonly MaterialItem[]; readonly spaces: readonly Space[]; readonly timeZone: string; readonly today: string; readonly onOpenDetail: ((detailUrl: string) => void) | undefined }) {
-  return <View><View style={styles.summary}><Text style={styles.summaryCount}>{items.length} materials</Text><Text style={styles.summaryHint}>Flat · no grouping</Text></View>{items.map((item) => <MaterialCard key={`${item.kind}:${item.id}`} item={item} spaces={spaces} timeZone={timeZone} today={today} onOpenDetail={onOpenDetail} />)}</View>;
+function AllMaterials({ items, spaces, timeZone, today, onOpenDetail, onEditDetail, onSetTaskCompleted, taskSaveStates }: { readonly items: readonly MaterialItem[]; readonly spaces: readonly Space[]; readonly timeZone: string; readonly today: string; readonly onOpenDetail: ((detailUrl: string) => void) | undefined; readonly onEditDetail: ((detailUrl: string) => void) | undefined; readonly onSetTaskCompleted: (item: Extract<MaterialItem, { kind: "task" }>, completed: boolean) => Promise<boolean>; readonly taskSaveStates: Readonly<Record<string, "pending" | "error">> }) {
+  return <View><View style={styles.summary}><Text style={styles.summaryCount}>{items.length} materials</Text><Text style={styles.summaryHint}>Flat · no grouping</Text></View>{items.map((item) => <MaterialCard key={`${item.kind}:${item.id}`} item={item} spaces={spaces} timeZone={timeZone} today={today} onOpenDetail={onOpenDetail} onEditDetail={onEditDetail} onSetTaskCompleted={onSetTaskCompleted} saveState={item.kind === "task" ? taskSaveStates[item.id] ?? "saved" : "saved"} />)}</View>;
 }
 
-function SpaceMaterials({ items, spaces, selectedSpaceId, onSelectSpace, timeZone, today, onOpenDetail }: { readonly items: readonly MaterialItem[]; readonly spaces: readonly Space[]; readonly selectedSpaceId: string | null; readonly onSelectSpace: (spaceId: string | null) => void; readonly timeZone: string; readonly today: string; readonly onOpenDetail: ((detailUrl: string) => void) | undefined }) {
+function SpaceMaterials({ items, spaces, selectedSpaceId, onSelectSpace, timeZone, today, onOpenDetail, onEditDetail, onSetTaskCompleted, taskSaveStates }: { readonly items: readonly MaterialItem[]; readonly spaces: readonly Space[]; readonly selectedSpaceId: string | null; readonly onSelectSpace: (spaceId: string | null) => void; readonly timeZone: string; readonly today: string; readonly onOpenDetail: ((detailUrl: string) => void) | undefined; readonly onEditDetail: ((detailUrl: string) => void) | undefined; readonly onSetTaskCompleted: (item: Extract<MaterialItem, { kind: "task" }>, completed: boolean) => Promise<boolean>; readonly taskSaveStates: Readonly<Record<string, "pending" | "error">> }) {
   const current = findSpace(spaces, selectedSpaceId);
   const children = childSpaces(spaces, selectedSpaceId);
   const direct = directItems(items, selectedSpaceId);
@@ -206,15 +227,15 @@ function SpaceMaterials({ items, spaces, selectedSpaceId, onSelectSpace, timeZon
     {selectedSpaceId === null ? <Text style={styles.sectionHint}>Unassigned materials are shown here. Open a child Space to browse its direct items.</Text> : null}
     {children.map((space) => <Pressable key={space.id} accessibilityRole="button" accessibilityLabel={`Open Space ${spacePath(spaces, space.id)}`} onPress={() => onSelectSpace(space.id)} style={styles.spaceRow}><View style={styles.spaceGlyph}><Text>◌</Text></View><View style={styles.spaceRowCopy}><Text style={styles.spaceName}>{space.name}</Text><Text style={styles.spacePath}>{spacePath(spaces, space.id)}</Text></View><Text style={styles.spaceChevron}>›</Text></Pressable>)}
     {children.length > 0 ? <Text style={styles.sectionTitle}>{current ? "Direct materials" : "Unassigned"}</Text> : null}
-    {direct.map((item) => <MaterialCard key={`${item.kind}:${item.id}`} item={item} spaces={spaces} timeZone={timeZone} today={today} onOpenDetail={onOpenDetail} />)}
+    {direct.map((item) => <MaterialCard key={`${item.kind}:${item.id}`} item={item} spaces={spaces} timeZone={timeZone} today={today} onOpenDetail={onOpenDetail} onEditDetail={onEditDetail} onSetTaskCompleted={onSetTaskCompleted} saveState={item.kind === "task" ? taskSaveStates[item.id] ?? "saved" : "saved"} />)}
   </View>;
 }
 
-function MaterialCard({ item, spaces, timeZone, today, onOpenDetail }: { readonly item: MaterialItem; readonly spaces: readonly Space[]; readonly timeZone: string; readonly today: string; readonly onOpenDetail: ((detailUrl: string) => void) | undefined }) {
+function MaterialCard({ item, spaces, timeZone, today, onOpenDetail, onEditDetail, onSetTaskCompleted, saveState }: { readonly item: MaterialItem; readonly spaces: readonly Space[]; readonly timeZone: string; readonly today: string; readonly onOpenDetail: ((detailUrl: string) => void) | undefined; readonly onEditDetail: ((detailUrl: string) => void) | undefined; readonly onSetTaskCompleted: (item: Extract<MaterialItem, { kind: "task" }>, completed: boolean) => Promise<boolean>; readonly saveState: "saved" | "pending" | "error" }) {
   const onPress = () => onOpenDetail?.(item.detailUrl);
   const path = spacePath(spaces, item.spaceId);
-  if (item.kind === "task") return <TaskCard task={{ id: item.id, title: item.title, ...(item.dueAt ? { dueAt: item.dueAt } : {}), status: item.state, space: path }} timeZone={timeZone} today={today} onPress={onPress} />;
-  return <NoteCard note={{ id: item.id, content: item.content, reviewState: item.state, space: path }} onPress={onPress} />;
+  if (item.kind === "task") return <TaskCard task={{ id: item.id, title: item.title, ...(item.dueAt ? { dueAt: item.dueAt } : {}), status: item.state, space: path }} timeZone={timeZone} today={today} saveState={saveState} onRetry={() => void onSetTaskCompleted(item, item.state !== "completed")} onSetCompleted={(completed) => onSetTaskCompleted(item, completed)} onPress={onPress} onEdit={() => onEditDetail?.(item.detailUrl)} />;
+  return <NoteCard note={{ id: item.id, content: item.content, reviewState: item.state, space: path }} onPress={onPress} onEdit={() => onEditDetail?.(item.detailUrl)} />;
 }
 
 function SearchPanel({ open, filterMenu, text, filters, options, onOpen, onTextChange, onApplyText, onSelectFilter, onClearQuery, onClearFilters, onToggleFilterMenu, onRetry }: { readonly open: boolean; readonly filterMenu: FilterMenu | null; readonly text: string; readonly filters: SearchFilters; readonly options: FilterOptionsState; readonly onOpen: () => void; readonly onTextChange: (value: string) => void; readonly onApplyText: () => void; readonly onSelectFilter: (menu: FilterMenu, value: string) => void; readonly onClearQuery: () => void; readonly onClearFilters: () => void; readonly onToggleFilterMenu: (menu: FilterMenu) => void; readonly onRetry: () => void }) {

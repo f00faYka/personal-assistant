@@ -1,4 +1,5 @@
 import { responseError } from "../http/request-error";
+import { createIdempotencyKey } from "../capture/voice-capture";
 
 export type ReviewOutcome =
   | { readonly kind: "task"; readonly id: string; readonly title: string; readonly dueAt?: string; readonly status: "open" | "completed"; readonly version: number }
@@ -53,6 +54,10 @@ export function createReviewClient(apiBaseUrl: string): ReviewClient {
       const response = await fetch(url(apiBaseUrl, `/tasks/${taskId}/complete`), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ memberId, expectedVersion }) });
       return readResponse<{ task: ReviewOutcome }>(response).then((body) => body.task);
     },
+    async reopenTask(taskId, memberId, expectedVersion) {
+      const response = await fetch(url(apiBaseUrl, `/tasks/${taskId}/reopen`), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ memberId, expectedVersion, operationId: createIdempotencyKey() }) });
+      return readResponse<{ task: Extract<ReviewOutcome, { readonly kind: "task" }> }>(response).then((body) => body.task);
+    },
     async updateNote(noteId, memberId, expectedVersion, content) {
       const response = await fetch(url(apiBaseUrl, `/notes/${noteId}`), { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ memberId, expectedVersion, content }) });
       return readResponse<{ note: ReviewOutcome }>(response).then((body) => body.note);
@@ -62,6 +67,17 @@ export function createReviewClient(apiBaseUrl: string): ReviewClient {
       return readResponse<{ task: Extract<ReviewOutcome, { readonly kind: "task" }> }>(response).then((body) => body.task);
     },
   };
+}
+
+export async function setTaskCompletion(client: ReviewClient, detailUrl: string, memberId: string, completed: boolean): Promise<Extract<ReviewOutcome, { readonly kind: "task" }>> {
+  const review = await client.get(detailUrl);
+  if (review.outcome?.kind !== "task") throw new Error("Review does not contain a Task");
+  if ((review.outcome.status === "completed") === completed) return review.outcome;
+  const result = completed
+    ? await client.completeTask(review.outcome.id, memberId, review.outcome.version)
+    : await client.reopenTask?.(review.outcome.id, memberId, review.outcome.version);
+  if (!result || result.kind !== "task") throw new Error("Task status change is not available");
+  return result;
 }
 
 export function createReviewFixtureClient(kind: "task" | "note", initialOutcome?: ReviewOutcome): ReviewClient {
