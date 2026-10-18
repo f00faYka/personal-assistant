@@ -50,7 +50,6 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
   readonly status?: ReactNode;
 }) {
   const [dragX, setDragX] = useState(0);
-  const [swipedAway, setSwipedAway] = useState(false);
   const swipeDx = useRef(0);
   const [menu, setMenu] = useState(false);
   const [actionsMounted, setActionsMounted] = useState(false);
@@ -80,8 +79,7 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
     onPanResponderRelease: async (_, gesture) => {
       const dx = swipeDx.current || gesture.dx;
       if (dx < -120) {
-        const saved = await onComplete?.();
-        if (saved !== false) setSwipedAway(true);
+        await onComplete?.();
       }
       swipeDx.current = 0;
       setDragX(0);
@@ -94,7 +92,7 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
     <View style={styles.clip}>
       <View
         {...swipe.panHandlers}
-        style={[styles.card, note && styles.note, onComplete && { transform: [{ translateX: swipedAway ? -Dimensions.get("window").width : dragX }] }]}
+        style={[styles.card, note && styles.note, onComplete && { transform: [{ translateX: dragX }] }]}
       >
         <Pressable accessibilityRole="button" accessibilityLabel={`Open ${kind} ${title}`} onPressIn={() => { suppressPress.current = false; }}
           onPress={() => { if (!suppressPress.current) onPress(); }}
@@ -118,7 +116,7 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
         >
           <View style={styles.taskActions}>
             {kind === "Task" && onComplete ? <TaskMenuAction icon="✓" label="Complete" accessibilityLabel={`Mark complete ${title}`} accessibilityHint="Marks this Task complete" onPress={complete} /> : null}
-            {kind === "Task" && onSetCompleted ? <TaskMenuAction icon="↶" label="Reopen" accessibilityLabel={`Mark incomplete ${title}`} accessibilityHint="Reopens this Task" onPress={reopen} /> : null}
+            {kind === "Task" && completed && onSetCompleted ? <TaskMenuAction icon="↶" label="Reopen" accessibilityLabel={`Mark incomplete ${title}`} accessibilityHint="Reopens this Task" onPress={reopen} /> : null}
             <TaskMenuAction icon="↗" label="View" accessibilityLabel={`View ${kind.toLowerCase()} ${title}`} accessibilityHint={`Opens ${kind.toLowerCase()} details`} onPress={() => { setMenu(false); onPress(); }} />
             {onEdit ? <TaskMenuAction icon="✎" label="Edit" accessibilityLabel={`Edit ${kind.toLowerCase()} ${title}`} accessibilityHint={`Opens ${kind.toLowerCase()} details in edit mode`} onPress={() => { setMenu(false); onEdit(); }} /> : null}
           </View>
