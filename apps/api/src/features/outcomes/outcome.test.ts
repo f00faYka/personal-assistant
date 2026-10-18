@@ -11,7 +11,10 @@ import {
   type Outcome,
   type OutcomeRepository,
   type TaskChanges,
+  type TaskMutationRequest,
+  type TaskMutationResult,
   type TaskOutcome,
+  type TaskStatusTransition,
   type NoteChanges,
   type NoteOutcome,
 } from "./outcome.js";
@@ -293,6 +296,8 @@ function interpretation(overrides: {
 
 class MemoryRepository implements OutcomeRepository {
   readonly values: Outcome[] = [];
+  readonly taskOperations = new Map<string, { request: string; task: TaskOutcome }>();
+  readonly taskTransitions: TaskStatusTransition[] = [];
 
   findByInterpretationId(interpretationId: string): Outcome | undefined {
     return this.values.find((value) => value.interpretationId === interpretationId);
@@ -360,5 +365,42 @@ class MemoryRepository implements OutcomeRepository {
     };
     this.values[index] = task;
     return task;
+  }
+
+  mutateTask(request: TaskMutationRequest): TaskMutationResult {
+    const index = this.values.findIndex((value) => value.id === request.taskId && value.kind === "task" && value.memberId === request.memberId);
+    if (index < 0) return { kind: "not_found" };
+    const task = this.values[index];
+    if (!task || task.kind !== "task") return { kind: "not_found" };
+    const key = `${request.memberId}:${request.taskId}:${request.operationId}`;
+    const serialized = JSON.stringify({ expectedVersion: request.expectedVersion, mutation: request.mutation });
+    const previous = this.taskOperations.get(key);
+    if (previous) return previous.request === serialized ? { kind: "applied", task: previous.task } : { kind: "operation_mismatch" };
+    if (task.version !== request.expectedVersion) return { kind: "version_conflict", task };
+
+    let updated = task;
+    if (request.mutation.kind === "edit") {
+      const { dueAt: oldDueAt, ...withoutDueAt } = task;
+      updated = {
+        ...withoutDueAt,
+        ...(request.mutation.changes.dueAt === undefined && oldDueAt !== undefined ? { dueAt: oldDueAt } : {}),
+        ...(request.mutation.changes.dueAt !== undefined && request.mutation.changes.dueAt !== null ? { dueAt: request.mutation.changes.dueAt } : {}),
+        ...(request.mutation.changes.title === undefined ? {} : { title: request.mutation.changes.title }),
+        version: task.version + 1,
+      };
+    } else {
+      const to = request.mutation.kind === "complete" ? "completed" : "open";
+      if (task.status !== to) {
+        updated = { ...task, status: to, version: task.version + 1 };
+        this.taskTransitions.push({ taskId: task.id, memberId: task.memberId, actorMemberId: request.memberId, from: task.status, to, operationId: request.operationId, resultingVersion: updated.version, occurredAt: request.occurredAt });
+      }
+    }
+    this.values[index] = updated;
+    this.taskOperations.set(key, { request: serialized, task: updated });
+    return { kind: "applied", task: updated };
+  }
+
+  listTaskStatusHistory(taskId: string, memberId: string): readonly TaskStatusTransition[] {
+    return this.taskTransitions.filter((transition) => transition.taskId === taskId && transition.memberId === memberId);
   }
 }

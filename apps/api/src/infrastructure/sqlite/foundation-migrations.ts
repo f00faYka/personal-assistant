@@ -268,4 +268,34 @@ export const foundationMigrations: readonly Migration[] = [
     name: "persist Offline draft device time zone",
     sql: "ALTER TABLE offline_drafts ADD COLUMN time_zone TEXT NOT NULL DEFAULT 'UTC'",
   },
+  {
+    version: 17,
+    name: "persist Task mutation operations and status history",
+    sql: `
+      CREATE TABLE task_mutation_operations (
+        member_id TEXT NOT NULL,
+        task_id TEXT NOT NULL REFERENCES outcomes(id) ON DELETE CASCADE,
+        operation_id TEXT NOT NULL,
+        operation_type TEXT NOT NULL CHECK (operation_type IN ('edit', 'complete', 'reopen')),
+        request_json TEXT NOT NULL,
+        result_task_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (member_id, task_id, operation_id)
+      ) STRICT;
+      CREATE TABLE task_status_transitions (
+        task_id TEXT NOT NULL REFERENCES outcomes(id) ON DELETE CASCADE,
+        member_id TEXT NOT NULL,
+        actor_member_id TEXT NOT NULL,
+        from_status TEXT NOT NULL CHECK (from_status IN ('open', 'completed')),
+        to_status TEXT NOT NULL CHECK (to_status IN ('open', 'completed')),
+        operation_id TEXT NOT NULL,
+        resulting_version INTEGER NOT NULL CHECK (resulting_version >= 0),
+        occurred_at TEXT NOT NULL,
+        PRIMARY KEY (member_id, task_id, operation_id),
+        CHECK (from_status <> to_status)
+      ) STRICT;
+      CREATE INDEX task_status_transitions_history_index
+        ON task_status_transitions(member_id, task_id, resulting_version)
+    `,
+  },
 ];

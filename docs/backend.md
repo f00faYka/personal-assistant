@@ -127,7 +127,7 @@ Automatic outcomes are separate durable records keyed one-to-one to an Interpret
 
 ### Future Task mutation errors and retention
 
-These rules extend the future Task mutation contract only. They do not change the current MVP endpoints, which do not implement authenticated membership, operation replay, completed-Task edits, Reopen, or status-transition history.
+These rules define errors and retention for the future Task mutation contract. The current MVP requests without an `operationId` still do not implement operation replay, completed-Task edits, Reopen, or status-transition history.
 
 Current route handlers commonly return `{ "error": "<message>" }`, with the HTTP status indicating the error class; the API does not define a central error handler or machine-readable error-code convention. Future Task mutation errors retain that body and add a stable `code`; a stale-version conflict also includes the current Task, as `{ "error": "Task version conflict", "code": "task_version_conflict", "task": <current task> }`. The Task contract uses these responses:
 
@@ -143,6 +143,18 @@ Current route handlers commonly return `{ "error": "<message>" }`, with the HTTP
 Check current authorization before looking up or returning a stored operation result. Errors never mutate the Task, operation result, or status history.
 
 Retain each operation result and append-only status-transition record for as long as its Task data is retained. Do not expire or compact either record by age. Retention ends only when the associated Task data is explicitly deleted under the product's deletion policy; after that deletion, replay is no longer guaranteed. This preserves retries throughout the retained lifetime of the Task without changing the product's explicit-deletion rule.
+
+### Operation-keyed personal Task mutations
+
+Operation-keyed writes opt into the personal Task mutation contract:
+
+- `PATCH /tasks/<task-id>` accepts `memberId`, `expectedVersion`, `operationId`, and at least one supported field (`title` or non-notifying `dueAt`). It can edit an open or completed Task, preserves status and provenance, and increments the version once.
+- `POST /tasks/<task-id>/complete` and `POST /tasks/<task-id>/reopen` accept `memberId`, `expectedVersion`, and `operationId`. Actual status changes increment the version once and append a transition record. A current-version request to complete an already-completed Task or reopen an already-open Task succeeds without a version or history change.
+- Replaying the same operation returns its saved Task result without another mutation. Reusing the same ID for a different request returns `409` with `idempotency_key_mismatch`. A stale version returns `409` with `task_version_conflict` and the current Task.
+- Task changes, the operation result, and any transition record commit in one SQLite transaction. Operation results and transition history are retained with the Task data under the rule above.
+- Requests without `operationId` retain the existing MVP route behavior, including rejecting edits to completed Tasks and offering no Reopen action. These requests do not acquire operation replay or history behavior.
+
+This personal slice follows the current single-member API boundary: `memberId` remains a client-supplied owner selector and is recorded as the acting Member. The API does not authenticate that identity, so this check enforces stored ownership consistency but does not protect against a caller who can forge another `memberId`. Do not treat it as multi-member authorization. Shared Task membership and permissions remain outside this slice.
 
 Notes use the same integer version for optimistic concurrency. `PATCH /notes/<note-id>` accepts `memberId`, `expectedVersion`, and editable `content`; it changes only the Note content and rejects empty content, wrong-member access, and stale versions without changing Capture, Source content, transcription, interpretation, or review state. A review may explicitly save a Note with `POST /captures/<capture-id>/review/note`; this requires a completed transcription and interpretation, creates at most one Note for that interpretation, marks the explicitly saved Note as accepted (`reviewState: "none"`), and returns the existing accepted Note on retry. Saving an existing `Needs review` Note requires matching member and provenance identifiers and resolves that Note to the accepted state. The response retains all provenance identifiers and returns `version: 0` for a new Note.
 
