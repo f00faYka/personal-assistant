@@ -51,12 +51,12 @@ The first release is a staged, single-Member, iOS-focused React Native slice.
 
 ### Stage 1: online audio-to-result
 
-- start an explicit in-app voice Capture from the existing list;
+- start an explicit in-app voice Capture from any screen using the primary-navigation microphone; keep recording, ready, and submission controls in the shared Capture drawer;
 - preserve the original audio, transcription, correction, interpretation, classification, and resulting durable item as separate traceable records;
 - transcribe and interpret automatically using the supported versioned Direct-instruction catalog;
 - create exactly one Task for a clear supported Direct instruction, without a second confirmation;
 - create exactly one Note for ordinary, non-Task, ambiguous, or unsupported content; ambiguous and unsupported results are marked `Needs review` and create no Task;
-- show the accepted result-first preview, with a default 15-second unattended save window; opening detailed review stops the timer and `Save` commits immediately;
+- show the accepted result-first preview in the shared Capture drawer only after a Task or Note exists, with a default 15-second unattended save window; opening detailed review stops the timer and `Save` commits immediately;
 - allow the Member to edit the resulting Task or Note and complete a Task without overwriting source content;
 - preserve the Capture and expose a durable failure or review state when processing fails;
 - allow non-notifying due information on Tasks, but do not deliver scheduled notification Reminders.

@@ -35,9 +35,9 @@ Needs review Notes remain Notes: the list labels them explicitly and opens the d
 
 ## Voice Captures
 
-The list's `Record a Capture` action starts the explicit in-app microphone flow. The client requests microphone permission, records locally with `expo-audio`, and shows recording, ready, submitting, and failed states. `Cancel` or `Discard` removes the unsubmitted recording from the flow; it never creates a server item.
+The primary-navigation microphone opens the shared bottom Capture drawer from any screen. The client requests microphone permission, records locally with `expo-audio`, and shows recording, ready, submitting, and failed states in that drawer. After submission is accepted, the drawer stays open with a processing message, then switches to the Task or Note result when its 15-second timer starts. `Cancel` or `Discard` removes the unsubmitted recording from the flow; it never creates a server item.
 
-Submitting sends one `POST /captures` request with the Member ID, the `.m4a` audio as base64, its content type, capture timestamp, and a stable idempotency key. When local Offline draft storage is unavailable, a failed upload keeps the recording in the submission panel and offers `Retry submission`; it does not display server confirmation or invent a Task/Note. Hands-free, background, and Siri capture remain deferred.
+Submitting sends one `POST /captures` request with the Member ID, the `.m4a` audio as base64, its content type, capture timestamp, and a stable idempotency key. When local Offline draft storage is unavailable, a failed upload keeps the recording in the Capture drawer and offers `Retry submission`; it does not display server confirmation or invent a Task/Note. Hands-free, background, and Siri capture remain deferred.
 
 ## Offline drafts
 

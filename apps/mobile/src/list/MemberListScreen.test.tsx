@@ -40,12 +40,13 @@ vi.mock("react-native", async () => {
 
 vi.mock("react-native-safe-area-context", async () => {
   const React = await import("react");
-  return { SafeAreaView: (props: { readonly children?: React.ReactNode; readonly [key: string]: unknown }) => React.createElement("SafeAreaView", props, props.children) };
+  return { SafeAreaView: (props: { readonly children?: React.ReactNode; readonly [key: string]: unknown }) => React.createElement("SafeAreaView", props, props.children), useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }) };
 });
 
 import { Pressable, RefreshControl, TextInput } from "react-native";
 
 import { MemberListScreen } from "./MemberListScreen";
+import { CaptureResultProvider } from "../preview/CaptureResultController";
 import type { CaptureSubmitter, VoiceRecorder } from "../capture/voice-capture";
 import { ConfirmedRequestError } from "../http/request-error";
 import type { OfflineDraftStore } from "../offline/offline-drafts";
@@ -65,7 +66,7 @@ describe("MemberListScreen", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
 
     let renderer!: ReactTestRenderer;
-    act(() => { renderer = create(<MemberListScreen apiBaseUrl="http://api.test" memberId="member-1" />); });
+    act(() => { renderer = create(createScreenElement()); });
 
     expect(textContent(renderer)).toContain("Loading your items…");
     renderer.unmount();
@@ -102,7 +103,7 @@ describe("MemberListScreen", () => {
     const onOpenDetail = vi.fn();
     let renderer!: ReactTestRenderer;
 
-    await act(async () => { renderer = create(<MemberListScreen apiBaseUrl="http://api.test" memberId="member-1" onOpenDetail={onOpenDetail} />); });
+    await act(async () => { renderer = create(createScreenElement({ onOpenDetail })); });
 
     expect(textContent(renderer)).toEqual(expect.stringContaining("Buy milk"));
     expect(textContent(renderer)).toEqual(expect.stringContaining("Call the dentist"));
@@ -148,7 +149,8 @@ describe("MemberListScreen", () => {
     expect(textContent(renderer)).toContain("TIMER STOPPED");
     expect(textContent(renderer)).toContain("countdown stopped while you reviewed");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save result" }).props.onPress(); });
-    expect(textContent(renderer)).toContain("Saved to your items");
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Capture result drawer" })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Save result" })).toHaveLength(0);
     renderer.unmount();
   });
 
@@ -488,7 +490,7 @@ describe("MemberListScreen", () => {
     const offlineDraftStore = draftStore({ list: vi.fn().mockReturnValue(startupDrafts), save: vi.fn().mockResolvedValue(saved) });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ items: [], nextCursor: null })));
     let renderer!: ReactTestRenderer;
-    act(() => { renderer = create(<MemberListScreen apiBaseUrl="http://api.test" memberId="member-1" voiceRecorder={recorder} captureSubmitter={{ submit: vi.fn().mockRejectedValue(new Error("offline")) }} offlineDraftStore={offlineDraftStore} />); });
+    act(() => { renderer = create(createScreenElement({ voiceRecorder: recorder, captureSubmitter: { submit: vi.fn().mockRejectedValue(new Error("offline")) }, offlineDraftStore })); });
 
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
     await act(async () => { findButton(renderer, "Finish recording").props.onPress(); });
@@ -509,7 +511,7 @@ describe("MemberListScreen", () => {
     const recorder: VoiceRecorder = { requestPermission: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn().mockResolvedValue({ uri: "file:///capture.m4a", contentType: "audio/m4a" }), cancel: vi.fn().mockResolvedValue(undefined) };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ items: [], nextCursor: null })));
     let renderer!: ReactTestRenderer;
-    act(() => { renderer = create(<MemberListScreen apiBaseUrl="http://api.test" memberId="member-1" voiceRecorder={recorder} captureSubmitter={{ submit: vi.fn().mockRejectedValue(new Error("offline")) }} offlineDraftStore={offlineDraftStore} />); });
+    act(() => { renderer = create(createScreenElement({ voiceRecorder: recorder, captureSubmitter: { submit: vi.fn().mockRejectedValue(new Error("offline")) }, offlineDraftStore })); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Record a voice Capture" }).props.onPress(); });
     await act(async () => { findButton(renderer, "Finish recording").props.onPress(); });
     await act(async () => { findButton(renderer, "Submit Capture").props.onPress(); });
@@ -622,8 +624,12 @@ describe("MemberListScreen", () => {
 
 async function renderScreen(props: Partial<React.ComponentProps<typeof MemberListScreen>> = {}): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
-  await act(async () => { renderer = create(<MemberListScreen apiBaseUrl="http://api.test" memberId="member-1" {...props} />); });
+  await act(async () => { renderer = create(createScreenElement(props)); });
   return renderer;
+}
+
+function createScreenElement(props: Partial<React.ComponentProps<typeof MemberListScreen>> = {}) {
+  return <CaptureResultProvider apiBaseUrl="http://api.test" memberId="member-1" timeZone={props.timeZone ?? "UTC"} {...(props.client ? { client: props.client } : {})}><MemberListScreen apiBaseUrl="http://api.test" memberId="member-1" {...props} /></CaptureResultProvider>;
 }
 
 function jsonResponse(body: unknown): Response {
