@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 
-import type { NoteChanges, NoteOutcome, Outcome, OutcomeRepository, TaskChanges, TaskOutcome } from "../../features/outcomes/outcome.js";
+import type { NoteChanges, NoteOutcome, Outcome, OutcomeRepository, TaskChanges, TaskMutationRequest, TaskMutationResult, TaskOutcome, TaskStatusTransition } from "../../features/outcomes/outcome.js";
 
 interface OutcomeRow {
   id: string;
@@ -93,6 +93,102 @@ export class SqliteOutcomeRepository implements OutcomeRepository {
     return outcome?.kind === "task" ? outcome : undefined;
   }
 
+  mutateTask(request: TaskMutationRequest): TaskMutationResult {
+    const mutate = this.database.transaction((): TaskMutationResult => {
+      const row = this.database
+        .prepare<[string, string], OutcomeRow>("SELECT * FROM outcomes WHERE id = ? AND member_id = ? AND kind = 'task'")
+        .get(request.taskId, request.memberId);
+      if (!row) return { kind: "not_found" };
+      const task = toOutcome(row);
+      if (task.kind !== "task") return { kind: "not_found" };
+
+      const requestJson = serializeMutationRequest(request);
+      const previousOperation = this.database
+        .prepare<[string, string, string], { request_json: string; result_task_json: string }>(
+          "SELECT request_json, result_task_json FROM task_mutation_operations WHERE member_id = ? AND task_id = ? AND operation_id = ?",
+        )
+        .get(request.memberId, request.taskId, request.operationId);
+      if (previousOperation) {
+        if (previousOperation.request_json !== requestJson) return { kind: "operation_mismatch" };
+        return { kind: "applied", task: JSON.parse(previousOperation.result_task_json) as TaskOutcome };
+      }
+
+      if (task.version !== request.expectedVersion) return { kind: "version_conflict", task };
+
+      let updated = task;
+      let transition: TaskStatusTransition | undefined;
+      switch (request.mutation.kind) {
+        case "edit": {
+          const changes = request.mutation.changes;
+          const fields: string[] = [];
+          const values: Array<string | number | null> = [];
+          if ("title" in changes) { fields.push("title = ?"); values.push(changes.title ?? null); }
+          if ("dueAt" in changes) { fields.push("due_at = ?"); values.push(changes.dueAt ?? null); }
+          fields.push("version = version + 1");
+          this.database
+            .prepare(`UPDATE outcomes SET ${fields.join(", ")} WHERE id = ? AND member_id = ? AND version = ? AND kind = 'task'`)
+            .run(...values, request.taskId, request.memberId, request.expectedVersion);
+          const editedTask = this.findById(request.taskId);
+          if (!editedTask || editedTask.kind !== "task") throw new Error(`Task disappeared during mutation: ${request.taskId}`);
+          updated = editedTask;
+          break;
+        }
+        case "complete":
+          if (task.status === "open") {
+            updated = this.updateStatus(task, request, "completed");
+            transition = createTransition(task, updated, request);
+          }
+          break;
+        case "reopen":
+          if (task.status === "completed") {
+            updated = this.updateStatus(task, request, "open");
+            transition = createTransition(task, updated, request);
+          }
+          break;
+      }
+
+      if (transition) {
+        this.database.prepare(
+          `INSERT INTO task_status_transitions
+            (task_id, member_id, actor_member_id, from_status, to_status, operation_id, resulting_version, occurred_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(transition.taskId, transition.memberId, transition.actorMemberId, transition.from, transition.to, transition.operationId, transition.resultingVersion, transition.occurredAt);
+      }
+      this.database.prepare(
+        `INSERT INTO task_mutation_operations
+          (member_id, task_id, operation_id, operation_type, request_json, result_task_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(request.memberId, request.taskId, request.operationId, request.mutation.kind, requestJson, JSON.stringify(updated), request.occurredAt);
+      return { kind: "applied", task: updated };
+    });
+    return mutate();
+  }
+
+  listTaskStatusHistory(taskId: string, memberId: string): readonly TaskStatusTransition[] {
+    return this.database.prepare<[string, string], TransitionRow>(
+      `SELECT task_id, member_id, actor_member_id, from_status, to_status, operation_id, resulting_version, occurred_at
+       FROM task_status_transitions WHERE task_id = ? AND member_id = ? ORDER BY resulting_version ASC`,
+    ).all(taskId, memberId).map((row) => ({
+      taskId: row.task_id,
+      memberId: row.member_id,
+      actorMemberId: row.actor_member_id,
+      from: row.from_status,
+      to: row.to_status,
+      operationId: row.operation_id,
+      resultingVersion: row.resulting_version,
+      occurredAt: row.occurred_at,
+    }));
+  }
+
+  private updateStatus(task: TaskOutcome, request: TaskMutationRequest, status: TaskOutcome["status"]): TaskOutcome {
+    this.database.prepare(
+      "UPDATE outcomes SET status = ?, version = version + 1 WHERE id = ? AND member_id = ? AND version = ? AND kind = 'task'",
+    ).run(status, task.id, request.memberId, request.expectedVersion);
+    const updated = this.findById(task.id);
+    if (!updated || updated.kind !== "task") throw new Error(`Task disappeared during mutation: ${task.id}`);
+    return updated;
+  }
+
   updateNote(
     noteId: string,
     memberId: string,
@@ -149,8 +245,47 @@ export class SqliteOutcomeRepository implements OutcomeRepository {
   }
 
   close(): void {
-    this.database.close();
+    if (this.database.open) this.database.close();
   }
+}
+
+interface TransitionRow {
+  task_id: string;
+  member_id: string;
+  actor_member_id: string;
+  from_status: TaskStatusTransition["from"];
+  to_status: TaskStatusTransition["to"];
+  operation_id: string;
+  resulting_version: number;
+  occurred_at: string;
+}
+
+function createTransition(task: TaskOutcome, updated: TaskOutcome, request: TaskMutationRequest): TaskStatusTransition {
+  return {
+    taskId: task.id,
+    memberId: task.memberId,
+    actorMemberId: request.memberId,
+    from: task.status,
+    to: updated.status,
+    operationId: request.operationId,
+    resultingVersion: updated.version,
+    occurredAt: request.occurredAt,
+  };
+}
+
+function serializeMutationRequest(request: TaskMutationRequest): string {
+  if (request.mutation.kind !== "edit") {
+    return JSON.stringify({ kind: request.mutation.kind, expectedVersion: request.expectedVersion });
+  }
+  const { changes } = request.mutation;
+  return JSON.stringify({
+    kind: "edit",
+    expectedVersion: request.expectedVersion,
+    changes: {
+      ...(changes.title === undefined ? {} : { title: changes.title }),
+      ...(changes.dueAt === undefined ? {} : { dueAt: changes.dueAt }),
+    },
+  });
 }
 
 function toOutcome(row: OutcomeRow): Outcome {

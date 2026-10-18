@@ -64,6 +64,39 @@ export interface OutcomeRepository {
     memberId: string,
     expectedVersion: number,
   ): TaskOutcome | undefined;
+  mutateTask(request: TaskMutationRequest): TaskMutationResult;
+  listTaskStatusHistory(taskId: string, memberId: string): readonly TaskStatusTransition[];
+}
+
+export type TaskMutation =
+  | { readonly kind: "edit"; readonly changes: Omit<TaskChanges, "status"> }
+  | { readonly kind: "complete" }
+  | { readonly kind: "reopen" };
+
+export interface TaskMutationRequest {
+  readonly taskId: string;
+  readonly memberId: string;
+  readonly expectedVersion: number;
+  readonly operationId: string;
+  readonly mutation: TaskMutation;
+  readonly occurredAt: string;
+}
+
+export type TaskMutationResult =
+  | { readonly kind: "applied"; readonly task: TaskOutcome }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "operation_mismatch" }
+  | { readonly kind: "version_conflict"; readonly task: TaskOutcome };
+
+export interface TaskStatusTransition {
+  readonly taskId: string;
+  readonly memberId: string;
+  readonly actorMemberId: string;
+  readonly from: TaskStatus;
+  readonly to: TaskStatus;
+  readonly operationId: string;
+  readonly resultingVersion: number;
+  readonly occurredAt: string;
 }
 
 export interface TaskChanges {
@@ -100,9 +133,16 @@ export class InvalidTaskMutationError extends Error {
 }
 
 export class ConcurrentTaskUpdateError extends Error {
-  constructor(taskId: string) {
+  constructor(taskId: string, readonly currentTask?: TaskOutcome) {
     super(`Task was changed by another request: ${taskId}`);
     this.name = "ConcurrentTaskUpdateError";
+  }
+}
+
+export class TaskOperationMismatchError extends Error {
+  constructor(operationId: string) {
+    super(`Task operation ID was already used for a different request: ${operationId}`);
+    this.name = "TaskOperationMismatchError";
   }
 }
 
@@ -140,7 +180,7 @@ export class OutcomeService {
 }
 
 export class TaskService {
-  constructor(private readonly repository: Pick<OutcomeRepository, "findById" | "updateTask">) {}
+  constructor(private readonly repository: Pick<OutcomeRepository, "findById" | "updateTask" | "mutateTask" | "listTaskStatusHistory">) {}
 
   edit(
     taskId: string,
@@ -167,6 +207,41 @@ export class TaskService {
     const updated = this.repository.updateTask(taskId, memberId, expectedVersion, { status: "completed" });
     if (!updated) throw new ConcurrentTaskUpdateError(taskId);
     return updated;
+  }
+
+  editWithOperation(
+    taskId: string,
+    memberId: string,
+    expectedVersion: number,
+    operationId: string,
+    changes: Omit<TaskChanges, "status">,
+  ): TaskOutcome {
+    validateTaskChanges(changes);
+    return this.mutate({ taskId, memberId, expectedVersion, operationId, mutation: { kind: "edit", changes } });
+  }
+
+  completeWithOperation(taskId: string, memberId: string, expectedVersion: number, operationId: string): TaskOutcome {
+    return this.mutate({ taskId, memberId, expectedVersion, operationId, mutation: { kind: "complete" } });
+  }
+
+  reopen(taskId: string, memberId: string, expectedVersion: number, operationId: string): TaskOutcome {
+    return this.mutate({ taskId, memberId, expectedVersion, operationId, mutation: { kind: "reopen" } });
+  }
+
+  listStatusHistory(taskId: string, memberId: string): readonly TaskStatusTransition[] {
+    const task = this.getTask(taskId, memberId);
+    return this.repository.listTaskStatusHistory(task.id, memberId);
+  }
+
+  private mutate(request: Omit<TaskMutationRequest, "occurredAt">): TaskOutcome {
+    if (!request.operationId.trim()) throw new InvalidTaskMutationError("operationId is required");
+    const result = this.repository.mutateTask({ ...request, occurredAt: new Date().toISOString() });
+    switch (result.kind) {
+      case "applied": return result.task;
+      case "not_found": throw new TaskNotFoundError(request.taskId);
+      case "operation_mismatch": throw new TaskOperationMismatchError(request.operationId);
+      case "version_conflict": throw new ConcurrentTaskUpdateError(request.taskId, result.task);
+    }
   }
 
   private getTask(taskId: string, memberId: string): TaskOutcome {
