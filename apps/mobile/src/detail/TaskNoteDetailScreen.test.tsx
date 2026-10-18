@@ -24,6 +24,17 @@ describe("TaskNoteDetailScreen", () => {
     expect(renderer.root.findByProps({ accessibilityLabel: "Convert saved Note to Task" })).toBeDefined();
   });
 
+  test("keeps Tag and Entity controls available outside Task and Note text editing", () => {
+    const tagEntityControls = vi.fn(() => null);
+    let renderer!: ReturnType<typeof create>;
+    act(() => { renderer = create(<TaskNoteDetailScreen item={task} onBack={vi.fn()} onSave={vi.fn()} tagEntityControls={tagEntityControls} />); });
+
+    expect(tagEntityControls).toHaveBeenCalledOnce();
+    expect(tagEntityControls).toHaveBeenCalledWith();
+    act(() => { renderer.root.findByProps({ accessibilityLabel: "Edit Task" }).props.onPress(); });
+    expect(tagEntityControls).toHaveBeenCalledTimes(2);
+  });
+
   test("keeps status action explicit for completed Tasks", () => {
     const onStatus = vi.fn();
     let renderer!: ReturnType<typeof create>;

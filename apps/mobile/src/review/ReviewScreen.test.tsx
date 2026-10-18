@@ -109,12 +109,37 @@ describe("ReviewScreen", () => {
     const renderer = await renderScreen(vi.fn(), { metadataClient });
     await act(async () => { await Promise.resolve(); });
     await enterEditMode(renderer);
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add Tag" }).props.onPress(); });
 
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" }).props.onPress(); });
     expect(metadataClient.linkTag).toHaveBeenCalledWith("task-1", "task", "tag-1", "member-1");
     expect(textContent(renderer)).toContain("urgent");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Remove Tag urgent" }).props.onPress(); });
     expect(metadataClient.unlinkTag).toHaveBeenCalledWith("task-1", "task", "tag-1", "member-1");
+    renderer.unmount();
+  });
+
+  test("shows a compact metadata summary and reveals Tag choices without entering Task edit mode", async () => {
+    const tag = metadataTag("tag-1", "urgent");
+    const unlinkedTag = metadataTag("tag-2", "weekly");
+    const entity = metadataEntity("entity-1", "Alex", "Person");
+    const metadataClient = metadataFixture({ listTags: vi.fn().mockResolvedValue([tag, unlinkedTag]), listEntities: vi.fn().mockResolvedValue([entity]), listLinks: vi.fn().mockResolvedValue({ tags: [tag], entities: [entity] }) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient });
+
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Tag urgent" })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Entity Alex" })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Add Tag" })).toBeTruthy();
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Add existing Tag urgent" })).toHaveLength(0);
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Task" })).toBeTruthy();
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add Tag" }).props.onPress(); });
+    expect(renderer.root.findByProps({ accessibilityLabel: "Add existing Tag weekly" })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Close Tag choices" }).props.accessibilityState.expanded).toBe(true);
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Close Tag choices" }).props.onPress(); });
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Add existing Tag weekly" })).toHaveLength(0);
+    expect(renderer.root.findByProps({ accessibilityLabel: "Add Tag" })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Edit Task" })).toBeTruthy();
     renderer.unmount();
   });
 
@@ -130,8 +155,11 @@ describe("ReviewScreen", () => {
     await enterEditMode(renderer);
 
     expect(renderer.root.findByProps({ accessibilityLabel: "Choose Space" })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Add Tag" })).toBeDefined();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add Tag" }).props.onPress(); });
     expect(renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" })).toBeDefined();
-    expect(textContent(renderer)).toContain("TAGS & ENTITIES");
+    expect(textContent(renderer)).toContain("Tags");
+    expect(textContent(renderer)).toContain("Entities");
     expect(textContent(renderer)).not.toContain("Tags and Entities");
     expect(renderer.root.findAllByProps({ accessibilityLabel: "Assign Space Office" })).toHaveLength(0);
     renderer.unmount();
@@ -146,24 +174,34 @@ describe("ReviewScreen", () => {
     await enterEditMode(renderer, "note");
 
     expect(renderer.root.findByProps({ accessibilityLabel: "Choose Space" })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Add Tag" })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: "Add Entity" })).toBeDefined();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add Tag" }).props.onPress(); });
     expect(renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" })).toBeDefined();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add Entity" }).props.onPress(); });
     expect(renderer.root.findByProps({ accessibilityLabel: "Add existing Entity Alex" })).toBeDefined();
-    expect(textContent(renderer)).toContain("TAGS & ENTITIES");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Close Tag choices" })).toBeDefined();
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Close Tag choices" }).props.onPress(); });
+    expect(renderer.root.findAllByProps({ accessibilityLabel: "Add existing Tag urgent" })).toHaveLength(0);
+    expect(renderer.root.findByProps({ accessibilityLabel: "Add existing Entity Alex" })).toBeDefined();
+    expect(textContent(renderer)).toContain("Tags");
+    expect(textContent(renderer)).toContain("Entities");
     expect(textContent(renderer)).not.toContain("Tags and Entities");
     expect(renderer.root.findAllByProps({ accessibilityLabel: "Assign Space Office" })).toHaveLength(0);
     renderer.unmount();
   });
 
-  test("validates Entity name before creating and supports each allowed type", async () => {
+  test("validates Entity name without exposing its internal type classifier", async () => {
     const metadataClient = metadataFixture();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "none", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
     await enterEditMode(renderer, "note");
-
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Create and add Entity" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add Entity" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "New Entity" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add" }).props.onPress(); });
     expect(textContent(renderer)).toContain("Entity name must not be empty");
     expect(metadataClient.createEntity).not.toHaveBeenCalled();
-    expect(renderer.root.findByProps({ accessibilityLabel: "Entity type Organization" })).toBeTruthy();
+    expect(renderer.root.findAll((node) => node.props.accessibilityLabel?.startsWith("Entity type "))).toHaveLength(0);
     renderer.unmount();
   });
 
@@ -189,14 +227,46 @@ describe("ReviewScreen", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
     await enterEditMode(renderer);
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add Tag" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "New Tag" }).props.onPress(); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "New Tag name" }).props.onChangeText("urgent"); });
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Create and add Tag" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add" }).props.onPress(); });
     expect(textContent(renderer)).toContain("link unavailable");
+    expect(renderer.root.findByProps({ accessibilityLabel: "New Tag name" }).props.value).toBe("urgent");
     expect(renderer.root.findByProps({ accessibilityLabel: "Retry creating and adding Tag urgent" })).toBeTruthy();
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry creating and adding Tag urgent" }).props.onPress(); });
     expect(metadataClient.createTag).toHaveBeenCalledOnce();
     expect(metadataClient.linkTag).toHaveBeenCalledTimes(2);
     expect(textContent(renderer)).toContain("urgent");
+    renderer.unmount();
+  });
+
+  test("keeps the Entity name and current links after a failed create-and-link", async () => {
+    const linkedTag = metadataTag("tag-1", "family");
+    const entity = metadataEntity("entity-new", "Alex", "Object");
+    const metadataClient = metadataFixture({
+      listTags: vi.fn().mockResolvedValue([linkedTag]),
+      listLinks: vi.fn().mockResolvedValue({ tags: [linkedTag], entities: [] }),
+      createEntity: vi.fn().mockResolvedValue(entity),
+      linkEntity: vi.fn().mockRejectedValueOnce(new Error("link unavailable")).mockResolvedValueOnce({ tags: [linkedTag], entities: [entity] }),
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "none", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { metadataClient });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add Entity" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "New Entity" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "New Entity name" }).props.onChangeText("Alex"); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add" }).props.onPress(); });
+
+    expect(textContent(renderer)).toContain("link unavailable");
+    expect(renderer.root.findByProps({ accessibilityLabel: "New Entity name" }).props.value).toBe("Alex");
+    expect(textContent(renderer)).toContain("family");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry creating and adding Entity Alex" }).props.onPress(); });
+
+    expect(metadataClient.createEntity).toHaveBeenCalledOnce();
+    expect(metadataClient.createEntity).toHaveBeenCalledWith("member-1", "Alex", "Object");
+    expect(metadataClient.linkEntity).toHaveBeenCalledTimes(2);
+    expect(metadataClient.linkEntity).toHaveBeenLastCalledWith("note-1", "note", "entity-new", "member-1");
+    expect(textContent(renderer)).toContain("Alex");
     renderer.unmount();
   });
 
@@ -208,6 +278,7 @@ describe("ReviewScreen", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
     await enterEditMode(renderer);
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add Tag" }).props.onPress(); });
     const addButton = renderer.root.findByProps({ accessibilityLabel: "Add existing Tag urgent" });
 
     act(() => { addButton.props.onPress(); addButton.props.onPress(); });
@@ -224,6 +295,7 @@ describe("ReviewScreen", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "none", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
     await enterEditMode(renderer, "note");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add Entity" }).props.onPress(); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add existing Entity Office" }).props.onPress(); });
     expect(metadataClient.linkEntity).toHaveBeenCalledWith("note-1", "note", "entity-1", "member-1");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Remove Entity Office" }).props.onPress(); });
@@ -233,18 +305,15 @@ describe("ReviewScreen", () => {
 
   test("preserves links and offers retry after metadata loading fails", async () => {
     const tag = metadataTag("tag-1", "urgent");
-    const listTags = vi.fn().mockResolvedValueOnce([tag]).mockRejectedValueOnce(new Error("metadata unavailable")).mockResolvedValueOnce([tag]);
+    const listTags = vi.fn().mockRejectedValueOnce(new Error("metadata unavailable")).mockResolvedValueOnce([tag]);
     const metadataClient = metadataFixture({ listTags, listLinks: vi.fn().mockResolvedValue({ tags: [tag], entities: [] }) });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { metadataClient });
     await enterEditMode(renderer);
-    expect(textContent(renderer)).toContain("urgent");
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Refresh metadata" }).props.onPress(); });
     expect(textContent(renderer)).toContain("metadata unavailable");
-    expect(textContent(renderer)).toContain("urgent");
-    expect(renderer.root.findByProps({ accessibilityLabel: "Create and add Tag" })).toBeTruthy();
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry metadata" }).props.onPress(); });
     expect(textContent(renderer)).not.toContain("metadata unavailable");
+    expect(textContent(renderer)).toContain("urgent");
     renderer.unmount();
   });
 
@@ -261,9 +330,8 @@ describe("ReviewScreen", () => {
     expect(metadataClient.updateTag).toHaveBeenCalledWith("tag-1", "member-1", "later");
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Entity Office" }).props.onPress(); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Entity Office" }).props.onChangeText("HQ"); });
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Edit Entity type Organization" }).props.onPress(); });
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Save Entity Office" }).props.onPress(); });
-    expect(metadataClient.updateEntity).toHaveBeenCalledWith("entity-1", "member-1", "HQ", "Organization");
+    expect(metadataClient.updateEntity).toHaveBeenCalledWith("entity-1", "member-1", "HQ", "Place");
     renderer.unmount();
   });
 

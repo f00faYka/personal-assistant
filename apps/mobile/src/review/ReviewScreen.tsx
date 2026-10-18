@@ -5,7 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { createOfflineDraftId, type OfflineDraftStore } from "../offline/offline-drafts";
 import { shouldPersistOfflineDraft } from "../http/request-error";
 import { TaskNoteDetailScreen, type TaskNoteDetailDraft, type TaskNoteDetailItem, type TaskNoteDetailMetadata } from "../detail/TaskNoteDetailScreen";
-import { entityTypes, type Entity, type EntityType, type MetadataClient, type MetadataItemKind, type MetadataLinks, type Tag } from "./metadata";
+import type { Entity, EntityType, MetadataClient, MetadataItemKind, MetadataLinks, Tag } from "./metadata";
 import { createReviewClient, type ReviewClient, type ReviewContract } from "./review";
 import type { OrganizationProposal, OrganizationProposalCandidate, OrganizationProposalClient } from "./organization-proposals";
 import { findAssignedSpace, spacePath, type SpacesClient } from "../spaces/spaces";
@@ -246,7 +246,7 @@ export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, initia
   return <ReviewShell onBack={onBack} showBack={false}>
     <ReviewStateBanner review={state.review} />
     {state.review.state === "failed" ? <Button label="Refresh processing status" onPress={() => void load()} /> : null}
-    {state.review.outcome ? <TaskNoteDetailScreen item={detailItem(state.review, resolvedDetailMetadata)} initialEditing={initialEditing} {...(resolvedDetailMetadata ? { metadata: resolvedDetailMetadata } : {})} {...(metadataClient ? { tagEntityControls: (editable: boolean) => <MetadataControls client={metadataClient} memberId={memberId} itemId={state.review.outcome!.id} itemKind={state.review.outcome!.kind} editable={editable} /> } : {})} onBack={onBack} onSave={save} onChangeStatus={() => void changeStatus()} onConvert={state.review.outcome.kind === "note" ? () => void convertNoteToTask() : undefined} saving={saving} statusBusy={completing} converting={converting} error={saveError ?? completionError ?? conversionError} notice={conversionNotice} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}
+    {state.review.outcome ? <TaskNoteDetailScreen item={detailItem(state.review, resolvedDetailMetadata)} initialEditing={initialEditing} {...(resolvedDetailMetadata ? { metadata: resolvedDetailMetadata } : {})} {...(metadataClient ? { tagEntityControls: () => <MetadataControls client={metadataClient} memberId={memberId} itemId={state.review.outcome!.id} itemKind={state.review.outcome!.kind} /> } : {})} onBack={onBack} onSave={save} onChangeStatus={() => void changeStatus()} onConvert={state.review.outcome.kind === "note" ? () => void convertNoteToTask() : undefined} saving={saving} statusBusy={completing} converting={converting} error={saveError ?? completionError ?? conversionError} notice={conversionNotice} /> : <Text style={styles.stateText}>This Capture has no editable result yet.</Text>}
     {state.review.outcome && organizationProposalClient ? <OrganizationProposalControls client={organizationProposalClient} memberId={memberId} itemId={state.review.outcome.id} itemKind={state.review.outcome.kind} /> : null}
     {!state.review.outcome ? <><Text style={styles.sectionTitle}>Source and provenance</Text><Text style={styles.provenance}>Capture {state.review.capture.id} · source {state.review.source.id}</Text>{state.review.failure?.classification === "unusable_transcription" ? <><Text style={styles.provenance}>Original transcription · unavailable</Text>{state.review.transcription?.provider ? <Text style={styles.provenance}>Transcription source · {state.review.transcription.provider}{state.review.transcription.model ? ` · ${state.review.transcription.model}` : ""}</Text> : null}</> : state.review.transcription ? <><Text style={styles.fieldLabel}>Original transcription{state.review.transcription.language ? ` · ${state.review.transcription.language}` : ""}</Text><Text style={styles.originalText}>{state.review.transcription.text ?? `Status: ${state.review.transcription.status}`}</Text></> : <Text style={styles.provenance}>Original transcription · pending</Text>}</> : null}
   </ReviewShell>;
@@ -304,13 +304,15 @@ function ProposalCandidateRow({ candidate, selected, disabled, onToggle }: { rea
   </Pressable>;
 }
 
-function MetadataControls({ client, memberId, itemId, itemKind, editable }: { readonly client: MetadataClient; readonly memberId: string; readonly itemId: string; readonly itemKind: MetadataItemKind; readonly editable: boolean }) {
+function MetadataControls({ client, memberId, itemId, itemKind }: { readonly client: MetadataClient; readonly memberId: string; readonly itemId: string; readonly itemKind: MetadataItemKind }) {
   const [links, setLinks] = useState<MetadataLinks>({ tags: [], entities: [] });
   const [tags, setTags] = useState<readonly Tag[]>([]);
   const [entities, setEntities] = useState<readonly Entity[]>([]);
   const [tagDraft, setTagDraft] = useState("");
   const [entityDraft, setEntityDraft] = useState("");
-  const [entityType, setEntityType] = useState<EntityType>(entityTypes[0]);
+  const [openPickers, setOpenPickers] = useState({ tags: false, entities: false });
+  const [newTagOpen, setNewTagOpen] = useState(false);
+  const [newEntityOpen, setNewEntityOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -318,7 +320,6 @@ function MetadataControls({ client, memberId, itemId, itemKind, editable }: { re
   const [editingEntityId, setEditingEntityId] = useState<string | null>(null);
   const [tagEditDraft, setTagEditDraft] = useState("");
   const [entityEditDraft, setEntityEditDraft] = useState("");
-  const [entityEditType, setEntityEditType] = useState<EntityType>(entityTypes[0]);
   const [pendingMutation, setPendingMutation] = useState<PendingMetadataMutation | null>(null);
   const [mutationInFlight, setMutationInFlight] = useState(false);
   const mutationInFlightRef = useRef(false);
@@ -374,8 +375,10 @@ function MetadataControls({ client, memberId, itemId, itemKind, editable }: { re
       createdTag ??= await client.createTag(memberId, name);
       const tag = createdTag;
       setTags((current) => current.some((item) => item.id === tag.id) ? current : [...current, tag].sort((a, b) => a.name.localeCompare(b.name)));
-      setTagDraft("");
       setLinks(await client.linkTag(itemId, itemKind, tag.id, memberId));
+      setTagDraft("");
+      setNewTagOpen(false);
+      setOpenPickers((current) => ({ ...current, tags: false }));
     });
   };
 
@@ -385,14 +388,18 @@ function MetadataControls({ client, memberId, itemId, itemKind, editable }: { re
       setMutationError("Entity name must not be empty");
       return;
     }
-    const type = entityType;
+    // Entity type remains an internal classifier; until users can classify Entities,
+    // store new ones with the existing default and keep it out of the interaction.
+    const type: EntityType = "Object";
     let createdEntity: Entity | null = null;
     void runMutation(`creating and adding Entity ${name}`, async () => {
       createdEntity ??= await client.createEntity(memberId, name, type);
       const entity = createdEntity;
       setEntities((current) => current.some((item) => item.id === entity.id) ? current : [...current, entity].sort((a, b) => a.name.localeCompare(b.name)));
-      setEntityDraft("");
       setLinks(await client.linkEntity(itemId, itemKind, entity.id, memberId));
+      setEntityDraft("");
+      setNewEntityOpen(false);
+      setOpenPickers((current) => ({ ...current, entities: false }));
     });
   };
 
@@ -416,7 +423,7 @@ function MetadataControls({ client, memberId, itemId, itemKind, editable }: { re
       setMutationError("Entity name must not be empty");
       return;
     }
-    const type = entityEditType;
+    const type = entity.type;
     void runMutation(`editing Entity ${entity.name}`, async () => {
       const updated = await client.updateEntity(entity.id, memberId, name, type);
       setEntities((current) => current.map((item) => item.id === updated.id ? updated : item));
@@ -425,132 +432,82 @@ function MetadataControls({ client, memberId, itemId, itemKind, editable }: { re
     });
   };
 
-  if (loading) {
-    return <View style={styles.metadataInline}>
-      <Text style={styles.fieldLabel}>TAGS & ENTITIES</Text>
-      <Text style={styles.stateText}>Loading metadata…</Text>
-    </View>;
-  }
-
-  if (!editable) {
-    const visibleTags = links.tags.filter((tag) => tag.name.trim().length > 0);
-    const visibleEntities = links.entities.filter((entity) => entity.name.trim().length > 0);
-    if (visibleTags.length === 0 && visibleEntities.length === 0 && !error) return null;
-    return <View style={styles.metadataInline}>
-      <Text style={styles.fieldLabel}>TAGS & ENTITIES</Text>
-      {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-      {visibleTags.length > 0 ? <View style={styles.separatedField}><Text style={styles.fieldLabel}>Tags</Text>{visibleTags.map((tag) => <Text key={tag.id} style={styles.metadataValue}>Tag · {tag.name}</Text>)}</View> : null}
-      {visibleEntities.length > 0 ? <View style={styles.separatedField}><Text style={styles.fieldLabel}>Entities</Text>{visibleEntities.map((entity) => <Text key={entity.id} style={styles.metadataValue}>{entity.type} · {entity.name}</Text>)}</View> : null}
-    </View>;
-  }
-
   return <View style={styles.metadataInline}>
-    <Text style={styles.fieldLabel}>TAGS & ENTITIES</Text>
-    {error ? <>
-      <Text accessibilityRole="alert" style={styles.error}>{error}</Text>
-      <Button label="Retry metadata" onPress={() => void load()} disabled={mutationInFlight} />
-    </> : <Button label="Refresh metadata" onPress={() => void load()} disabled={mutationInFlight} />}
-    <Text style={styles.stateText}>Tags are flat markers. Entities are named {entityTypes.join(", ")}.</Text>
-    <View style={styles.separatedField}><Text style={styles.fieldLabel}>Tags</Text>
-    {links.tags.map((tag) => <MetadataTagRow
-      key={tag.id}
-      tag={tag}
-      linked
-      editing={editingTagId === tag.id}
-      editDraft={tagEditDraft}
-      disabled={mutationInFlight}
-      onEdit={() => { setEditingTagId(tag.id); setTagEditDraft(tag.name); }}
-      onEditChange={setTagEditDraft}
-      onSave={() => editTag(tag)}
-      onRemove={() => void runMutation(`removing Tag ${tag.name}`, async () => setLinks(await client.unlinkTag(itemId, itemKind, tag.id, memberId)))}
-    />)}
-    <TextInput accessibilityLabel="New Tag name" placeholder="New Tag" value={tagDraft} onChangeText={setTagDraft} editable={!mutationInFlight} style={styles.input} />
-    <Button label="Create and add Tag" onPress={addTag} disabled={mutationInFlight} />
-    {tags.filter((tag) => !links.tags.some((linked) => linked.id === tag.id)).map((tag) => <MetadataTagRow
-      key={tag.id}
-      tag={tag}
-      linked={false}
-      editing={editingTagId === tag.id}
-      editDraft={tagEditDraft}
-      disabled={mutationInFlight}
-      onEdit={() => { setEditingTagId(tag.id); setTagEditDraft(tag.name); }}
-      onEditChange={setTagEditDraft}
-      onSave={() => editTag(tag)}
-      onAdd={() => void runMutation(`adding Tag ${tag.name}`, async () => setLinks(await client.linkTag(itemId, itemKind, tag.id, memberId)))}
-    />)}
+    {error ? <><Text accessibilityRole="alert" style={styles.error}>{error}</Text><Button label="Retry metadata" onPress={() => void load()} disabled={mutationInFlight} /></> : null}
+    {loading ? <Text style={styles.metadataHint}>Loading Tags and Entities…</Text> : <>
+    <View style={styles.metadataSection}>
+      <Text style={styles.metadataHeading}>Tags</Text>
+      <View style={styles.metadataCategoryLine}>
+        {links.tags.map((tag) => <MetadataTagChip key={tag.id} tag={tag} editing={editingTagId === tag.id} editDraft={tagEditDraft} disabled={mutationInFlight} onEdit={() => { setEditingTagId(tag.id); setTagEditDraft(tag.name); }} onEditChange={setTagEditDraft} onSave={() => editTag(tag)} onCancel={() => setEditingTagId(null)} onRemove={() => void runMutation(`removing Tag ${tag.name}`, async () => setLinks(await client.unlinkTag(itemId, itemKind, tag.id, memberId)))} />)}
+        <MetadataAction label={openPickers.tags ? "Close Tag choices" : "Add Tag"} expanded={openPickers.tags} onPress={() => setOpenPickers((current) => ({ ...current, tags: false }))} onOpen={() => setOpenPickers((current) => ({ ...current, tags: true }))} disabled={mutationInFlight} />
+      </View>
+      {openPickers.tags ? <View style={[styles.metadataOptions, styles.metadataTagOptions]}>
+        {tags.filter((tag) => !links.tags.some((linked) => linked.id === tag.id)).map((tag) => <MetadataChoiceRow key={tag.id} label={`Add existing Tag ${tag.name}`} name={`#${tag.name}`} entity={false} disabled={mutationInFlight} onSelect={() => void runMutation(`adding Tag ${tag.name}`, async () => { setLinks(await client.linkTag(itemId, itemKind, tag.id, memberId)); })} />)}
+        {newTagOpen ? <MetadataCreateChip inputLabel="New Tag name" value={tagDraft} placeholder="Tag name" disabled={mutationInFlight} onChange={setTagDraft} onAdd={addTag} /> : <MetadataNewChoice label="New Tag" onPress={() => setNewTagOpen(true)} />}
+      </View> : null}
     </View>
-    <View style={styles.separatedField}><Text style={styles.fieldLabel}>Entities</Text>
-    {links.entities.map((entity) => <MetadataEntityRow
-      key={entity.id}
-      entity={entity}
-      linked
-      editing={editingEntityId === entity.id}
-      editDraft={entityEditDraft}
-      editType={entityEditType}
-      disabled={mutationInFlight}
-      onEdit={() => { setEditingEntityId(entity.id); setEntityEditDraft(entity.name); setEntityEditType(entity.type); }}
-      onEditChange={setEntityEditDraft}
-      onTypeChange={setEntityEditType}
-      onSave={() => editEntity(entity)}
-      onRemove={() => void runMutation(`removing Entity ${entity.name}`, async () => setLinks(await client.unlinkEntity(itemId, itemKind, entity.id, memberId)))}
-    />)}
-    <TextInput accessibilityLabel="New Entity name" placeholder="New Entity" value={entityDraft} onChangeText={setEntityDraft} editable={!mutationInFlight} style={styles.input} />
-    <EntityTypePicker value={entityType} onChange={setEntityType} disabled={mutationInFlight} />
-    <Button label="Create and add Entity" onPress={addEntity} disabled={mutationInFlight} />
-    {entities.filter((entity) => !links.entities.some((linked) => linked.id === entity.id)).map((entity) => <MetadataEntityRow
-      key={entity.id}
-      entity={entity}
-      linked={false}
-      editing={editingEntityId === entity.id}
-      editDraft={entityEditDraft}
-      editType={entityEditType}
-      disabled={mutationInFlight}
-      onEdit={() => { setEditingEntityId(entity.id); setEntityEditDraft(entity.name); setEntityEditType(entity.type); }}
-      onEditChange={setEntityEditDraft}
-      onTypeChange={setEntityEditType}
-      onSave={() => editEntity(entity)}
-      onAdd={() => void runMutation(`adding Entity ${entity.name}`, async () => setLinks(await client.linkEntity(itemId, itemKind, entity.id, memberId)))}
-    />)}
+    <View style={styles.metadataSection}>
+      <Text style={styles.metadataHeading}>Entities</Text>
+      <View style={styles.metadataCategoryLine}>
+        {links.entities.map((entity) => <MetadataEntityChip key={entity.id} entity={entity} editing={editingEntityId === entity.id} editDraft={entityEditDraft} disabled={mutationInFlight} onEdit={() => { setEditingEntityId(entity.id); setEntityEditDraft(entity.name); }} onEditChange={setEntityEditDraft} onSave={() => editEntity(entity)} onCancel={() => setEditingEntityId(null)} onRemove={() => void runMutation(`removing Entity ${entity.name}`, async () => setLinks(await client.unlinkEntity(itemId, itemKind, entity.id, memberId)))} />)}
+        <MetadataAction label={openPickers.entities ? "Close Entity choices" : "Add Entity"} entity expanded={openPickers.entities} onPress={() => setOpenPickers((current) => ({ ...current, entities: false }))} onOpen={() => setOpenPickers((current) => ({ ...current, entities: true }))} disabled={mutationInFlight} />
+      </View>
+      {openPickers.entities ? <View style={[styles.metadataOptions, styles.metadataEntityOptions]}>
+        {entities.filter((entity) => !links.entities.some((linked) => linked.id === entity.id)).map((entity) => <MetadataChoiceRow key={entity.id} label={`Add existing Entity ${entity.name}`} name={entity.name} entity disabled={mutationInFlight} onSelect={() => void runMutation(`adding Entity ${entity.name}`, async () => { setLinks(await client.linkEntity(itemId, itemKind, entity.id, memberId)); })} />)}
+        {newEntityOpen ? <MetadataCreateChip inputLabel="New Entity name" value={entityDraft} placeholder="Entity name" entity disabled={mutationInFlight} onChange={setEntityDraft} onAdd={addEntity} /> : <MetadataNewChoice label="New Entity" entity onPress={() => setNewEntityOpen(true)} />}
+      </View> : null}
     </View>
-    {mutationError ? <>
-      <Text accessibilityRole="alert" style={styles.error}>{mutationError}</Text>
-      {pendingMutation ? <Button label={`Retry ${pendingMutation.label}`} onPress={() => void runMutation(pendingMutation.label, pendingMutation.operation)} disabled={mutationInFlight} /> : null}
-    </> : null}
+    </>}
+    {mutationError ? <><Text accessibilityRole="alert" style={styles.error}>{mutationError}</Text>{pendingMutation ? <Button label={`Retry ${pendingMutation.label}`} onPress={() => void runMutation(pendingMutation.label, pendingMutation.operation)} disabled={mutationInFlight} /> : null}</> : null}
   </View>;
 }
 
-function MetadataTagRow({ tag, linked, editing, editDraft, disabled, onEdit, onEditChange, onSave, onAdd, onRemove }: { readonly tag: Tag; readonly linked: boolean; readonly editing: boolean; readonly editDraft: string; readonly disabled: boolean; readonly onEdit: () => void; readonly onEditChange: (value: string) => void; readonly onSave: () => void; readonly onAdd?: () => void; readonly onRemove?: () => void }) {
-  if (editing) return <View style={styles.metadataRow}>
-    {!linked && onAdd ? <Button label={`Add existing Tag ${tag.name}`} onPress={onAdd} disabled={disabled} /> : null}
-    <TextInput accessibilityLabel={`Edit Tag ${tag.name}`} value={editDraft} onChangeText={onEditChange} editable={!disabled} style={styles.editInput} />
-    <Button label={`Save Tag ${tag.name}`} onPress={onSave} disabled={disabled} />
+function MetadataAction({ label, entity = false, expanded = false, onPress, onOpen, disabled }: { readonly label: string; readonly entity?: boolean; readonly expanded?: boolean; readonly onPress: () => void; readonly onOpen: () => void; readonly disabled: boolean }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ expanded }} onPress={expanded ? onPress : onOpen} disabled={disabled} style={[styles.metadataAction, entity && styles.metadataEntityAction]}>
+    <Text style={[styles.metadataActionText, entity && styles.metadataEntityActionText]}>{expanded ? "×" : "＋"}</Text>
+  </Pressable>;
+}
+
+function MetadataNewChoice({ label, entity = false, onPress }: { readonly label: string; readonly entity?: boolean; readonly onPress: () => void }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={[styles.metadataNewChoice, entity && styles.metadataEntityNewChoice]}>
+    <Text style={[styles.metadataNewChoiceText, entity && styles.metadataEntityNewChoiceText]}>{label}</Text>
+  </Pressable>;
+}
+
+function MetadataTagChip({ tag, editing, editDraft, disabled, onEdit, onEditChange, onSave, onCancel, onRemove }: { readonly tag: Tag; readonly editing: boolean; readonly editDraft: string; readonly disabled: boolean; readonly onEdit: () => void; readonly onEditChange: (value: string) => void; readonly onSave: () => void; readonly onCancel: () => void; readonly onRemove: () => void }) {
+  if (editing) return <View style={[styles.metadataChip, styles.metadataChipEditing]}>
+    <TextInput accessibilityLabel={`Edit Tag ${tag.name}`} value={editDraft} onChangeText={onEditChange} editable={!disabled} style={styles.metadataChipInput} />
+    <Pressable accessibilityRole="button" accessibilityLabel={`Save Tag ${tag.name}`} onPress={onSave} disabled={disabled} style={styles.metadataChipAction}><Text style={styles.metadataChipActionText}>✓</Text></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Cancel editing Tag ${tag.name}`} onPress={onCancel} disabled={disabled} style={styles.metadataChipAction}><Text style={styles.metadataChipActionText}>×</Text></Pressable>
   </View>;
-  return <View style={styles.metadataRow}>
-    <Pressable accessibilityRole="button" accessibilityLabel={`Edit Tag ${tag.name}`} onPress={onEdit} disabled={disabled} style={styles.inlineEdit}><Text style={styles.metadataValue}>Tag · {tag.name}</Text></Pressable>
-    {linked && onRemove ? <Button label={`Remove Tag ${tag.name}`} onPress={onRemove} disabled={disabled} /> : null}
-    {!linked && onAdd ? <Button label={`Add existing Tag ${tag.name}`} onPress={onAdd} disabled={disabled} /> : null}
+  return <View style={styles.metadataChip}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Edit Tag ${tag.name}`} onPress={onEdit} disabled={disabled} style={styles.metadataChipLabel}><Text style={styles.metadataChipText}>#{tag.name}</Text></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Remove Tag ${tag.name}`} onPress={onRemove} disabled={disabled} style={styles.metadataChipAction}><Text style={styles.metadataChipActionText}>×</Text></Pressable>
   </View>;
 }
 
-function MetadataEntityRow({ entity, linked, editing, editDraft, editType, disabled, onEdit, onEditChange, onTypeChange, onSave, onAdd, onRemove }: { readonly entity: Entity; readonly linked: boolean; readonly editing: boolean; readonly editDraft: string; readonly editType: EntityType; readonly disabled: boolean; readonly onEdit: () => void; readonly onEditChange: (value: string) => void; readonly onTypeChange: (value: EntityType) => void; readonly onSave: () => void; readonly onAdd?: () => void; readonly onRemove?: () => void }) {
-  if (editing) return <View style={styles.metadataRow}>
-    {!linked && onAdd ? <Button label={`Add existing Entity ${entity.name}`} onPress={onAdd} disabled={disabled} /> : null}
-    <TextInput accessibilityLabel={`Edit Entity ${entity.name}`} value={editDraft} onChangeText={onEditChange} editable={!disabled} style={styles.editInput} />
-    <EntityTypePicker value={editType} onChange={onTypeChange} disabled={disabled} edit />
-    <Button label={`Save Entity ${entity.name}`} onPress={onSave} disabled={disabled} />
+function MetadataEntityChip({ entity, editing, editDraft, disabled, onEdit, onEditChange, onSave, onCancel, onRemove }: { readonly entity: Entity; readonly editing: boolean; readonly editDraft: string; readonly disabled: boolean; readonly onEdit: () => void; readonly onEditChange: (value: string) => void; readonly onSave: () => void; readonly onCancel: () => void; readonly onRemove: () => void }) {
+  if (editing) return <View style={[styles.metadataChip, styles.metadataEntityChip, styles.metadataChipEditing]}>
+    <TextInput accessibilityLabel={`Edit Entity ${entity.name}`} value={editDraft} onChangeText={onEditChange} editable={!disabled} style={styles.metadataChipInput} />
+    <Pressable accessibilityRole="button" accessibilityLabel={`Save Entity ${entity.name}`} onPress={onSave} disabled={disabled} style={styles.metadataChipAction}><Text style={styles.metadataChipActionText}>✓</Text></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Cancel editing Entity ${entity.name}`} onPress={onCancel} disabled={disabled} style={styles.metadataChipAction}><Text style={styles.metadataChipActionText}>×</Text></Pressable>
   </View>;
-  return <View style={styles.metadataRow}>
-    <Pressable accessibilityRole="button" accessibilityLabel={`Edit Entity ${entity.name}`} onPress={onEdit} disabled={disabled} style={styles.inlineEdit}><Text style={styles.metadataValue}>{entity.type} · {entity.name}</Text></Pressable>
-    {linked && onRemove ? <Button label={`Remove Entity ${entity.name}`} onPress={onRemove} disabled={disabled} /> : null}
-    {!linked && onAdd ? <Button label={`Add existing Entity ${entity.name}`} onPress={onAdd} disabled={disabled} /> : null}
+  return <View style={[styles.metadataChip, styles.metadataEntityChip]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Edit Entity ${entity.name}`} onPress={onEdit} disabled={disabled} style={styles.metadataChipLabel}><Text style={styles.metadataChipText}>{entity.name}</Text></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Remove Entity ${entity.name}`} onPress={onRemove} disabled={disabled} style={styles.metadataChipAction}><Text style={styles.metadataChipActionText}>×</Text></Pressable>
   </View>;
 }
 
-function EntityTypePicker({ value, onChange, disabled, edit = false }: { readonly value: EntityType; readonly onChange: (value: EntityType) => void; readonly disabled: boolean; readonly edit?: boolean }) {
-  return <View style={styles.typeRow}>
-    {entityTypes.map((type) => <Pressable key={type} accessibilityRole="button" accessibilityLabel={`${edit ? "Edit " : ""}Entity type ${type}`} onPress={() => onChange(type)} disabled={disabled} style={type === value ? styles.typeSelected : styles.typeOption}>
-      <Text>{type}</Text>
-    </Pressable>)}
+function MetadataChoiceRow({ label, name, entity = false, disabled, onSelect }: { readonly label: string; readonly name: string; readonly entity?: boolean; readonly disabled: boolean; readonly onSelect: () => void }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onSelect} disabled={disabled} style={[styles.metadataChip, entity && styles.metadataEntityChip, styles.metadataChoiceChip]}>
+    <Text style={[styles.metadataChipText, entity && styles.metadataEntityChipText]}>{name}</Text>
+  </Pressable>;
+}
+
+function MetadataCreateChip({ inputLabel, value, placeholder, entity = false, disabled, onChange, onAdd }: { readonly inputLabel: string; readonly value: string; readonly placeholder: string; readonly entity?: boolean; readonly disabled: boolean; readonly onChange: (value: string) => void; readonly onAdd: () => void }) {
+  return <View style={[styles.metadataChip, entity && styles.metadataEntityChip, styles.metadataChipEditing]}>
+    <TextInput accessibilityLabel={inputLabel} placeholder={placeholder} value={value} onChangeText={onChange} editable={!disabled} style={[styles.metadataChipInput, entity && styles.metadataEntityChipText]} />
+    <Pressable accessibilityRole="button" accessibilityLabel="Add" onPress={onAdd} disabled={disabled} style={styles.metadataChipAction}><Text style={[styles.metadataChipActionText, entity && styles.metadataEntityChipText]}>✓</Text></Pressable>
   </View>;
 }
 
@@ -590,4 +547,4 @@ function isValidIsoDate(value: string): boolean {
 function ReviewShell({ children, onBack, showBack = true }: { readonly children: ReactNode; readonly onBack: () => void; readonly showBack?: boolean }) { return <SafeAreaView style={styles.safeArea}>{showBack ? <Pressable accessibilityRole="button" accessibilityLabel="Back to items" onPress={onBack}><Text style={styles.back}>‹ Items</Text></Pressable> : null}<ScrollView contentContainerStyle={styles.content}>{children}</ScrollView></SafeAreaView>; }
 function Button({ label, onPress, disabled = false }: { readonly label: string; readonly onPress: () => void; readonly disabled?: boolean }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress} style={styles.button}><Text style={styles.buttonText}>{label}</Text></Pressable>; }
 
-const styles = StyleSheet.create({ safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, content: { padding: 24 }, back: { color: "#7A5C36", fontSize: 16, paddingHorizontal: 24, paddingTop: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 32, fontWeight: "700", marginTop: 6 }, stateText: { color: "#716B64", fontSize: 15, lineHeight: 22, marginTop: 8 }, reviewState: { color: "#8C3D25", fontSize: 15, fontWeight: "600", lineHeight: 22, marginTop: 18 }, field: { marginTop: 24 }, fieldLabel: { color: "#8B7355", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, value: { color: "#24221F", fontSize: 19, lineHeight: 27, marginTop: 5 }, originalText: { color: "#716B64", fontSize: 16, lineHeight: 24, marginTop: 5 }, input: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", fontSize: 19, lineHeight: 27, paddingVertical: 5 }, editInput: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", flex: 1, fontSize: 16, paddingVertical: 5 }, sectionTitle: { color: "#24221F", fontSize: 17, fontWeight: "700", marginTop: 32 }, provenance: { color: "#716B64", fontSize: 14, lineHeight: 21, marginTop: 6 }, metadataInline: { marginTop: 12 }, separatedField: { borderBottomColor: "#D8CFC2", borderBottomWidth: 1, borderTopColor: "#D8CFC2", borderTopWidth: 1, marginTop: 8, paddingVertical: 10 }, organization: { borderTopColor: "#D8CFC2", borderTopWidth: 1, marginTop: 30, paddingTop: 4 }, proposalCard: { backgroundColor: "#FFF8E8", borderColor: "#D5B98D", borderRadius: 14, borderWidth: 1, marginTop: 14, padding: 14 }, proposalCandidate: { borderBottomColor: "#E5D8C3", borderBottomWidth: 1, paddingBottom: 10, paddingTop: 8 }, proposalMeta: { color: "#716B64", fontSize: 13 }, proposalConfidence: { color: "#7A5C36", fontSize: 13, marginTop: 4 }, proposalActions: { flexDirection: "row", flexWrap: "wrap", gap: 10 }, metadataRow: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" }, inlineEdit: { flex: 1 }, metadataValue: { color: "#24221F", flex: 1, fontSize: 16, marginTop: 8 }, typeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 }, typeOption: { borderColor: "#B9A895", borderRadius: 10, borderWidth: 1, padding: 8 }, typeSelected: { backgroundColor: "#D5B98D", borderColor: "#8B7355", borderRadius: 10, borderWidth: 1, padding: 8 }, button: { alignSelf: "flex-start", backgroundColor: "#24221F", borderRadius: 12, marginTop: 12, paddingHorizontal: 20, paddingVertical: 12 }, buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, error: { color: "#A33B31", fontSize: 14, marginTop: 12 }, success: { color: "#356445", fontSize: 14, marginTop: 12 }, dueBubbles: { flexDirection: "row", gap: 8, marginTop: 10 }, dueBubble: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 }, dueBubbleText: { color: "#24221F", fontSize: 16 }, clearDue: { color: "#8C3D25", fontSize: 14, marginTop: 12 }, pickerPanel: { backgroundColor: "#EFEAE2", borderRadius: 16, marginTop: 14, padding: 16 }, pickerHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" }, pickerTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, pickerHint: { color: "#716B64", fontSize: 13, marginTop: 8 }, monthRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginVertical: 18 }, calendarGrid: { flexDirection: "row", flexWrap: "wrap" }, calendarDay: { alignItems: "center", justifyContent: "center", minHeight: 38, width: "14.285%" }, calendarDaySelected: { backgroundColor: "#D5B98D", borderRadius: 19 } });
+const styles = StyleSheet.create({ safeArea: { flex: 1, backgroundColor: "#F7F5F0" }, content: { padding: 24 }, back: { color: "#7A5C36", fontSize: 16, paddingHorizontal: 24, paddingTop: 16 }, eyebrow: { color: "#8B7355", fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }, title: { color: "#24221F", fontSize: 32, fontWeight: "700", marginTop: 6 }, stateText: { color: "#716B64", fontSize: 15, lineHeight: 22, marginTop: 8 }, reviewState: { color: "#8C3D25", fontSize: 15, fontWeight: "600", lineHeight: 22, marginTop: 18 }, field: { marginTop: 24 }, fieldLabel: { color: "#8B7355", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }, value: { color: "#24221F", fontSize: 19, lineHeight: 27, marginTop: 5 }, originalText: { color: "#716B64", fontSize: 16, lineHeight: 24, marginTop: 5 }, input: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", fontSize: 19, lineHeight: 27, paddingVertical: 5 }, editInput: { borderBottomColor: "#B9A895", borderBottomWidth: 1, color: "#24221F", flex: 1, fontSize: 16, paddingVertical: 5 }, sectionTitle: { color: "#24221F", fontSize: 17, fontWeight: "700", marginTop: 32 }, provenance: { color: "#716B64", fontSize: 14, lineHeight: 21, marginTop: 6 }, metadataInline: { marginTop: 12, gap: 15 }, metadataSection: { gap: 6 }, metadataHeading: { color: "#64616A", fontSize: 17, fontWeight: "600" }, metadataCategoryLine: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 8 }, metadataOptions: { alignItems: "center", borderRadius: 16, flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2, padding: 10 }, metadataTagOptions: { backgroundColor: "#F0F5EB" }, metadataEntityOptions: { backgroundColor: "#F5EFFA" }, metadataSummary: { alignItems: "flex-start", flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 9 }, metadataHint: { color: "#716B64", fontSize: 12, lineHeight: 18, marginTop: 5 }, metadataActions: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 6 }, metadataAction: { alignItems: "center", backgroundColor: "#7FAF73", borderColor: "#7FAF73", borderRadius: 20, borderWidth: 1, height: 36, justifyContent: "center", width: 36 }, metadataActionText: { color: "#FFFFFF", fontSize: 24, fontWeight: "500", lineHeight: 28, marginTop: -2 }, metadataEntityAction: { backgroundColor: "#A882D6", borderColor: "#A882D6" }, metadataEntityActionText: { color: "#FFFFFF" }, metadataNewChoice: { backgroundColor: "rgba(255,255,255,0.4)", borderColor: "#87A87B", borderRadius: 22, borderStyle: "dashed", borderWidth: 1, minHeight: 38, justifyContent: "center", paddingHorizontal: 14 }, metadataNewChoiceText: { color: "#5F7F58", fontSize: 14, fontWeight: "600" }, metadataEntityNewChoice: { borderColor: "#AA8AD3" }, metadataEntityNewChoiceText: { color: "#73569A" }, metadataChip: { alignItems: "center", backgroundColor: "#E8F0E8", borderColor: "#C9D9CB", borderRadius: 18, borderWidth: 1, flexDirection: "row", maxWidth: "100%", minHeight: 38 }, metadataEntityChip: { backgroundColor: "#ECEAF5", borderColor: "#D4CFE7" }, metadataChipEditing: { alignItems: "center", flexDirection: "row", paddingLeft: 8 }, metadataChipLabel: { flexShrink: 1, paddingLeft: 12, paddingVertical: 8 }, metadataChipText: { color: "#173B2F", flexShrink: 1, fontSize: 14, fontWeight: "600" }, metadataChipAction: { alignItems: "center", justifyContent: "center", minHeight: 34, minWidth: 34, paddingHorizontal: 8 }, metadataChipActionText: { color: "#173B2F", fontSize: 14, fontWeight: "800" }, metadataChipInput: { color: "#24221F", flexShrink: 1, fontSize: 13, fontWeight: "600", minHeight: 32, minWidth: 48, paddingVertical: 0, width: 120 }, separatedField: { borderBottomColor: "#D8CFC2", borderBottomWidth: 1, borderTopColor: "#D8CFC2", borderTopWidth: 1, marginTop: 8, paddingVertical: 10 }, organization: { borderTopColor: "#D8CFC2", borderTopWidth: 1, marginTop: 30, paddingTop: 4 }, proposalCard: { backgroundColor: "#FFF8E8", borderColor: "#D5B98D", borderRadius: 14, borderWidth: 1, marginTop: 14, padding: 14 }, proposalCandidate: { borderBottomColor: "#E5D8C3", borderBottomWidth: 1, paddingBottom: 10, paddingTop: 8 }, proposalMeta: { color: "#716B64", fontSize: 13 }, proposalConfidence: { color: "#7A5C36", fontSize: 13, marginTop: 4 }, proposalActions: { flexDirection: "row", flexWrap: "wrap", gap: 10 }, metadataRow: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" }, inlineEdit: { flex: 1 }, metadataValue: { color: "#24221F", flex: 1, fontSize: 16, marginTop: 8 }, typeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 }, typeOption: { borderColor: "#B9A895", borderRadius: 10, borderWidth: 1, padding: 8 }, typeSelected: { backgroundColor: "#D5B98D", borderColor: "#8B7355", borderRadius: 10, borderWidth: 1, padding: 8 }, button: { alignSelf: "flex-start", backgroundColor: "#24221F", borderRadius: 12, marginTop: 12, paddingHorizontal: 20, paddingVertical: 12 }, buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" }, error: { color: "#A33B31", fontSize: 14, marginTop: 12 }, success: { color: "#356445", fontSize: 14, marginTop: 12 }, dueBubbles: { flexDirection: "row", gap: 8, marginTop: 10 }, dueBubble: { borderColor: "#B9A895", borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 }, dueBubbleText: { color: "#24221F", fontSize: 16 }, clearDue: { color: "#8C3D25", fontSize: 14, marginTop: 12 }, metadataChoiceChip: { borderColor: "transparent", paddingHorizontal: 12, paddingVertical: 8 }, metadataEntityChipText: { color: "#39344C" }, pickerPanel: { backgroundColor: "#EFEAE2", borderRadius: 16, marginTop: 14, padding: 16 }, pickerHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" }, pickerTitle: { color: "#24221F", fontSize: 17, fontWeight: "700" }, cancelPicker: { color: "#173B2F", fontSize: 14, fontWeight: "700", padding: 8 }, pickerHint: { color: "#716B64", fontSize: 13, marginTop: 8 }, monthRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginVertical: 18 }, calendarGrid: { flexDirection: "row", flexWrap: "wrap" }, calendarDay: { alignItems: "center", justifyContent: "center", minHeight: 38, width: "14.285%" }, calendarDaySelected: { backgroundColor: "#D5B98D", borderRadius: 19 } });
