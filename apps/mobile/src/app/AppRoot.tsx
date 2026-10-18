@@ -14,33 +14,38 @@ import { createOfflineDraftSyncClient } from "../offline/synchronize-offline-dra
 import { createMetadataClient, type MetadataClient, type MetadataLinks } from "../review/metadata";
 import { createOrganizationProposalClient } from "../review/organization-proposals";
 import { ReviewScreen } from "../review/ReviewScreen";
-import { createReviewFixtureClient } from "../review/review";
+import { createReviewClient, createReviewFixtureClient, setTaskCompletion, type ReviewClient } from "../review/review";
 import { createSpacesClient } from "../spaces/spaces";
 import type { TaskNoteDetailMetadata } from "../detail/TaskNoteDetailScreen";
 import { TaskCard } from "../web/TaskNoteCardPrototype";
-import { createBrowserFixtureData, type BrowserFixtureData, type BrowserFixtureTask } from "../web/fixture-data";
+import { createBrowserFixtureData, type BrowserFixtureData } from "../web/fixture-data";
 import { localDateKey } from "../day/selected-day";
 import { getDeviceTimeZone } from "../time-zone";
 import { MaterialsPrototype } from "../materials/MaterialsPrototype";
 import { MaterialsScreen } from "../materials/MaterialsScreen";
+import { TaskActionsPrototype } from "../list/TaskActionsPrototype";
 import type { Entity, Tag } from "../review/metadata";
 
 export default function AppRoot() {
   const uiFixture = process.env.EXPO_PUBLIC_UI_FIXTURE === "true";
   const materialsPrototype = uiFixture && process.env.EXPO_PUBLIC_MATERIALS_PROTOTYPE === "true";
+  const taskActionsPrototype = uiFixture && process.env.EXPO_PUBLIC_TASK_ACTIONS_PROTOTYPE === "true";
   const [detailUrl, setDetailUrl] = useState<string | null>(null);
+  const [detailInitialEditing, setDetailInitialEditing] = useState(false);
   const [fixtureMode, setFixtureMode] = useState(process.env.EXPO_PUBLIC_REVIEW_FIXTURE === "task" || process.env.EXPO_PUBLIC_REVIEW_FIXTURE === "note");
   const [tab, setTab] = useState<ShellTab>("home");
   const [captureRequest, setCaptureRequest] = useState(0);
   const [showToday, setShowToday] = useState(false);
   const [showMaterialsPrototype, setShowMaterialsPrototype] = useState(false);
   const [materialsDetailUrl, setMaterialsDetailUrl] = useState<string | null>(null);
+  const [materialsInitialEditing, setMaterialsInitialEditing] = useState(false);
   const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:3000";
   const timeZone = getDeviceTimeZone();
   const recorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
   const recorderState = useAudioRecorderState(recorder, 150);
   const offlineDraftStore = useMemo(() => uiFixture || typeof window !== "undefined" ? createMemoryOfflineDraftStore() : createExpoOfflineDraftStore(), [uiFixture]);
   const offlineDraftSyncClient = useMemo(() => createOfflineDraftSyncClient(apiBaseUrl, { readBase64: readRecordedAudioAsBase64 }), [apiBaseUrl]);
+  const reviewClient = useMemo(() => createReviewClient(apiBaseUrl), [apiBaseUrl]);
   const memberId = process.env.EXPO_PUBLIC_MEMBER_ID ?? "member-1";
   const fixtureData = useMemo(() => uiFixture ? createBrowserFixtureData() : undefined, [uiFixture]);
   const [fixtureSpaceIds, setFixtureSpaceIds] = useState<Record<string, string | null>>({});
@@ -54,16 +59,17 @@ export default function AppRoot() {
   const fixtureOutcome = useMemo(() => fixtureData && reviewUrl ? fixtureOutcomeForUrl(fixtureData, reviewUrl) : undefined, [fixtureData, reviewUrl]);
   const fixtureClient = useMemo(() => uiFixture && activeFixtureMode ? createReviewFixtureClient(fixtureOutcome?.kind ?? fixtureKind, fixtureOutcome) : undefined, [activeFixtureMode, fixtureKind, fixtureOutcome, uiFixture]);
   const fixtureMetadata = uiFixture && fixtureData && reviewUrl ? fixtureDetailMetadata(fixtureData, reviewUrl, fixtureSpaceIds, fixtureTagIds, setFixtureSpaceIds, setFixtureTagIds) : undefined;
-  const materialsDetail = materialsDetailUrl ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} detailUrl={materialsDetailUrl} {...(fixtureMetadata ? { detailMetadata: fixtureMetadata } : {})} {...(!activeFixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(activeFixtureMode && fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} {...(activeFixtureMode ? { client: fixtureClient ?? createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => setMaterialsDetailUrl(null)} /> : undefined;
-  const materialsScreen = <MaterialsScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} {...(fixtureItems ? { client: fixtureItems } : {})} {...(fixtureSpacesClient ? { spacesClient: fixtureSpacesClient } : {})} {...(fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} onOpenDetail={setMaterialsDetailUrl} detailUrl={materialsDetailUrl} detail={materialsDetail} />;
+  const materialsDetail = materialsDetailUrl ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} detailUrl={materialsDetailUrl} initialEditing={materialsInitialEditing} {...(fixtureMetadata ? { detailMetadata: fixtureMetadata } : {})} {...(!activeFixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(activeFixtureMode && fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} {...(activeFixtureMode ? { client: fixtureClient ?? createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => { setMaterialsDetailUrl(null); setMaterialsInitialEditing(false); }} /> : undefined;
+  const materialsScreen = <MaterialsScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} {...(fixtureItems ? { client: fixtureItems } : {})} {...(fixtureSpacesClient ? { spacesClient: fixtureSpacesClient } : {})} {...(fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} onOpenDetail={(url) => { setMaterialsInitialEditing(false); setMaterialsDetailUrl(url); }} onEditDetail={(url) => { setMaterialsInitialEditing(true); setMaterialsDetailUrl(url); }} detailUrl={materialsDetailUrl} detail={materialsDetail} />;
   const openCapture = () => { setTab("home"); setCaptureRequest((request) => request + 1); };
-  const content = detailUrl || fixtureMode
-    ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} detailUrl={detailUrl ?? "/captures/demo-capture-1/review"} {...(fixtureMetadata ? { detailMetadata: fixtureMetadata } : {})} {...(!activeFixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(activeFixtureMode && fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} {...(activeFixtureMode ? { client: fixtureClient ?? createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => { setDetailUrl(null); setFixtureMode(false); }} />
-    : showToday ? <SelectedDayTaskScreen apiBaseUrl={apiBaseUrl} memberId={memberId} selectedDate={localDateKey(new Date(), timeZone)} timeZone={timeZone} renderTask={(task) => <PressableTaskRow title={task.title} detailUrl={task.detailUrl} timeZone={timeZone} onOpenDetail={setDetailUrl} />} />
+  const content = taskActionsPrototype ? <TaskActionsPrototype />
+    : detailUrl || fixtureMode
+    ? <ReviewScreen apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={timeZone} detailUrl={detailUrl ?? "/captures/demo-capture-1/review"} initialEditing={detailInitialEditing} {...(fixtureMetadata ? { detailMetadata: fixtureMetadata } : {})} {...(!activeFixtureMode ? { metadataClient: createMetadataClient(apiBaseUrl), organizationProposalClient: createOrganizationProposalClient(apiBaseUrl), spacesClient: createSpacesClient(apiBaseUrl) } : {})} {...(activeFixtureMode && fixtureMetadataClient ? { metadataClient: fixtureMetadataClient } : {})} {...(activeFixtureMode ? { client: fixtureClient ?? createReviewFixtureClient(fixtureKind) } : {})} offlineDraftStore={offlineDraftStore} onBack={() => { setDetailUrl(null); setDetailInitialEditing(false); setFixtureMode(false); }} />
+    : showToday ? <SelectedDayTaskScreen apiBaseUrl={apiBaseUrl} memberId={memberId} selectedDate={localDateKey(new Date(), timeZone)} timeZone={timeZone} renderTask={(task) => <PressableTaskRow task={task} memberId={memberId} client={reviewClient} timeZone={timeZone} onOpenDetail={(url) => { setDetailInitialEditing(false); setDetailUrl(url); }} onEditDetail={(url) => { setDetailInitialEditing(true); setDetailUrl(url); }} />} />
     : tab === "find" ? materialsScreen
     : tab === "calendar" ? <CalendarSurface />
     : tab === "me" ? (materialsPrototype && showMaterialsPrototype ? <MaterialsPrototype timeZone={timeZone} /> : <MeSurface onOpenMaterials={() => materialsPrototype ? setShowMaterialsPrototype(true) : setTab("find")} />)
-    : <MemberListScreen apiBaseUrl={apiBaseUrl} {...(fixtureItems ? { client: fixtureItems } : {})} memberId={memberId} timeZone={timeZone} home={tab === "home" && process.env.NODE_ENV !== "test"} onOpenToday={() => setShowToday(true)} onOpenDetail={setDetailUrl} voiceRecorder={createExpoVoiceRecorder(recorder)} recordingMetering={recorderState.metering} recordingInterrupted={recorderState.mediaServicesDidReset} captureSubmitter={createCaptureSubmitter(apiBaseUrl, readRecordedAudioAsBase64)} offlineDraftStore={offlineDraftStore} offlineDraftSyncClient={offlineDraftSyncClient} captureRequest={captureRequest} />;
+    : <MemberListScreen apiBaseUrl={apiBaseUrl} {...(fixtureItems ? { client: fixtureItems } : {})} memberId={memberId} timeZone={timeZone} home={tab === "home" && process.env.NODE_ENV !== "test"} onOpenToday={() => setShowToday(true)} onOpenDetail={(url) => { setDetailInitialEditing(false); setDetailUrl(url); }} onEditDetail={(url) => { setDetailInitialEditing(true); setDetailUrl(url); }} voiceRecorder={createExpoVoiceRecorder(recorder)} recordingMetering={recorderState.metering} recordingInterrupted={recorderState.mediaServicesDidReset} captureSubmitter={createCaptureSubmitter(apiBaseUrl, readRecordedAudioAsBase64)} offlineDraftStore={offlineDraftStore} offlineDraftSyncClient={offlineDraftSyncClient} captureRequest={captureRequest} />;
   return <SafeAreaProvider><AppShell tab={tab} onTabChange={(nextTab) => { setTab(nextTab); setShowToday(false); }} onCapture={openCapture}>{content}</AppShell></SafeAreaProvider>;
 }
 
@@ -93,9 +99,19 @@ function createFixtureMetadataClient(fixture: BrowserFixtureData, memberId: stri
   };
 }
 
-function PressableTaskRow({ title, detailUrl, timeZone, onOpenDetail }: { readonly title: string; readonly detailUrl: string; readonly timeZone: string; readonly onOpenDetail: (url: string) => void }) {
-  const task: BrowserFixtureTask = { id: detailUrl, title, status: "open", tagIds: [], entityIds: [] };
-  return <TaskCard task={task} timeZone={timeZone} today={localDateKey(new Date(), timeZone)} onPress={() => onOpenDetail(detailUrl)} />;
+function PressableTaskRow({ task, memberId, client, timeZone, onOpenDetail, onEditDetail }: { readonly task: import("../list/member-items").TaskListItem; readonly memberId: string; readonly client: ReviewClient; readonly timeZone: string; readonly onOpenDetail: (url: string) => void; readonly onEditDetail: (url: string) => void }) {
+  const [status, setStatus] = useState(task.state);
+  const [saveState, setSaveState] = useState<"saved" | "pending" | "error">("saved");
+  const updateStatus = async (completed: boolean): Promise<boolean> => {
+    setSaveState("pending");
+    try {
+      const result = await setTaskCompletion(client, task.detailUrl, memberId, completed);
+      setStatus(result.status); setSaveState("saved"); return true;
+    } catch {
+      setSaveState("error"); return false;
+    }
+  };
+  return <TaskCard task={{ id: task.id, title: task.title, ...(task.dueAt ? { dueAt: task.dueAt } : {}), status }} timeZone={timeZone} today={localDateKey(new Date(), timeZone)} saveState={saveState} onRetry={() => void updateStatus(status !== "completed")} onSetCompleted={updateStatus} onPress={() => onOpenDetail(task.detailUrl)} onEdit={() => onEditDetail(task.detailUrl)} />;
 }
 
 function fixtureDueAt(value: string | undefined, index: number): string | undefined {

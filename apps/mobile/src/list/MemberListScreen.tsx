@@ -15,6 +15,7 @@ import { createSpacesClient, type Space } from "../spaces/spaces";
 import { createMetadataClient, type Entity, type Tag } from "../review/metadata";
 import { loadCompleteMemberItems, localDateKey } from "../day/selected-day";
 import { TaskCard } from "../web/TaskNoteCardPrototype";
+import { createReviewClient, setTaskCompletion } from "../review/review";
 import type { BrowserFixtureTask } from "../web/fixture-data";
 import { getDeviceTimeZone } from "../time-zone";
 
@@ -24,6 +25,7 @@ interface MemberListScreenProps {
   readonly memberId: string;
   readonly timeZone?: string;
   readonly onOpenDetail?: (detailUrl: string) => void;
+  readonly onEditDetail?: (detailUrl: string) => void;
   readonly voiceRecorder?: VoiceRecorder;
   readonly recordingMetering?: number | undefined;
   readonly recordingInterrupted?: boolean;
@@ -46,10 +48,11 @@ type TimelineItem =
   | { readonly kind: "server_item"; readonly item: MemberListItem };
 type AssignableItem = Extract<MemberListItem, { kind: "task" | "note" }>;
 
-export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId, timeZone, onOpenDetail, voiceRecorder, recordingMetering, recordingInterrupted = false, captureSubmitter, offlineDraftStore, offlineDraftSyncClient, captureRequest = 0, home = false, onOpenToday }: MemberListScreenProps) {
+export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId, timeZone, onOpenDetail, onEditDetail, voiceRecorder, recordingMetering, recordingInterrupted = false, captureSubmitter, offlineDraftStore, offlineDraftSyncClient, captureRequest = 0, home = false, onOpenToday }: MemberListScreenProps) {
   const effectiveTimeZone = timeZone ?? getDeviceTimeZone();
   const client = useMemo(() => providedClient ?? createMemberItemsClient(apiBaseUrl), [apiBaseUrl, providedClient]);
   const spacesClient = useMemo(() => createSpacesClient(apiBaseUrl), [apiBaseUrl]);
+  const reviewClient = useMemo(() => createReviewClient(apiBaseUrl), [apiBaseUrl]);
   const [state, setState] = useState<ListState>(initialListState);
   const [completeHomeItems, setCompleteHomeItems] = useState<readonly MemberListItem[]>([]);
   const [homeLoadStatus, setHomeLoadStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -68,6 +71,8 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
   const [assigningItemId, setAssigningItemId] = useState<string | null>(null);
   const [spaceError, setSpaceError] = useState<string | null>(null);
   const [failedAssignment, setFailedAssignment] = useState<{ readonly item: AssignableItem; readonly spaceId: string | null } | null>(null);
+  const [homeTaskSaveStates, setHomeTaskSaveStates] = useState<Record<string, "pending" | "error">>({});
+  const [homeTaskSaveError, setHomeTaskSaveError] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [filters, setFilters] = useState<SearchFilters>({});
@@ -396,11 +401,22 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
     finally { setAssigningItemId(null); }
   }, [memberId, refresh, spacesClient]);
 
-  const setTaskCompleted = useCallback((taskId: string, completed: boolean) => {
-    const state = completed ? "completed" : "open";
-    setCompleteHomeItems((items) => items.map((item) => item.id === taskId && item.kind === "task" ? { ...item, state } : item));
-    setState((current) => ({ ...current, items: current.items.map((item) => item.id === taskId && item.kind === "task" ? { ...item, state } : item) } as ListState));
-  }, []);
+  const setTaskCompleted = useCallback(async (task: Extract<MemberListItem, { kind: "task" }>, completed: boolean): Promise<boolean> => {
+    setHomeTaskSaveStates((current) => ({ ...current, [task.id]: "pending" }));
+    setHomeTaskSaveError(null);
+    try {
+      const saved = await setTaskCompletion(reviewClient, task.detailUrl, memberId, completed);
+      const state = saved.status;
+      setCompleteHomeItems((items) => items.map((item) => item.id === task.id && item.kind === "task" ? { ...item, state } : item));
+      setState((current) => ({ ...current, items: current.items.map((item) => item.id === task.id && item.kind === "task" ? { ...item, state } : item) } as ListState));
+      setHomeTaskSaveStates((current) => { const next = { ...current }; delete next[task.id]; return next; });
+      return true;
+    } catch (cause) {
+      setHomeTaskSaveStates((current) => ({ ...current, [task.id]: "error" }));
+      setHomeTaskSaveError(cause instanceof Error ? cause.message : "Unable to complete Task");
+      return false;
+    }
+  }, [memberId, reviewClient]);
 
   useEffect(() => {
     if (capture.status !== "recording") {
@@ -434,6 +450,7 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
       {!home ? <><SpacePanel client={spacesClient} memberId={memberId} selectedSpaceId={selectedSpaceId} onSelect={setSelectedSpaceId} onSpacesChanged={setSpaces} />
       <SearchFilterPanel open={searchOpen} text={searchText} filters={filters} options={filterOptions} onOpen={openSearch} onTextChange={setSearchText} onApplyText={() => applyFilters(withTextFilter(filters, searchText))} onApply={applyFilters} onClear={clearFilters} onRetry={openSearch} /></> : null}
       {spaceError && failedAssignment ? <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{spaceError}</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry Space assignment" onPress={() => void assignItem(failedAssignment.item, failedAssignment.spaceId)}><Text style={styles.retryText}>Retry assignment</Text></Pressable></View> : null}
+      {homeTaskSaveError ? <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorText}>{homeTaskSaveError}</Text></View> : null}
       {voiceRecorder && capture.status !== "idle" ? <CapturePanel state={capture} recordingElapsedSeconds={recordingElapsedSeconds} recordingMetering={recordingMetering} recordingInterrupted={recordingInterrupted} onStop={() => void stopCapture()} onCancel={() => void cancelCapture()} onSubmit={(audio) => void submitCapture(audio)} /> : null}
       {preview ? <ResultPreview state={preview} apiBaseUrl={apiBaseUrl} memberId={memberId} timeZone={effectiveTimeZone} onSave={saveResultPreview} onOpenReview={setCaptureReviewUrl} onOpenResultReview={openResultReview} /> : null}
       {offlineDraftError ? <OfflineDraftErrorBanner message={offlineDraftError} /> : null}
@@ -452,10 +469,12 @@ export function MemberListScreen({ apiBaseUrl, client: providedClient, memberId,
           onEndReachedThreshold={0.5}
           ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.footer} /> : state.status === "pagination_error" ? <PaginationError message={state.message} onRetry={() => void load(false, state.failedCursor)} /> : null}
           contentContainerStyle={styles.list}
-          renderItem={({ item: entry }) => entry.kind === "offline_draft"
-            ? <OfflineDraftCard draft={entry.draft} sync={offlineDraftSync[entry.draft.draftId]} deleting={deletingDraftId === entry.draft.draftId} onDelete={() => void deleteOfflineDraft(entry.draft.draftId)} onSync={() => retryOfflineDraft(entry.draft.draftId)} />
-            : home && entry.item.kind === "task" ? <TaskCard task={toCardTask(entry.item)} timeZone={effectiveTimeZone} today={homeDate} onPress={() => onOpenDetail?.(entry.item.detailUrl)} onSetCompleted={(completed) => setTaskCompleted(entry.item.id, completed)} />
-            : <ListCard item={entry.item} spaces={spaces} assigning={assigningItemId === entry.item.id} onAssign={(item, spaceId) => void assignItem(item, spaceId)} onPress={onOpenDetail} />}
+          renderItem={({ item: entry }) => {
+            if (entry.kind === "offline_draft") return <OfflineDraftCard draft={entry.draft} sync={offlineDraftSync[entry.draft.draftId]} deleting={deletingDraftId === entry.draft.draftId} onDelete={() => void deleteOfflineDraft(entry.draft.draftId)} onSync={() => retryOfflineDraft(entry.draft.draftId)} />;
+            const item = entry.item;
+            if (home && item.kind === "task") return <TaskCard task={toCardTask(item)} timeZone={effectiveTimeZone} today={homeDate} saveState={homeTaskSaveStates[item.id] ?? "saved"} onRetry={() => void setTaskCompleted(item, item.state !== "completed")} onPress={() => onOpenDetail?.(item.detailUrl)} onEdit={() => onEditDetail?.(item.detailUrl)} onSetCompleted={(completed) => setTaskCompleted(item, completed)} />;
+            return <ListCard item={item} spaces={spaces} assigning={assigningItemId === item.id} onAssign={(assignable, spaceId) => void assignItem(assignable, spaceId)} onPress={onOpenDetail} />;
+          }}
         />
       ) : null}
     </SafeAreaView>

@@ -1,19 +1,20 @@
 /** Shared Task and Note card presentation used by the real client and UI fixtures. */
-import { useRef, useState } from "react";
-import { Dimensions, Modal, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Animated, Dimensions, Easing, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 import type { ReactNode } from "react";
 import { tokens } from "../design-system";
 
 interface SharedProps {
   readonly onPress: () => void;
+  readonly onEdit?: () => void;
 }
 export type CardSaveState = "saved" | "pending" | "error";
 export type TaskCardData = { readonly id: string; readonly title: string; readonly dueAt?: string; readonly status: "open" | "completed"; readonly space?: string; readonly tags?: readonly string[] };
 export type NoteCardData = { readonly id: string; readonly content: string; readonly reviewState: "none" | "needs_review"; readonly space?: string; readonly tags?: readonly string[] };
 
-export function TaskCard({ task, onPress, onSetCompleted, saveState = "saved", onRetry, timeZone, today }: SharedProps & {
+export function TaskCard({ task, onPress, onEdit, onSetCompleted, saveState = "saved", onRetry, timeZone, today }: SharedProps & {
   readonly task: TaskCardData;
-  readonly onSetCompleted?: (completed: boolean) => void;
+  readonly onSetCompleted?: (completed: boolean) => void | Promise<boolean>;
   readonly saveState?: CardSaveState;
   readonly onRetry?: () => void;
   readonly timeZone: string;
@@ -22,28 +23,29 @@ export function TaskCard({ task, onPress, onSetCompleted, saveState = "saved", o
   const completed = task.status === "completed";
   const canComplete = !completed && saveState === "saved" && !!onSetCompleted;
   return <CardFrame kind="Task" title={task.title} badge={formatDue(task.dueAt, timeZone, today)} mutedBadge={!task.dueAt}
-    completed={completed} onPress={onPress}
+    completed={completed} onPress={onPress} onEdit={onEdit}
     onComplete={canComplete ? () => onSetCompleted?.(true) : undefined}
     onSetCompleted={completed && saveState === "saved" ? onSetCompleted : undefined}
     metadata={<Metadata space={task.space} tags={task.tags ?? []} />}
-    status={saveState === "pending" ? <Text style={styles.pending} accessibilityLiveRegion="polite">Saving… · completion unavailable</Text> : saveState === "error" ? <View style={styles.errorRow}><Text style={styles.error} accessibilityRole="alert">Not saved · task still open</Text>{onRetry ? <Pressable accessibilityRole="button" accessibilityLabel={`Retry saving ${task.title}`} onPress={onRetry} style={styles.retry}><Text style={styles.error}>Retry</Text></Pressable> : null}</View> : completed ? <Text style={styles.completedLabel}>✓ Completed</Text> : null} />;
+    status={saveState === "pending" ? <Text style={styles.pending} accessibilityLiveRegion="polite">Saving Task status…</Text> : saveState === "error" ? <View style={styles.errorRow}><Text style={styles.error} accessibilityRole="alert">Task status unchanged · not saved</Text>{onRetry ? <Pressable accessibilityRole="button" accessibilityLabel={`Retry saving ${task.title}`} onPress={onRetry} style={styles.retry}><Text style={styles.error}>Retry</Text></Pressable> : null}</View> : completed ? <Text style={styles.completedLabel}>✓ Completed</Text> : null} />;
 }
 
-export function NoteCard({ note, onPress }: SharedProps & { readonly note: NoteCardData }) {
+export function NoteCard({ note, onPress, onEdit }: SharedProps & { readonly note: NoteCardData }) {
   return <CardFrame kind="Note" title={note.content} badge={note.reviewState === "needs_review" ? "Needs review" : undefined}
-    onPress={onPress}
+    onPress={onPress} onEdit={onEdit}
     metadata={<Metadata space={note.space} tags={note.tags ?? []} />} />;
 }
 
-function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, onPress, onComplete, onSetCompleted, metadata, status }: {
+function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, onPress, onEdit, onComplete, onSetCompleted, metadata, status }: {
   readonly kind: "Task" | "Note";
   readonly title: string;
   readonly badge?: string | undefined;
   readonly mutedBadge?: boolean;
   readonly completed?: boolean;
   readonly onPress: () => void;
-  readonly onComplete?: (() => void) | undefined;
-  readonly onSetCompleted?: ((completed: boolean) => void) | undefined;
+  readonly onEdit?: (() => void) | undefined;
+  readonly onComplete?: (() => void | Promise<boolean>) | undefined;
+  readonly onSetCompleted?: ((completed: boolean) => void | Promise<boolean>) | undefined;
   readonly metadata: ReactNode;
   readonly status?: ReactNode;
 }) {
@@ -51,8 +53,22 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
   const [swipedAway, setSwipedAway] = useState(false);
   const swipeDx = useRef(0);
   const [menu, setMenu] = useState(false);
+  const [actionsMounted, setActionsMounted] = useState(false);
+  const actionProgress = useRef(new Animated.Value(0)).current;
   const suppressPress = useRef(false);
   const note = kind === "Note";
+  useEffect(() => {
+    if (menu) {
+      setActionsMounted(true);
+      actionProgress.setValue(0);
+      const animation = Animated.timing(actionProgress, { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: false });
+      animation.start();
+      return () => animation.stop();
+    }
+    const animation = Animated.timing(actionProgress, { toValue: 0, duration: 170, easing: Easing.out(Easing.cubic), useNativeDriver: false });
+    animation.start(({ finished }) => { if (finished) setActionsMounted(false); });
+    return () => animation.stop();
+  }, [actionProgress, menu]);
   const shouldCaptureSwipe = (_: unknown, gesture: { readonly dx: number; readonly dy: number }) =>
     !!onComplete && Math.abs(gesture.dx) > 14 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5;
   const swipe = PanResponder.create({
@@ -61,16 +77,19 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
     onPanResponderTerminationRequest: () => false,
     onPanResponderGrant: () => { suppressPress.current = true; swipeDx.current = 0; setDragX(0); },
     onPanResponderMove: (_, gesture) => { swipeDx.current = gesture.dx; setDragX(Math.max(-Dimensions.get("window").width, Math.min(0, gesture.dx))); },
-    onPanResponderRelease: (_, gesture) => {
+    onPanResponderRelease: async (_, gesture) => {
       const dx = swipeDx.current || gesture.dx;
-      if (dx < -120) { setSwipedAway(true); onComplete?.(); }
+      if (dx < -120) {
+        const saved = await onComplete?.();
+        if (saved !== false) setSwipedAway(true);
+      }
       swipeDx.current = 0;
       setDragX(0);
     },
     onPanResponderTerminate: () => { suppressPress.current = true; swipeDx.current = 0; setDragX(0); },
   });
   const complete = () => { setMenu(false); onComplete?.(); };
-  const toggleCompleted = () => { setMenu(false); onSetCompleted?.(!completed); };
+  const reopen = () => { setMenu(false); onSetCompleted?.(false); };
   return <View style={styles.wrapper}>
     <View style={styles.clip}>
       <View
@@ -79,27 +98,47 @@ function CardFrame({ kind, title, badge, mutedBadge = false, completed = false, 
       >
         <Pressable accessibilityRole="button" accessibilityLabel={`Open ${kind} ${title}`} onPressIn={() => { suppressPress.current = false; }}
           onPress={() => { if (!suppressPress.current) onPress(); }}
-          delayLongPress={500} onLongPress={() => { suppressPress.current = true; setMenu(true); }} style={styles.body}>
+          delayLongPress={500} onLongPress={() => { suppressPress.current = true; setMenu((value) => !value); }} style={styles.body}>
           <View style={styles.header}><ItemIcon note={note} />{badge ? <Text numberOfLines={1} style={[styles.badge, note && styles.review, mutedBadge && styles.mutedBadge]}>{badge}</Text> : null}</View>
           <Text numberOfLines={note ? 3 : 2} style={[styles.title, note && styles.preview, completed && styles.struck]}>{title}</Text>
           {metadata}
         </Pressable>
-        <Pressable accessibilityRole="button" accessibilityLabel={`Actions for ${kind} ${title}`} accessibilityState={{ expanded: menu }} onPress={() => setMenu(true)} style={styles.more}><Text style={styles.moreText}>⋯</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Actions for ${kind} ${title}`} accessibilityState={{ expanded: menu }} onPress={() => setMenu((value) => !value)} style={styles.more}><Text style={styles.moreText}>⋯</Text></Pressable>
         {status}
+        {actionsMounted ? <Animated.View
+          accessibilityLabel={`${kind} actions`}
+          accessibilityElementsHidden={false}
+          importantForAccessibility="auto"
+          pointerEvents={menu ? "auto" : "none"}
+          style={[styles.actionReveal, {
+            height: actionProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 60] }),
+            opacity: actionProgress,
+            transform: [{ translateY: actionProgress.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] }) }],
+          }]}
+        >
+          <View style={styles.taskActions}>
+            {kind === "Task" && onComplete ? <TaskMenuAction icon="✓" label="Complete" accessibilityLabel={`Mark complete ${title}`} accessibilityHint="Marks this Task complete" onPress={complete} /> : null}
+            {kind === "Task" && onSetCompleted ? <TaskMenuAction icon="↶" label="Reopen" accessibilityLabel={`Mark incomplete ${title}`} accessibilityHint="Reopens this Task" onPress={reopen} /> : null}
+            <TaskMenuAction icon="↗" label="View" accessibilityLabel={`View ${kind.toLowerCase()} ${title}`} accessibilityHint={`Opens ${kind.toLowerCase()} details`} onPress={() => { setMenu(false); onPress(); }} />
+            {onEdit ? <TaskMenuAction icon="✎" label="Edit" accessibilityLabel={`Edit ${kind.toLowerCase()} ${title}`} accessibilityHint={`Opens ${kind.toLowerCase()} details in edit mode`} onPress={() => { setMenu(false); onEdit(); }} /> : null}
+          </View>
+        </Animated.View> : null}
       </View>
     </View>
-    <Modal visible={menu} transparent animationType="fade" onRequestClose={() => setMenu(false)}>
-      <View style={styles.modalRoot}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Dismiss card actions" onPress={() => setMenu(false)} style={styles.backdrop} />
-        <View accessibilityViewIsModal style={styles.menu}>
-          <Text numberOfLines={2} style={styles.menuTitle}>{title}</Text>
-          {onComplete ? <Pressable accessibilityRole="button" onPress={complete} accessibilityLabel={`Mark complete ${title}`} style={styles.menuAction}><Text style={styles.menuText}>✓  Mark complete</Text></Pressable> : onSetCompleted ? <Pressable accessibilityRole="button" onPress={toggleCompleted} accessibilityLabel={`Mark incomplete ${title}`} style={styles.menuAction}><Text style={styles.menuText}>↶  Mark incomplete</Text></Pressable> : null}
-          <Pressable accessibilityRole="button" onPress={() => { setMenu(false); onPress(); }} style={styles.menuAction}><Text style={styles.menuText}>Edit {kind.toLowerCase()}</Text></Pressable>
-          <Pressable accessibilityRole="button" onPress={() => setMenu(false)} style={styles.menuAction}><Text style={styles.meta}>Cancel</Text></Pressable>
-        </View>
-      </View>
-    </Modal>
   </View>;
+}
+
+function TaskMenuAction({ icon, label, accessibilityLabel, accessibilityHint, onPress }: {
+  readonly icon: string;
+  readonly label: string;
+  readonly accessibilityLabel: string;
+  readonly accessibilityHint: string;
+  readonly onPress: () => void;
+}) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel} accessibilityHint={accessibilityHint} onPress={onPress} style={styles.taskAction}>
+    <Text style={styles.taskActionIcon} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{icon}</Text>
+    <Text numberOfLines={1} style={styles.taskActionLabel}>{label}</Text>
+  </Pressable>;
 }
 
 /** Match the shell's existing View-based outline icons without a new dependency. */
@@ -150,6 +189,5 @@ const styles = StyleSheet.create({
   iconLine: { height: 1.5, backgroundColor: tokens.colors.green }, shortLine: { width: 6 },
   pending: { backgroundColor: tokens.colors.butter, color: "#71521C", padding: 12, fontSize: 12 },
   errorRow: { backgroundColor: "#FFF0EA", paddingLeft: 14, paddingRight: 6, flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }, error: { color: "#9B392B", fontSize: 12 }, retry: { minHeight: 44, paddingHorizontal: 8, justifyContent: "center" }, completedLabel: { paddingHorizontal: 16, paddingBottom: 12, color: tokens.colors.green, fontSize: 12 },
-  modalRoot: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }, backdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(36,34,31,0.18)" },
-  menu: { width: "100%", maxWidth: 340, padding: 12, backgroundColor: tokens.colors.surface, borderRadius: 18, borderWidth: 1, borderColor: tokens.colors.border }, menuTitle: { color: tokens.colors.muted, fontSize: 13, padding: 12 }, menuAction: { minHeight: 44, paddingHorizontal: 12, justifyContent: "center" }, menuText: { color: tokens.colors.green, fontSize: 15 },
+  actionReveal: { overflow: "hidden" }, taskActions: { alignItems: "stretch", backgroundColor: "#F5F5F1", borderTopColor: tokens.colors.border, borderTopWidth: 1, borderBottomLeftRadius: tokens.radius.card, borderBottomRightRadius: tokens.radius.card, flexDirection: "row", gap: 4, paddingHorizontal: 6, paddingVertical: 3 }, taskAction: { alignItems: "center", flex: 1, justifyContent: "center", minHeight: 54, minWidth: 0, paddingHorizontal: 2 }, taskActionIcon: { color: tokens.colors.green, fontSize: 18, fontWeight: "800", lineHeight: 22 }, taskActionLabel: { color: tokens.colors.ink, fontSize: 11, fontWeight: "700", marginTop: 2 },
 });

@@ -23,6 +23,7 @@ export interface TaskNoteDetailMetadata {
 interface TaskNoteDetailScreenProps {
   readonly item: TaskNoteDetailItem;
   readonly onBack: () => void;
+  readonly initialEditing?: boolean;
   readonly onSave: (draft: TaskNoteDetailDraft) => void | TaskNoteDetailDraft | Promise<void | TaskNoteDetailDraft>;
   readonly onChangeStatus?: () => void | Promise<void>;
   readonly onConvert?: (() => void | Promise<void>) | undefined;
@@ -35,11 +36,11 @@ interface TaskNoteDetailScreenProps {
   readonly notice?: string | null;
 }
 
-export function TaskNoteDetailScreen({ item, onBack, onSave, onChangeStatus, onConvert, metadata, tagEntityControls, saving = false, statusBusy = false, converting = false, error, notice }: TaskNoteDetailScreenProps) {
+export function TaskNoteDetailScreen({ item, onBack, initialEditing = false, onSave, onChangeStatus, onConvert, metadata, tagEntityControls, saving = false, statusBusy = false, converting = false, error, notice }: TaskNoteDetailScreenProps) {
   const initialText = item.kind === "task" ? item.title : item.content;
   const [draftText, setDraftText] = useState(initialText);
   const [draftDue, setDraftDue] = useState(item.kind === "task" ? item.dueAt : null);
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(initialEditing);
   const [editingDue, setEditingDue] = useState(false);
   const [metadataPanel, setMetadataPanel] = useState<"space" | "tags" | null>(null);
   const [taskSaved, setTaskSaved] = useState(false);
@@ -47,9 +48,9 @@ export function TaskNoteDetailScreen({ item, onBack, onSave, onChangeStatus, onC
   useEffect(() => {
     setDraftText(initialText);
     setDraftDue(item.kind === "task" ? item.dueAt : null);
-    setEditing(false);
+    setEditing(initialEditing);
     setEditingDue(false);
-  }, [item.id, item.kind, item.kind === "note" ? item.content : null]);
+  }, [initialEditing, item.id, item.kind, item.kind === "note" ? item.content : null]);
 
   const dirty = item.kind === "task" ? draftText !== item.title || draftDue !== item.dueAt : draftText !== item.content;
   const saveDraft = async () => {
