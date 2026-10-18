@@ -4,6 +4,7 @@
   "private": true,
   "main": "./index.ts",
   "scripts": {
+    "lint": "eslint . --ext .ts,.tsx",
     "start": "expo start",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",

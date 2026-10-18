@@ -15,6 +15,7 @@
     "fsevents": false
   },
   "scripts": {
+    "lint": "npm run lint --workspace @personal-assistant/api && npm run lint --workspace @personal-assistant/mobile",
     "build": "npm run build --workspace @personal-assistant/api",
     "start": "npm run start --workspace @personal-assistant/api",
     "dev": "npm run dev --workspace @personal-assistant/api",
@@ -33,5 +34,10 @@
     "mobile:materials-prototype": "EXPO_PUBLIC_UI_FIXTURE=true EXPO_PUBLIC_MATERIALS_PROTOTYPE=true npm run start --workspace @personal-assistant/mobile",
     "mobile:web:materials-prototype": "EXPO_PUBLIC_UI_FIXTURE=true EXPO_PUBLIC_MATERIALS_PROTOTYPE=true npm run web --workspace @personal-assistant/mobile",
     "dev:all": "node scripts/start-dev.mjs"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript-eslint": "^8.71.2"
   }
 }
