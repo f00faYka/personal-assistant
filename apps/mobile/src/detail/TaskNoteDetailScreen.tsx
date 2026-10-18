@@ -28,7 +28,7 @@ interface TaskNoteDetailScreenProps {
   readonly onChangeStatus?: () => void | Promise<void>;
   readonly onConvert?: (() => void | Promise<void>) | undefined;
   readonly metadata?: TaskNoteDetailMetadata;
-  readonly tagEntityControls?: ((editable: boolean) => ReactNode) | undefined;
+  readonly tagEntityControls?: (() => ReactNode) | undefined;
   readonly saving?: boolean;
   readonly statusBusy?: boolean;
   readonly converting?: boolean;
@@ -111,14 +111,14 @@ export function TaskNoteDetailScreen({ item, onBack, initialEditing = false, onS
   </View>;
 }
 
-function Metadata({ item, metadata, panel, setPanel, tagEntityControls, editable }: { readonly item: TaskNoteDetailItem; readonly metadata: TaskNoteDetailMetadata | undefined; readonly panel: "space" | "tags" | null; readonly setPanel: (value: "space" | "tags" | null) => void; readonly tagEntityControls?: ((editable: boolean) => ReactNode) | undefined; readonly editable: boolean }) {
+function Metadata({ item, metadata, panel, setPanel, tagEntityControls, editable }: { readonly item: TaskNoteDetailItem; readonly metadata: TaskNoteDetailMetadata | undefined; readonly panel: "space" | "tags" | null; readonly setPanel: (value: "space" | "tags" | null) => void; readonly tagEntityControls?: (() => ReactNode) | undefined; readonly editable: boolean }) {
   const showSpace = hasMeaningfulSpace(item.space);
   return <View>
     {showSpace || editable ? <View style={styles.propertyRow}>
       <View style={styles.propertyCopy}><Text style={styles.fieldLabel}>SPACE</Text><Text style={styles.value}>{showSpace ? item.space : "No Space"}</Text></View>
       {editable && metadata ? <Pressable accessibilityRole="button" accessibilityLabel="Choose Space" onPress={() => setPanel(panel === "space" ? null : "space")} style={styles.propertyButton}><Text style={styles.propertyButtonText}>Change</Text></Pressable> : null}
     </View> : null}
-    {tagEntityControls ? tagEntityControls(editable) : <BasicTagControls item={item} metadata={metadata} panel={panel} setPanel={setPanel} editable={editable} />}
+    {tagEntityControls ? tagEntityControls() : <BasicTagControls item={item} metadata={metadata} panel={panel} setPanel={setPanel} editable={editable} />}
     {metadata?.error ? <Text accessibilityRole="alert" style={styles.error}>{metadata.error}</Text> : null}
     {panel === "space" && metadata ? <SpacePicker metadata={metadata} close={() => setPanel(null)} /> : null}
   </View>;
