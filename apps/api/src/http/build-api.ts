@@ -17,6 +17,7 @@ import type { MetadataService } from "../features/metadata/metadata.js";
 import { registerMetadataRoutes } from "../features/metadata/metadata-routes.js";
 import type { OrganizationProposalService } from "../features/organization-proposals/organization-proposal.js";
 import { registerOrganizationProposalRoutes } from "../features/organization-proposals/organization-proposal-routes.js";
+import type { OrganizationProposalWorker } from "../features/organization-proposals/organization-proposal-worker.js";
 
 export interface BuildApiOptions extends FastifyServerOptions {
   readonly captureService?: CaptureService;
@@ -30,6 +31,7 @@ export interface BuildApiOptions extends FastifyServerOptions {
   readonly spaceService?: SpaceService;
   readonly metadataService?: MetadataService;
   readonly organizationProposalService?: OrganizationProposalService;
+  readonly organizationProposalWorker?: OrganizationProposalWorker;
 }
 
 export function buildApi(options: BuildApiOptions = {}): FastifyInstance {
@@ -49,7 +51,7 @@ export function buildApi(options: BuildApiOptions = {}): FastifyInstance {
   if (options.offlineDraftService) registerOfflineDraftRoutes(application, options.offlineDraftService);
   if (options.spaceService) registerSpaceRoutes(application, options.spaceService);
   if (options.metadataService) registerMetadataRoutes(application, options.metadataService);
-  if (options.organizationProposalService) registerOrganizationProposalRoutes(application, options.organizationProposalService);
+  if (options.organizationProposalService) registerOrganizationProposalRoutes(application, options.organizationProposalService, options.organizationProposalWorker);
 
   return application;
 }

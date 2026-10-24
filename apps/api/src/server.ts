@@ -26,6 +26,9 @@ import { MetadataService } from "./features/metadata/metadata.js";
 import { SqliteMetadataRepository } from "./infrastructure/sqlite/sqlite-metadata-repository.js";
 import { OrganizationProposalService } from "./features/organization-proposals/organization-proposal.js";
 import { SqliteOrganizationProposalRepository } from "./infrastructure/sqlite/sqlite-organization-proposal-repository.js";
+import { SqliteOrganizationProposalJobRepository } from "./infrastructure/sqlite/sqlite-organization-proposal-job-repository.js";
+import { OrganizationProposalWorker } from "./features/organization-proposals/organization-proposal-worker.js";
+import { LocalOllamaOrganizationProposalGenerator } from "./infrastructure/organization-proposals/local-ollama-organization-proposal-generator.js";
 
 async function start(): Promise<void> {
   loadLocalEnvironment();
@@ -42,8 +45,19 @@ async function start(): Promise<void> {
   const spaceRepository = new SqliteSpaceRepository(configuration.databasePath);
   const metadataRepository = new SqliteMetadataRepository(configuration.databasePath);
   const organizationProposalRepository = new SqliteOrganizationProposalRepository(configuration.databasePath);
+  const organizationProposalJobRepository = new SqliteOrganizationProposalJobRepository(configuration.databasePath);
   const spaceService = new SpaceService(spaceRepository);
   const metadataService = new MetadataService(metadataRepository);
+  const organizationProposalService = new OrganizationProposalService(organizationProposalRepository, { metadataService, spaceService });
+  const organizationProposalWorker = new OrganizationProposalWorker({
+    repository: organizationProposalJobRepository,
+    proposalService: organizationProposalService,
+    provider: new LocalOllamaOrganizationProposalGenerator({ endpoint: configuration.ollamaEndpoint, model: configuration.ollamaModel, timeoutMilliseconds: configuration.ollamaTimeoutMilliseconds }),
+    spaces: spaceService,
+    metadata: metadataService,
+    maxAttempts: 3,
+    onError: (error, itemId) => { console.error(`Organization proposal generation failed for item ${itemId}`, error); },
+  });
   const captureService = new CaptureService(repository, new FileSystemBlobStorage(configuration.blobRoot));
   const interpretationWorker = new InterpretationWorker({
     service: new InterpretationService(interpretationRepository),
@@ -56,6 +70,7 @@ async function start(): Promise<void> {
     repository: interpretationJobRepository,
     transcriptionRepository,
     captureReader: captureService,
+    onOutcomeMaterialized: (outcome, transcriptionText) => organizationProposalWorker.outcomeCreated(outcome, transcriptionText),
     maxAttempts: configuration.interpretationMaxAttempts,
     onError: (error, transcriptionId) => {
       console.error(`Interpretation failed for Transcription ${transcriptionId}`, error);
@@ -102,11 +117,13 @@ async function start(): Promise<void> {
     ),
     spaceService,
     metadataService,
-    organizationProposalService: new OrganizationProposalService(organizationProposalRepository, { metadataService, spaceService }),
+    organizationProposalService,
+    organizationProposalWorker,
   });
   application.addHook("onClose", async () => {
     await transcriptionWorker.stop();
     await interpretationWorker.stop();
+    await organizationProposalWorker.stop();
     repository.close();
     transcriptionRepository.close();
     interpretationRepository.close();
@@ -117,6 +134,7 @@ async function start(): Promise<void> {
     spaceRepository.close();
     metadataRepository.close();
     organizationProposalRepository.close();
+    organizationProposalJobRepository.close();
   });
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
@@ -124,6 +142,7 @@ async function start(): Promise<void> {
     });
   }
 
+  await organizationProposalWorker.start();
   await interpretationWorker.start();
   await transcriptionWorker.start();
   await application.listen({
