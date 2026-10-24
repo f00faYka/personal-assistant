@@ -7,9 +7,9 @@ typechecks, and API and mobile tests.
 
 The stable required status check is **`Validate`** (the job name). Configure the
 `main` branch protection rule to require this check before merging. Enable the
-rule for administrators and repository owners, leave the bypass list empty, and
-keep the repository private. Without the rule, Actions reports results but does not
-prevent merges.
+rule for administrators and repository owners and leave the bypass list empty.
+This repository is public so GitHub Free can enforce the branch rule. Without
+the rule, Actions reports results but does not prevent merges.
 
 Local Husky validation is a contributor convenience; the required GitHub
 status check is the server-side merge gate.
