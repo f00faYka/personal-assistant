@@ -7,7 +7,9 @@ vi.mock("react-native", async () => {
   const React = await import("react");
   type Props = { readonly children?: React.ReactNode; readonly [key: string]: unknown };
   const host = (name: string) => function Host(props: Props) { return React.createElement(name, props, props.children); };
-  return { ActivityIndicator: host("ActivityIndicator"), Pressable: host("Pressable"), ScrollView: host("ScrollView"), StyleSheet: { create: <T,>(styles: T): T => styles }, Text: host("Text"), TextInput: host("TextInput"), View: host("View") };
+  class Value { setValue() {} }
+  const animation = { start: (callback?: () => void) => callback?.() };
+  return { ActivityIndicator: host("ActivityIndicator"), Animated: { Value, timing: () => animation, spring: () => animation, View: host("AnimatedView") }, PanResponder: { create: () => ({ panHandlers: {} }) }, Pressable: host("Pressable"), ScrollView: host("ScrollView"), StyleSheet: { create: <T,>(styles: T): T => styles }, Text: host("Text"), TextInput: host("TextInput"), View: host("View") };
 });
 
 vi.mock("react-native-safe-area-context", async () => {
@@ -99,43 +101,69 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
-  test("accepts selected organization proposals and keeps the result visible", async () => {
+  test("batches a card decision into one accept and keeps the result visible", async () => {
     const proposal = organizationProposal();
-    const organizationProposalClient = organizationProposalFixture({ decide: vi.fn().mockResolvedValue({ ...proposal, state: "accepted", candidates: proposal.candidates.map((candidate) => ({ ...candidate, state: "accepted" })) }) });
+    const list = vi.fn().mockResolvedValueOnce({ generation: { state: "ready" }, proposals: [proposal] }).mockResolvedValueOnce({ generation: { state: "ready" }, proposals: [{ ...proposal, state: "accepted", candidates: proposal.candidates.map((candidate) => ({ ...candidate, state: "accepted" })) }] });
+    const organizationProposalClient = organizationProposalFixture({ list, decide: vi.fn().mockResolvedValue({ ...proposal, state: "accepted", candidates: proposal.candidates.map((candidate) => ({ ...candidate, state: "accepted" })) }) });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
 
     expect(textContent(renderer)).toContain("Office");
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Accept selected suggestions" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add space suggestion Office" }).props.onPress(); });
 
     expect(organizationProposalClient.decide).toHaveBeenCalledWith("proposal-1", "accepted", "member-1", ["candidate-space"]);
     expect(textContent(renderer)).toContain("No AI suggestions need review.");
     renderer.unmount();
   });
 
-  test("disables accepting when every organization proposal is deselected", async () => {
-    const organizationProposalClient = organizationProposalFixture();
+  test("shows Готово while a proposal still has undecided cards", async () => {
+    const proposal = organizationProposal({ candidates: [
+      { id: "candidate-space", kind: "space", confidence: 0.94, confidenceBand: "high", targetId: "space-1", suggestedName: "Office", provenance: ["model"], state: "pending" },
+      { id: "candidate-tag", kind: "tag", confidence: 0.78, confidenceBand: "medium", suggestedName: "urgent", provenance: ["model"], state: "pending" },
+    ] });
+    const organizationProposalClient = organizationProposalFixture({ list: vi.fn().mockResolvedValue({ generation: { state: "ready" }, proposals: [proposal] }) });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
 
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Remove space suggestion Office" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add space suggestion Office" }).props.onPress(); });
 
-    expect(renderer.root.findByProps({ accessibilityLabel: "Accept selected suggestions" }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ accessibilityLabel: "Готово" }).props.disabled).toBe(false);
     expect(organizationProposalClient.decide).not.toHaveBeenCalled();
     renderer.unmount();
   });
 
-  test("dismisses organization proposals without changing the underlying result", async () => {
+  test("dismisses undecided cards on Готово without changing the underlying result", async () => {
     const proposal = organizationProposal();
-    const organizationProposalClient = organizationProposalFixture({ decide: vi.fn().mockResolvedValue({ ...proposal, state: "dismissed", candidates: proposal.candidates.map((candidate) => ({ ...candidate, state: "dismissed" })) }) });
+    const dismissed = { ...proposal, state: "dismissed" as const, candidates: proposal.candidates.map((candidate) => ({ ...candidate, state: "dismissed" as const })) };
+    const organizationProposalClient = organizationProposalFixture({ list: vi.fn().mockResolvedValueOnce({ generation: { state: "ready" }, proposals: [proposal] }).mockResolvedValueOnce({ generation: { state: "ready" }, proposals: [dismissed] }), decide: vi.fn().mockResolvedValue(dismissed) });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Call", reviewState: "needs_review", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
 
-    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Dismiss suggestions" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Готово" }).props.onPress(); });
 
     expect(organizationProposalClient.decide).toHaveBeenCalledWith("proposal-1", "dismissed", "member-1", undefined);
     expect(textContent(renderer)).toContain("Call");
     expect(textContent(renderer)).toContain("No AI suggestions need review.");
+    renderer.unmount();
+  });
+
+  test("preserves local decisions after a failed submission and prevents repeated taps", async () => {
+    const proposal = organizationProposal();
+    const list = vi.fn().mockResolvedValue({ generation: { state: "ready" }, proposals: [proposal] });
+    let rejectDecision: ((error: Error) => void) | undefined;
+    const decide = vi.fn().mockImplementation(() => new Promise((_resolve, reject) => { rejectDecision = reject; }));
+    const organizationProposalClient = organizationProposalFixture({ list, decide });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add space suggestion Office" }).props.onPress(); });
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Отправка…" }).props.onPress(); });
+    expect(decide).toHaveBeenCalledTimes(1);
+    rejectDecision?.(new Error("conflict"));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(textContent(renderer)).toContain("conflict");
+    expect(renderer.root.findByProps({ accessibilityLabel: "Повторить отправку" })).toBeTruthy();
     renderer.unmount();
   });
 
