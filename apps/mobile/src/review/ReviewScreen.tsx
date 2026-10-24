@@ -368,14 +368,14 @@ function OrganizationProposalControls({ client, memberId, itemId, itemKind }: { 
       <Text style={styles.proposalMeta}>Suggested by {proposal.modelVersion} · rules {proposal.rulesVersion}</Text>
       <Text style={styles.stateText}>Swipe each card to decide. The {itemKind === "task" ? "Task" : "Note"} is already saved.</Text>
       <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 10, paddingHorizontal: 4 }}><Text style={{ color: "#8C3D25", fontSize: 13, fontWeight: "800" }}>← Ignore</Text><Text style={{ color: "#356445", fontSize: 13, fontWeight: "800" }}>Add →</Text></View>
-      {proposal.candidates.filter((candidate) => candidate.state === "pending" && !decisions[proposal.id]?.[candidate.id]).map((candidate) => <ProposalCandidateRow key={candidate.id} candidate={candidate} disabled={inFlight !== null} onDecision={(decision) => decideLocally(proposal, candidate.id, decision)} />)}
-      <Button label={inFlight === proposal.id ? "Отправка…" : Object.keys(decisions[proposal.id] ?? {}).length === proposal.candidates.filter((candidate) => candidate.state === "pending").length ? "Повторить отправку" : "Готово"} onPress={() => finishProposal(proposal)} disabled={inFlight !== null} />
+      {proposal.candidates.filter((candidate) => candidate.state === "pending").map((candidate) => <ProposalCandidateRow key={candidate.id} candidate={candidate} decision={decisions[proposal.id]?.[candidate.id]} disabled={inFlight !== null} onDecision={(decision) => decideLocally(proposal, candidate.id, decision)} />)}
+      <Button label={inFlight === proposal.id ? "Отправка…" : mutationError && Object.keys(decisions[proposal.id] ?? {}).length === proposal.candidates.filter((candidate) => candidate.state === "pending").length ? "Повторить отправку" : "Готово"} onPress={() => finishProposal(proposal)} disabled={inFlight !== null} />
     </View>) : null}
     {mutationError ? <Text accessibilityRole="alert" style={styles.error}>{mutationError}</Text> : null}
   </View>;
 }
 
-function ProposalCandidateRow({ candidate, disabled, onDecision }: { readonly candidate: OrganizationProposalCandidate; readonly disabled: boolean; readonly onDecision: (decision: "accepted" | "dismissed") => void }) {
+function ProposalCandidateRow({ candidate, decision, disabled, onDecision }: { readonly candidate: OrganizationProposalCandidate; readonly decision: "accepted" | "dismissed" | undefined; readonly disabled: boolean; readonly onDecision: (decision: "accepted" | "dismissed") => void }) {
   const name = candidate.suggestedName ?? `${candidate.kind} ${candidate.targetId ?? ""}`.trim();
   const translateX = useRef(new Animated.Value(0)).current;
   const current = useRef(onDecision);
@@ -392,9 +392,9 @@ function ProposalCandidateRow({ candidate, disabled, onDecision }: { readonly ca
     },
     onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start(),
   })).current;
-  return <Animated.View {...responder.panHandlers} accessibilityLabel={`${candidate.kind} suggestion ${name}. Swipe right to add, left to ignore.`} style={[styles.proposalCandidate, { transform: [{ translateX }] }]}>
-    <Text style={styles.metadataValue}>{candidate.kind} · {name}</Text><Text style={styles.proposalConfidence}>{candidate.confidenceBand} confidence ({Math.round(candidate.confidence * 100)}%)</Text><Text style={styles.provenance}>Source: {candidate.provenance.join(" · ")}</Text>
-    <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}><Pressable accessibilityRole="button" accessibilityLabel={`Ignore ${candidate.kind} suggestion ${name}`} onPress={() => current.current("dismissed")} disabled={disabled} style={styles.button}><Text style={styles.buttonText}>← Ignore</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Add ${candidate.kind} suggestion ${name}`} onPress={() => current.current("accepted")} disabled={disabled} style={styles.button}><Text style={styles.buttonText}>Add →</Text></Pressable></View>
+  return <Animated.View {...responder.panHandlers} accessibilityLabel={`${candidate.kind} suggestion ${name}. Swipe right to add, left to ignore.`} style={[styles.proposalCandidate, decision === "accepted" ? { borderColor: "#356445", borderWidth: 2 } : decision === "dismissed" ? { borderColor: "#8C3D25", borderWidth: 2 } : null, { transform: [{ translateX }] }]}>
+    <Text style={styles.metadataValue}>{candidate.kind} · {name}</Text><Text style={styles.proposalConfidence}>{candidate.confidenceBand} confidence ({Math.round(candidate.confidence * 100)}%)</Text><Text style={styles.provenance}>Source: {candidate.provenance.join(" · ")}</Text>{decision ? <Text style={styles.stateText}>{decision === "accepted" ? "Marked to Add" : "Marked to Ignore"}</Text> : null}
+    <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}><Pressable accessibilityRole="button" accessibilityState={{ selected: decision === "dismissed", disabled }} accessibilityLabel={`Ignore ${candidate.kind} suggestion ${name}`} onPress={() => current.current("dismissed")} disabled={disabled} style={[styles.button, decision === "dismissed" ? { backgroundColor: "#8C3D25" } : null]}><Text style={styles.buttonText}>← Ignore</Text></Pressable><Pressable accessibilityRole="button" accessibilityState={{ selected: decision === "accepted", disabled }} accessibilityLabel={`Add ${candidate.kind} suggestion ${name}`} onPress={() => current.current("accepted")} disabled={disabled} style={[styles.button, decision === "accepted" ? { backgroundColor: "#356445" } : null]}><Text style={styles.buttonText}>Add →</Text></Pressable></View>
   </Animated.View>;
 }
 

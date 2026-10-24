@@ -116,19 +116,31 @@ describe("ReviewScreen", () => {
     renderer.unmount();
   });
 
-  test("shows Готово while a proposal still has undecided cards", async () => {
+  test("keeps decisions editable until finalization and submits once when every card is decided", async () => {
     const proposal = organizationProposal({ candidates: [
       { id: "candidate-space", kind: "space", confidence: 0.94, confidenceBand: "high", targetId: "space-1", suggestedName: "Office", provenance: ["model"], state: "pending" },
       { id: "candidate-tag", kind: "tag", confidence: 0.78, confidenceBand: "medium", suggestedName: "urgent", provenance: ["model"], state: "pending" },
     ] });
-    const organizationProposalClient = organizationProposalFixture({ list: vi.fn().mockResolvedValue({ generation: { state: "ready" }, proposals: [proposal] }) });
+    const accepted = { ...proposal, state: "accepted" as const, candidates: proposal.candidates.map((candidate) => ({ ...candidate, state: candidate.id === "candidate-tag" ? "accepted" as const : "dismissed" as const })) };
+    const list = vi.fn().mockResolvedValueOnce({ generation: { state: "ready" }, proposals: [proposal] }).mockResolvedValueOnce({ generation: { state: "ready" }, proposals: [accepted] });
+    const decide = vi.fn().mockResolvedValue(accepted);
+    const organizationProposalClient = organizationProposalFixture({ list, decide });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
 
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add space suggestion Office" }).props.onPress(); });
 
     expect(renderer.root.findByProps({ accessibilityLabel: "Готово" }).props.disabled).toBe(false);
-    expect(organizationProposalClient.decide).not.toHaveBeenCalled();
+    expect(textContent(renderer)).toContain("Marked to Add");
+    expect(decide).not.toHaveBeenCalled();
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Ignore space suggestion Office" }).props.onPress(); });
+    expect(textContent(renderer)).toContain("Marked to Ignore");
+    expect(decide).not.toHaveBeenCalled();
+
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Add tag suggestion urgent" }).props.onPress(); });
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(decide).toHaveBeenCalledWith("proposal-1", "accepted", "member-1", ["candidate-tag"]);
     renderer.unmount();
   });
 
