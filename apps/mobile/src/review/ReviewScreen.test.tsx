@@ -23,7 +23,59 @@ import type { OrganizationProposal, OrganizationProposalClient } from "./organiz
 import type { Space, SpacesClient } from "../spaces/spaces";
 
 describe("ReviewScreen", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  test("keeps the saved Task visible and polls until proposals are ready", async () => {
+    vi.useFakeTimers();
+    const list = vi.fn()
+      .mockResolvedValueOnce({ generation: { state: "running" }, proposals: [] })
+      .mockResolvedValueOnce({ generation: { state: "ready" }, proposals: [organizationProposal()] });
+    const organizationProposalClient = organizationProposalFixture({ list });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
+
+    expect(textContent(renderer)).toContain("Buy milk");
+    expect(textContent(renderer)).toContain("preparing suggestions");
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(textContent(renderer)).toContain("Office");
+    expect(list).toHaveBeenCalledTimes(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
+    expect(list).toHaveBeenCalledTimes(2);
+    renderer.unmount();
+  });
+
+  test("stops polling after the item detail closes", async () => {
+    vi.useFakeTimers();
+    const list = vi.fn().mockResolvedValue({ generation: { state: "running" }, proposals: [] });
+    const organizationProposalClient = organizationProposalFixture({ list });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
+
+    await act(async () => { renderer.unmount(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  test("retries retryable generation failures and resumes polling", async () => {
+    vi.useFakeTimers();
+    const list = vi.fn()
+      .mockResolvedValueOnce({ generation: { state: "failed", retryable: true, error: "Generation failed" }, proposals: [] })
+      .mockResolvedValueOnce({ generation: { state: "running" }, proposals: [] })
+      .mockResolvedValueOnce({ generation: { state: "ready" }, proposals: [organizationProposal()] });
+    const retry = vi.fn().mockResolvedValue({ generation: { state: "pending" }, proposals: [] });
+    const organizationProposalClient = organizationProposalFixture({ list, retry });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "note", id: "note-1", content: "Dinner Friday", reviewState: "none", version: 0 }) })));
+    const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
+
+    expect(textContent(renderer)).toContain("Dinner Friday");
+    expect(textContent(renderer)).toContain("Generation failed");
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: "Retry suggestions" }).props.onPress(); await Promise.resolve(); });
+    expect(retry).toHaveBeenCalledWith("note-1", "note", "member-1");
+    expect(textContent(renderer)).toContain("preparing suggestions");
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(textContent(renderer)).toContain("Office");
+    renderer.unmount();
+  });
 
   test("loads readable Task fields, focuses an edit field, and saves once", async () => {
     const fetcher = vi.fn()
@@ -88,7 +140,7 @@ describe("ReviewScreen", () => {
   });
 
   test("reports a failed proposal load and retries it", async () => {
-    const list = vi.fn().mockRejectedValueOnce(new Error("proposals unavailable")).mockResolvedValueOnce([]);
+    const list = vi.fn().mockRejectedValueOnce(new Error("proposals unavailable")).mockResolvedValueOnce({ generation: { state: "ready" }, proposals: [] });
     const organizationProposalClient = organizationProposalFixture({ list });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ review: reviewWith({ kind: "task", id: "task-1", title: "Buy milk", status: "open", version: 0 }) })));
     const renderer = await renderScreen(vi.fn(), { organizationProposalClient });
@@ -972,5 +1024,5 @@ function organizationProposal(overrides: Partial<OrganizationProposal> = {}): Or
 }
 
 function organizationProposalFixture(overrides: Partial<OrganizationProposalClient> = {}): OrganizationProposalClient {
-  return { list: vi.fn().mockResolvedValue([organizationProposal()]), decide: vi.fn().mockResolvedValue(organizationProposal()), ...overrides };
+  return { list: vi.fn().mockResolvedValue({ generation: { state: "ready" }, proposals: [organizationProposal()] }), retry: vi.fn().mockResolvedValue({ generation: { state: "pending" }, proposals: [] }), decide: vi.fn().mockResolvedValue(organizationProposal()), ...overrides };
 }

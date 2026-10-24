@@ -5,10 +5,22 @@ describe("organization proposal client", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   test("lists proposals for the reviewed item", async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ proposals: [] }), { status: 200 }));
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ generation: { state: "running" }, proposals: [] }), { status: 200 }));
     vi.stubGlobal("fetch", fetcher);
-    await createOrganizationProposalClient("http://api.test/").list("item/1", "note", "member 1");
+    await expect(createOrganizationProposalClient("http://api.test/").list("item/1", "note", "member 1")).resolves.toEqual({ generation: { state: "running" }, proposals: [] });
     expect(fetcher).toHaveBeenCalledWith("http://api.test/items/item%2F1/organization-proposals?memberId=member%201&itemKind=note", {});
+  });
+
+  test("uses the legacy proposals response when generation status is not available yet", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ proposals: [] }), { status: 200 })));
+    await expect(createOrganizationProposalClient("http://api.test").list("item-1", "task", "member-1")).resolves.toEqual({ generation: { state: "ready" }, proposals: [] });
+  });
+
+  test("requests a retry for a retryable generation failure", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ generation: { state: "pending" }, proposals: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    await createOrganizationProposalClient("http://api.test").retry("item-1", "note", "member-1");
+    expect(fetcher).toHaveBeenCalledWith("http://api.test/items/item-1/organization-proposals/retry", expect.objectContaining({ method: "POST", body: JSON.stringify({ memberId: "member-1", itemKind: "note" }) }));
   });
 
   test("accepts selected candidates and reports API errors", async () => {
