@@ -32,6 +32,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Temporary required-check failure probe
+        run: exit 1
+
       - name: Lint
         run: npm run lint
 
