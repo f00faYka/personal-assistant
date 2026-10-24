@@ -25,16 +25,30 @@ export interface OrganizationProposal {
   readonly candidates: readonly OrganizationProposalCandidate[];
 }
 
+export type OrganizationProposalGeneration =
+  | { readonly state: "pending" | "running" | "completed_empty" | "ready" }
+  | { readonly state: "failed"; readonly retryable: boolean; readonly error: string };
+
+export interface OrganizationProposalSnapshot {
+  readonly generation: OrganizationProposalGeneration;
+  readonly proposals: readonly OrganizationProposal[];
+}
+
 export interface OrganizationProposalClient {
-  list(itemId: string, itemKind: "task" | "note", memberId: string): Promise<readonly OrganizationProposal[]>;
+  list(itemId: string, itemKind: "task" | "note", memberId: string): Promise<OrganizationProposalSnapshot>;
+  retry(itemId: string, itemKind: "task" | "note", memberId: string): Promise<OrganizationProposalSnapshot>;
   decide(proposalId: string, state: "accepted" | "dismissed", memberId: string, candidateIds?: readonly string[]): Promise<OrganizationProposal>;
 }
 
 export function createOrganizationProposalClient(apiBaseUrl: string): OrganizationProposalClient {
   return {
     async list(itemId, itemKind, memberId) {
-      const body = await request<{ proposals: readonly OrganizationProposal[] }>(apiBaseUrl, `/items/${encodeURIComponent(itemId)}/organization-proposals?memberId=${encodeURIComponent(memberId)}&itemKind=${itemKind}`);
-      return body.proposals;
+      const body = await request<{ generation?: OrganizationProposalGeneration; proposals: readonly OrganizationProposal[] }>(apiBaseUrl, `/items/${encodeURIComponent(itemId)}/organization-proposals?memberId=${encodeURIComponent(memberId)}&itemKind=${itemKind}`);
+      return { generation: body.generation ?? { state: "ready" }, proposals: body.proposals };
+    },
+    async retry(itemId, itemKind, memberId) {
+      const body = await request<OrganizationProposalSnapshot>(apiBaseUrl, `/items/${encodeURIComponent(itemId)}/organization-proposals/retry`, { method: "POST", body: { memberId, itemKind } });
+      return body;
     },
     async decide(proposalId, state, memberId, candidateIds) {
       const body = await request<{ proposal: OrganizationProposal }>(apiBaseUrl, `/organization-proposals/${encodeURIComponent(proposalId)}/${state === "accepted" ? "accept" : "dismiss"}`, { method: "POST", body: { memberId, ...(candidateIds === undefined ? {} : { candidateIds }) } });

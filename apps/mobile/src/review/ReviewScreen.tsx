@@ -7,7 +7,7 @@ import { shouldPersistOfflineDraft } from "../http/request-error";
 import { TaskNoteDetailScreen, type TaskNoteDetailDraft, type TaskNoteDetailItem, type TaskNoteDetailMetadata } from "../detail/TaskNoteDetailScreen";
 import type { Entity, EntityType, MetadataClient, MetadataItemKind, MetadataLinks, Tag } from "./metadata";
 import { createReviewClient, type ReviewClient, type ReviewContract } from "./review";
-import type { OrganizationProposal, OrganizationProposalCandidate, OrganizationProposalClient } from "./organization-proposals";
+import type { OrganizationProposal, OrganizationProposalCandidate, OrganizationProposalClient, OrganizationProposalGeneration } from "./organization-proposals";
 import { findAssignedSpace, spacePath, type SpacesClient } from "../spaces/spaces";
 import { getDeviceTimeZone } from "../time-zone";
 
@@ -253,20 +253,62 @@ export function ReviewScreen({ apiBaseUrl, memberId, timeZone, detailUrl, initia
 }
 
 function OrganizationProposalControls({ client, memberId, itemId, itemKind }: { readonly client: OrganizationProposalClient; readonly memberId: string; readonly itemId: string; readonly itemKind: "task" | "note" }) {
+  const pollIntervalMilliseconds = 2_000;
   const [proposals, setProposals] = useState<readonly OrganizationProposal[]>([]);
+  const [generation, setGeneration] = useState<OrganizationProposalGeneration>({ state: "pending" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [inFlight, setInFlight] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [pollCycle, setPollCycle] = useState(0);
   const [selected, setSelected] = useState<Record<string, readonly string[]>>({});
+  const generationRef = useRef<OrganizationProposalGeneration>({ state: "pending" });
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null);
-    try { setProposals(await client.list(itemId, itemKind, memberId)); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load AI suggestions"); }
-    finally { setLoading(false); }
-  }, [client, itemId, itemKind, memberId]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    generationRef.current = { state: "pending" };
+    setGeneration(generationRef.current);
+    setProposals([]);
+    setLoading(true);
+    const scheduleNext = () => { timer = setTimeout(() => { void poll(false); }, pollIntervalMilliseconds); };
+    const poll = async (showLoading: boolean) => {
+      if (showLoading) setLoading(true);
+      setError(null);
+      try {
+        const snapshot = await client.list(itemId, itemKind, memberId);
+        if (!active) return;
+        setProposals(snapshot.proposals);
+        generationRef.current = snapshot.generation;
+        setGeneration(snapshot.generation);
+        setLoading(false);
+        if (snapshot.generation.state === "pending" || snapshot.generation.state === "running") scheduleNext();
+      } catch (cause) {
+        if (!active) return;
+        setError(cause instanceof Error ? cause.message : "Unable to load AI suggestions");
+        setLoading(false);
+        const lastState = generationRef.current.state;
+        if (lastState === "pending" || lastState === "running") scheduleNext();
+      }
+    };
+    void poll(true);
+    return () => { active = false; if (timer !== undefined) clearTimeout(timer); };
+  }, [client, itemId, itemKind, memberId, pollCycle]);
+
+  const retryGeneration = async () => {
+    setRetrying(true); setError(null);
+    try {
+      const snapshot = await client.retry(itemId, itemKind, memberId);
+      setProposals(snapshot.proposals);
+      generationRef.current = snapshot.generation;
+      setGeneration(snapshot.generation);
+      setPollCycle((current) => current + 1);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to retry AI suggestions"); }
+    finally { setRetrying(false); }
+  };
+
+  const retryLoading = () => setPollCycle((current) => current + 1);
 
   const decide = async (proposal: OrganizationProposal, state: "accepted" | "dismissed") => {
     if (inFlight) return;
@@ -282,8 +324,11 @@ function OrganizationProposalControls({ client, memberId, itemId, itemKind }: { 
   if (loading) return <View style={styles.organization}><Text style={styles.sectionTitle}>AI suggestions</Text><Text style={styles.stateText}>Loading suggestions…</Text></View>;
   return <View style={styles.organization}>
     <Text style={styles.sectionTitle}>AI suggestions</Text>
-    {error ? <><Text accessibilityRole="alert" style={styles.error}>{error}</Text><Button label="Retry AI suggestions" onPress={() => void load()} /></> : null}
-    {!error && proposals.filter((proposal) => proposal.state === "pending" && proposal.candidates.some((candidate) => candidate.state === "pending")).length === 0 ? <Text style={styles.stateText}>No AI suggestions need review.</Text> : null}
+    {error ? <><Text accessibilityRole="alert" style={styles.error}>{error}</Text><Button label="Retry AI suggestions" onPress={retryLoading} /></> : null}
+    {!error && (generation.state === "pending" || generation.state === "running") ? <Text style={styles.stateText}>Your {itemKind === "task" ? "Task" : "Note"} is saved. We’re preparing suggestions…</Text> : null}
+    {generation.state === "failed" ? <><Text accessibilityRole="alert" style={styles.error}>{generation.error}</Text>{generation.retryable ? <Button label={retrying ? "Retrying suggestions…" : "Retry suggestions"} onPress={() => void retryGeneration()} disabled={retrying} /> : null}</> : null}
+    {!error && generation.state === "completed_empty" ? <Text style={styles.stateText}>No suggestions were found. Your {itemKind === "task" ? "Task" : "Note"} remains saved.</Text> : null}
+    {!error && generation.state === "ready" && proposals.filter((proposal) => proposal.state === "pending" && proposal.candidates.some((candidate) => candidate.state === "pending")).length === 0 ? <Text style={styles.stateText}>No AI suggestions need review.</Text> : null}
     {!error ? proposals.filter((proposal) => proposal.state === "pending" && proposal.candidates.some((candidate) => candidate.state === "pending")).map((proposal) => <View key={proposal.id} style={styles.proposalCard}>
       <Text style={styles.proposalMeta}>Suggested by {proposal.modelVersion} · rules {proposal.rulesVersion}</Text>
       {proposal.candidates.filter((candidate) => candidate.state === "pending").map((candidate) => <ProposalCandidateRow key={candidate.id} candidate={candidate} selected={(selected[proposal.id] ?? proposal.candidates.filter((item) => item.state === "pending" && item.confidenceBand !== "low").map((item) => item.id)).includes(candidate.id)} disabled={inFlight !== null} onToggle={() => setSelected((current) => ({ ...current, [proposal.id]: (current[proposal.id] ?? proposal.candidates.filter((item) => item.state === "pending" && item.confidenceBand !== "low").map((item) => item.id)).includes(candidate.id) ? (current[proposal.id] ?? []).filter((id) => id !== candidate.id) : [...(current[proposal.id] ?? proposal.candidates.filter((item) => item.state === "pending" && item.confidenceBand !== "low").map((item) => item.id)), candidate.id] }))} />)}
