@@ -22,6 +22,14 @@ import { SqliteInterpretationRepository } from "../../infrastructure/sqlite/sqli
 import { SqliteMemberItemsRepository } from "../../infrastructure/sqlite/sqlite-member-items-repository.js";
 import { SqliteOutcomeRepository } from "../../infrastructure/sqlite/sqlite-outcome-repository.js";
 import { SqliteTranscriptionRepository } from "../../infrastructure/sqlite/sqlite-transcription-repository.js";
+import { SqliteSpaceRepository } from "../../infrastructure/sqlite/sqlite-space-repository.js";
+import { SqliteMetadataRepository } from "../../infrastructure/sqlite/sqlite-metadata-repository.js";
+import { SqliteOrganizationProposalRepository } from "../../infrastructure/sqlite/sqlite-organization-proposal-repository.js";
+import { SqliteOrganizationProposalJobRepository } from "../../infrastructure/sqlite/sqlite-organization-proposal-job-repository.js";
+import { SpaceService } from "../spaces/space.js";
+import { MetadataService } from "../metadata/metadata.js";
+import { OrganizationProposalService } from "../organization-proposals/organization-proposal.js";
+import { OrganizationProposalWorker, type OrganizationProposalGenerator } from "../organization-proposals/organization-proposal-worker.js";
 import { prepareRuntime } from "../../runtime.js";
 import {
   InterpretationService,
@@ -42,11 +50,12 @@ describe("production interpretation runtime", () => {
   test("duplicate Capture delivery produces one interpreted Task visible through list and review", async () => {
     const directory = await mkdtemp(join(tmpdir(), "personal-assistant-interpretation-runtime-"));
     directories.push(directory);
+    let proposalCalls = 0;
     const interpretationProvider = new DeterministicInterpretationProvider({
       action: "create_task",
       title: "Buy milk",
     });
-    const harness = await createHarness(directory, interpretationProvider);
+    const harness = await createHarness(directory, interpretationProvider, 3, "add task buy milk", "UTC", { generate: async () => { proposalCalls += 1; return { modelVersion: "test-model", candidates: [] }; } });
     harnesses.push(harness);
 
     const first = await harness.application.inject({ method: "POST", url: "/captures", payload: submission() });
@@ -73,6 +82,8 @@ describe("production interpretation runtime", () => {
       outcome: { kind: "task", title: "Buy milk" },
     });
     expect(interpretationProvider.calls).toBe(1);
+    await harness.organizationProposalWorker.drain();
+    expect(proposalCalls).toBe(1);
 
     await harness.close();
     harnesses.splice(harnesses.indexOf(harness), 1);
@@ -86,6 +97,50 @@ describe("production interpretation runtime", () => {
       title: "Buy milk",
     });
     expect(restartedProvider.calls).toBe(0);
+  });
+
+  test("keeps a durable Capture outcome available while organization generation is running", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "personal-assistant-organization-pending-"));
+    directories.push(directory);
+    let release!: () => void;
+    const generationGate = new Promise<void>((resolve) => { release = resolve; });
+    const generator: OrganizationProposalGenerator = { generate: async () => { await generationGate; return { modelVersion: "test-model", candidates: [] }; } };
+    const harness = await createHarness(directory, new DeterministicInterpretationProvider({ action: "create_task", title: "Buy milk" }), 3, "Buy milk", "UTC", generator);
+    harnesses.push(harness);
+
+    const capture = await harness.application.inject({ method: "POST", url: "/captures", payload: submission() });
+    const captureId = capture.json<{ capture: { id: string } }>().capture.id;
+    const item = await waitForItem(harness, captureId);
+    const response = await harness.application.inject({ method: "GET", url: `/items/${item.id as string}/organization-proposals?memberId=member-1&itemKind=task` });
+
+    expect(response.json()).toMatchObject({ generation: { state: "running" }, proposals: [] });
+    expect(item).toMatchObject({ kind: "task", title: "Buy milk" });
+    release();
+    await harness.organizationProposalWorker.drain();
+    expect((await harness.application.inject({ method: "GET", url: `/items/${item.id as string}/organization-proposals?memberId=member-1&itemKind=task` })).json()).toMatchObject({ generation: { state: "completed_empty" }, proposals: [] });
+  });
+
+  test("keeps a durable outcome visible through retryable proposal failure and recovery", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "personal-assistant-organization-failure-"));
+    directories.push(directory);
+    let calls = 0;
+    const generator: OrganizationProposalGenerator = { generate: async () => { calls += 1; if (calls === 1) throw new Error("local generator unavailable"); return { modelVersion: "test-model", candidates: [] }; } };
+    const harness = await createHarness(directory, new DeterministicInterpretationProvider({ action: "none", reason: "ordinary" }), 3, "Dinner Friday", "UTC", generator);
+    harnesses.push(harness);
+    const capture = await harness.application.inject({ method: "POST", url: "/captures", payload: submission() });
+    const captureId = capture.json<{ capture: { id: string } }>().capture.id;
+    const item = await waitForItem(harness, captureId);
+    await harness.organizationProposalWorker.drain();
+    const proposalUrl = `/items/${item.id as string}/organization-proposals`;
+    expect((await harness.application.inject({ method: "GET", url: `${proposalUrl}?memberId=member-1&itemKind=note` })).json()).toMatchObject({ generation: { state: "failed", retryable: true } });
+    expect(await waitForItem(harness, captureId)).toMatchObject({ kind: "note", content: "Dinner Friday" });
+    await harness.close();
+    harnesses.splice(harnesses.indexOf(harness), 1);
+    const resumedHarness = await createHarness(directory, new DeterministicInterpretationProvider({ action: "none", reason: "ordinary" }), 3, "Dinner Friday", "UTC", { generate: async () => { calls += 1; return { modelVersion: "test-model", candidates: [] }; } });
+    harnesses.push(resumedHarness);
+    await resumedHarness.organizationProposalWorker.drain();
+    expect((await resumedHarness.application.inject({ method: "GET", url: `${proposalUrl}?memberId=member-1&itemKind=note` })).json()).toMatchObject({ generation: { state: "completed_empty" }, proposals: [] });
+    expect(calls).toBe(2);
   });
 
   test("the explicit Strava request produces one Task with normalized due metadata and provenance", async () => {
@@ -459,6 +514,7 @@ describe("production interpretation runtime", () => {
 
 interface RuntimeHarness {
   readonly application: ReturnType<typeof buildApi>;
+  readonly organizationProposalWorker: OrganizationProposalWorker;
   readonly close: () => Promise<void>;
 }
 
@@ -468,6 +524,7 @@ async function createHarness(
   interpretationMaxAttempts = 3,
   transcriptionText = "add task buy milk",
   timeZone = "UTC",
+  organizationGenerator: OrganizationProposalGenerator = { generate: async () => ({ modelVersion: "test-model", candidates: [] }) },
 ): Promise<RuntimeHarness> {
   const databasePath = join(directory, "api.sqlite");
   const blobRoot = join(directory, "blobs");
@@ -479,6 +536,14 @@ async function createHarness(
   const interpretationJobRepository = new SqliteInterpretationJobRepository(databasePath);
   const outcomeRepository = new SqliteOutcomeRepository(databasePath);
   const memberItemsRepository = new SqliteMemberItemsRepository(databasePath);
+  const spaceRepository = new SqliteSpaceRepository(databasePath);
+  const metadataRepository = new SqliteMetadataRepository(databasePath);
+  const organizationProposalRepository = new SqliteOrganizationProposalRepository(databasePath);
+  const organizationProposalJobRepository = new SqliteOrganizationProposalJobRepository(databasePath);
+  const spaceService = new SpaceService(spaceRepository);
+  const metadataService = new MetadataService(metadataRepository);
+  const organizationProposalService = new OrganizationProposalService(organizationProposalRepository, { spaceService, metadataService });
+  const organizationProposalWorker = new OrganizationProposalWorker({ repository: organizationProposalJobRepository, proposalService: organizationProposalService, provider: organizationGenerator, spaces: spaceService, metadata: metadataService, maxAttempts: 3 });
   const captureService = new CaptureService(captureRepository, new FileSystemBlobStorage(blobRoot));
   const interpretationWorker = new InterpretationWorker({
     service: new InterpretationService(interpretationRepository, { timeZone }),
@@ -487,6 +552,7 @@ async function createHarness(
     repository: interpretationJobRepository,
     transcriptionRepository,
     captureReader: captureService,
+    onOutcomeMaterialized: (outcome, text) => organizationProposalWorker.outcomeCreated(outcome, text),
     maxAttempts: interpretationMaxAttempts,
     onError: () => {},
   });
@@ -514,15 +580,20 @@ async function createHarness(
     captureStoredHandler: transcriptionWorker,
     reviewService,
     memberItemsService: new MemberItemsService(memberItemsRepository),
+    organizationProposalService,
+    organizationProposalWorker,
   });
+  await organizationProposalWorker.start();
   await interpretationWorker.start();
   await transcriptionWorker.start();
 
   return {
     application,
+    organizationProposalWorker,
     close: async () => {
       await transcriptionWorker.stop();
       await interpretationWorker.stop();
+      await organizationProposalWorker.stop();
       await application.close();
       captureRepository.close();
       transcriptionRepository.close();
@@ -530,6 +601,10 @@ async function createHarness(
       interpretationJobRepository.close();
       outcomeRepository.close();
       memberItemsRepository.close();
+      spaceRepository.close();
+      metadataRepository.close();
+      organizationProposalRepository.close();
+      organizationProposalJobRepository.close();
     },
   };
 }

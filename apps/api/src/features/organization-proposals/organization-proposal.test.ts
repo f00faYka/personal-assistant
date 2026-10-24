@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { OrganizationProposalService, type CandidateState, type OrganizationProposal, type OrganizationProposalRepository } from "./organization-proposal.js";
+import { InvalidOrganizationProposalError, OrganizationProposalService, type CandidateState, type OrganizationProposal, type OrganizationProposalRepository } from "./organization-proposal.js";
 
 const unusedAssignments = { metadataService: { listTags: () => [], listEntities: () => [], createTag: () => ({ id: "unused", memberId: "unused", name: "unused", createdAt: "now" }), createEntity: () => ({ id: "unused", memberId: "unused", name: "unused", type: "Object" as const, createdAt: "now" }), linkTag: () => ({ tags: [], entities: [] }), linkEntity: () => ({ tags: [], entities: [] }) }, spaceService: { assign: () => ({ itemId: "unused", itemKind: "note" as const, spaceId: null }) } };
 
@@ -38,5 +38,12 @@ describe("OrganizationProposalService", () => {
     expect(links).toEqual(["space:space-1"]);
     service.decide("member-1", proposal.id, "accepted"); service.decide("member-1", proposal.id, "accepted");
     expect(links).toEqual(["space:space-1", "tag:tag-new"]); expect(tags).toHaveLength(2);
+  });
+
+  test("rejects low-confidence acceptance and temporary Space suggestions", () => {
+    const service = new OrganizationProposalService(repository(), unusedAssignments);
+    const proposal = service.create({ memberId: "member-1", itemId: "note-1", itemKind: "note", idempotencyKey: "low", modelVersion: "qwen", rulesVersion: "r", context: { spaces: [], tags: [], entities: [] }, candidates: [{ kind: "tag", suggestedName: "errands", confidence: 0.49, provenance: ["transcription"] }] });
+    expect(() => service.decide("member-1", proposal.id, "accepted", [proposal.candidates[0]!.id])).toThrow(InvalidOrganizationProposalError);
+    expect(() => service.create({ memberId: "member-1", itemId: "note-2", itemKind: "note", idempotencyKey: "space", modelVersion: "qwen", rulesVersion: "r", context: { spaces: [], tags: [], entities: [] }, candidates: [{ kind: "space", suggestedName: "Office", confidence: 0.9, provenance: ["transcription"] }] })).toThrow("Spaces cannot be suggested for automatic creation");
   });
 });

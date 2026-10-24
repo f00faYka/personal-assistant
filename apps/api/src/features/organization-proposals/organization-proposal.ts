@@ -79,7 +79,10 @@ export class OrganizationProposalService {
     this.requireText(input.rulesVersion, "rulesVersion");
     if (!(["task", "note"] as const).includes(input.itemKind)) throw new InvalidOrganizationProposalError("invalid item kind");
     const existing = this.repository.findByIdempotencyKey(input.memberId, input.idempotencyKey);
-    if (existing) return existing;
+    if (existing) {
+      for (const candidate of existing.candidates.filter((value) => value.state === "accepted" && value.confidenceBand === "high" && value.targetId)) this.applyExisting(existing, candidate);
+      return existing;
+    }
     const candidates = input.candidates.map((candidate) => {
       const normalized = this.candidate(candidate);
       return normalized.confidenceBand === "high" && normalized.targetId ? { ...normalized, state: "accepted" as const } : normalized;
@@ -106,6 +109,7 @@ export class OrganizationProposalService {
     if (!proposal) throw new OrganizationProposalNotFoundError(proposalId);
     if (state === "accepted") {
       const selected = candidateIds.length ? new Set(candidateIds) : new Set(proposal.candidates.filter((candidate) => candidate.confidenceBand !== "low").map((candidate) => candidate.id));
+      if (proposal.candidates.some((candidate) => selected.has(candidate.id) && candidate.confidenceBand === "low")) throw new InvalidOrganizationProposalError("low-confidence candidates cannot be accepted");
       for (const candidate of proposal.candidates.filter((value) => selected.has(value.id) && value.state === "pending")) this.applyAccepted(proposal, candidate);
     }
     const updated = this.repository.updateDecision(memberId, proposalId, state, candidateIds);
@@ -141,6 +145,7 @@ export class OrganizationProposalService {
     if (!Number.isFinite(input.confidence) || input.confidence < 0 || input.confidence > 1) throw new InvalidOrganizationProposalError("confidence must be between 0 and 1");
     if (input.provenance.length === 0) throw new InvalidOrganizationProposalError("provenance is required");
     if (!input.targetId && !input.suggestedName) throw new InvalidOrganizationProposalError("candidate target or suggestion is required");
+    if (input.kind === "space" && !input.targetId) throw new InvalidOrganizationProposalError("Spaces cannot be suggested for automatic creation");
     return { ...input, id: randomUUID(), confidenceBand: input.confidence >= 0.8 ? "high" : input.confidence >= 0.5 ? "medium" : "low", state: "pending" };
   }
   private requireText(value: string, field: string): void { if (!value.trim()) throw new InvalidOrganizationProposalError(`${field} is required`); }

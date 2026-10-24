@@ -298,4 +298,20 @@ export const foundationMigrations: readonly Migration[] = [
         ON task_status_transitions(member_id, task_id, resulting_version)
     `,
   },
+  {
+    version: 18,
+    name: "persist organization proposal generation jobs",
+    sql: `
+      CREATE TABLE organization_proposal_jobs (
+        member_id TEXT NOT NULL, item_id TEXT NOT NULL, item_kind TEXT NOT NULL CHECK (item_kind IN ('task', 'note')),
+        item_text TEXT NOT NULL, transcription_text TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'succeeded', 'failed')),
+        error TEXT, retryable INTEGER NOT NULL CHECK (retryable IN (0, 1)),
+        attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY (member_id, item_id)
+      ) STRICT;
+      CREATE INDEX organization_proposal_jobs_recovery_index ON organization_proposal_jobs(status, retryable, created_at)
+    `,
+  },
 ];

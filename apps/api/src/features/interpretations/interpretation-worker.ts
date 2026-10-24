@@ -1,5 +1,6 @@
 import type { CaptureService } from "../captures/capture.js";
 import type { OutcomeService } from "../outcomes/outcome.js";
+import type { Outcome } from "../outcomes/outcome.js";
 import type {
   Transcription,
   TranscriptionRepository,
@@ -45,6 +46,7 @@ export interface InterpretationWorkerOptions {
   readonly transcriptionRepository: Pick<TranscriptionRepository, "findByCaptureId">
     & SucceededTranscriptionReader;
   readonly captureReader: Pick<CaptureService, "get">;
+  readonly onOutcomeMaterialized?: (outcome: Outcome, transcriptionText: string) => void;
   readonly maxAttempts: number;
   readonly onError?: (error: unknown, transcriptionId: string) => void;
 }
@@ -178,15 +180,19 @@ export class InterpretationWorker implements TranscriptionSucceededHandler {
   }
 
   private materializeOutcome(
-    transcription: Pick<Transcription, "captureId">,
+    transcription: Pick<Transcription, "id" | "captureId">,
     transcriptionText: string,
     interpretation: Interpretation,
   ): void {
     const capture = this.options.captureReader.get(transcription.captureId);
-    this.options.outcomeService.materialize({
+    const outcome = this.options.outcomeService.materialize({
       memberId: capture.memberId,
       transcriptionText,
       interpretation,
     });
+    if (outcome) {
+      try { this.options.onOutcomeMaterialized?.(outcome, transcriptionText); }
+      catch (error) { this.options.onError?.(error, transcription.id); }
+    }
   }
 }
