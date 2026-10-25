@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { OrganizationProposalWorker, type OrganizationProposalGenerator, type OrganizationProposalJob, type OrganizationProposalJobRepository, type OrganizationProposalWorkerOptions } from "./organization-proposal-worker.js";
 import { OrganizationProposalService, type OrganizationProposal } from "./organization-proposal.js";
 
-function harness(generate: OrganizationProposalGenerator["generate"] = async () => ({ modelVersion: "test-model", candidates: [] }), spaces: OrganizationProposalWorkerOptions["spaces"] = { list: () => [] }) {
+function harness(generate: OrganizationProposalGenerator["generate"] = async () => ({ modelVersion: "test-model", candidates: [] }), spaces: OrganizationProposalWorkerOptions["spaces"] = { list: () => [] }, metadata: OrganizationProposalWorkerOptions["metadata"] = { listTags: () => [], listEntities: () => [] }) {
   const jobs: OrganizationProposalJob[] = [];
   const repository: OrganizationProposalJobRepository = {
     create: (job) => { const existing = jobs.find((value) => value.itemId === job.itemId); if (existing) return existing; jobs.push(job); return job; },
@@ -22,9 +22,9 @@ function harness(generate: OrganizationProposalGenerator["generate"] = async () 
   };
   const proposalService = new OrganizationProposalService(proposalRepository, {
     metadataService: { listTags: () => [], listEntities: () => [], createTag: () => { throw new Error("unused"); }, createEntity: () => { throw new Error("unused"); }, linkTag: () => ({ tags: [], entities: [] }), linkEntity: () => ({ tags: [], entities: [] }) },
-    spaceService: { assign: (itemId: string, itemKind: "task" | "note", _memberId: string, spaceId: string | null) => ({ itemId, itemKind, spaceId: spaceId ?? "" }) },
+    spaceService: { assign: (itemId: string, itemKind: "task" | "note", _memberId: string, spaceId: string | null) => ({ itemId, itemKind, spaceId: spaceId ?? "" }), create: (_memberId: string, name: string) => ({ id: "space-new", memberId: "member-1", name, createdAt: "now" }), list: () => [] },
   });
-  const worker = new OrganizationProposalWorker({ repository, proposalService, provider: { generate }, spaces, metadata: { listTags: () => [], listEntities: () => [] }, maxAttempts: 2 });
+  const worker = new OrganizationProposalWorker({ repository, proposalService, provider: { generate }, spaces, metadata, maxAttempts: 2 });
   return { worker, jobs, proposals };
 }
 
@@ -72,11 +72,11 @@ describe("OrganizationProposalWorker", () => {
       { kind: "tag" as const, suggestedName: "errands", confidence: 0.5, provenance: ["transcription: stop by post office"] },
       { kind: "entity" as const, suggestedName: "Ava", entityType: "Person", confidence: 0.49, provenance: ["transcription: Ava"] },
     ];
-    const generated = harness(async () => ({ modelVersion: "qwen-local-v3", candidates }));
+    const generated = harness(async () => ({ modelVersion: "qwen-local-v3", candidates }), { list: () => [] }, { listTags: () => [{ id: "tag-1", memberId: "member-1", name: "groceries", createdAt: "now" }], listEntities: () => [{ id: "entity-1", memberId: "member-1", name: "Ava", type: "Person", createdAt: "now" }] });
     await generated.worker.start();
     generated.worker.outcomeCreated({ id: "note-3", memberId: "member-1", kind: "note", content: "Post office with Ava", interpretationId: "i-3", captureId: "c-3", sourceId: "s-3", reviewState: "none", version: 0, createdAt: "now" }, "Stop by the post office with Ava");
     await generated.worker.drain();
-    expect(generated.worker.status("member-1", "note-3", "note")).toMatchObject({ state: "ready", proposals: [{ modelVersion: "qwen-local-v3", rulesVersion: "organization-proposals.v1", candidates: [{ confidenceBand: "high", state: "accepted", provenance: ["transcription: groceries"] }, { confidenceBand: "medium", state: "pending", suggestedName: "errands" }, { confidenceBand: "low", state: "pending", entityType: "Person" }] }] });
+    expect(generated.worker.status("member-1", "note-3", "note")).toMatchObject({ state: "ready", proposals: [{ modelVersion: "qwen-local-v3", rulesVersion: "organization-proposals.v1", candidates: [{ confidenceBand: "high", state: "accepted", provenance: ["transcription: groceries"] }, { confidenceBand: "medium", state: "pending", suggestedName: "errands" }, { confidenceBand: "low", state: "pending", targetId: "entity-1" }] }] });
     expect(generated.proposals).toHaveLength(1);
     await generated.worker.stop();
   });

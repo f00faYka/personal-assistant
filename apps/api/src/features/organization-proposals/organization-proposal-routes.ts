@@ -4,7 +4,7 @@ import { InvalidOrganizationProposalError, OrganizationProposalNotFoundError, Or
 import type { OrganizationProposalWorker } from "./organization-proposal-worker.js";
 
 const candidateSchema = z.object({ kind: z.enum(["space", "tag", "entity"]), confidence: z.number(), targetId: z.string().optional(), suggestedName: z.string().optional(), entityType: z.string().optional(), provenance: z.array(z.string()).min(1) });
-const createSchema = z.object({ memberId: z.string().min(1), itemId: z.string().min(1), itemKind: z.enum(["task", "note"]), idempotencyKey: z.string().min(1), modelVersion: z.string().min(1), rulesVersion: z.string().min(1), context: z.object({ spaces: z.array(z.object({ id: z.string(), name: z.string(), path: z.string(), description: z.string().optional(), examples: z.array(z.string()) })), tags: z.array(z.object({ id: z.string(), name: z.string() })), entities: z.array(z.object({ id: z.string(), name: z.string(), aliases: z.array(z.string()).optional() })) }), candidates: z.array(candidateSchema) });
+const createSchema = z.object({ memberId: z.string().min(1), itemId: z.string().min(1), itemKind: z.enum(["task", "note"]), idempotencyKey: z.string().min(1), modelVersion: z.string().min(1), rulesVersion: z.string().min(1), context: z.object({ spaces: z.array(z.object({ id: z.string(), name: z.string(), path: z.string(), description: z.string().optional(), examples: z.array(z.string()) })), tags: z.array(z.object({ id: z.string(), name: z.string() })), entities: z.array(z.object({ id: z.string(), name: z.string(), type: z.string().optional(), aliases: z.array(z.string()).optional() })) }), candidates: z.array(candidateSchema) });
 const decisionSchema = z.object({ memberId: z.string().min(1), candidateIds: z.array(z.string()).optional() });
 const retrySchema = z.object({ memberId: z.string().min(1), itemKind: z.enum(["task", "note"]) });
 
@@ -20,7 +20,7 @@ function normalizeContext(context: z.infer<typeof createSchema>["context"]): Org
   return {
     spaces: context.spaces.map((space) => space.description === undefined ? { id: space.id, name: space.name, path: space.path, examples: space.examples } : { id: space.id, name: space.name, path: space.path, description: space.description, examples: space.examples }),
     tags: context.tags,
-    entities: context.entities.map((entity) => entity.aliases === undefined ? { id: entity.id, name: entity.name } : { id: entity.id, name: entity.name, aliases: entity.aliases }),
+    entities: context.entities.map((entity) => ({ id: entity.id, name: entity.name, ...(entity.type === undefined ? {} : { type: entity.type }), ...(entity.aliases === undefined ? {} : { aliases: entity.aliases }) })),
   };
 }
 
