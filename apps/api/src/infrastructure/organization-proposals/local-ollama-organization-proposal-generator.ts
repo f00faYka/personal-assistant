@@ -1,4 +1,4 @@
-import type { OrganizationCandidateInput, OrganizationContext } from "../../features/organization-proposals/organization-proposal.js";
+import { organizationContextMatches, organizationTargetsForKind, type OrganizationCandidateInput, type OrganizationContext } from "../../features/organization-proposals/organization-proposal.js";
 import type { OrganizationProposalGenerator } from "../../features/organization-proposals/organization-proposal-worker.js";
 
 export interface LocalOllamaOrganizationProposalGeneratorOptions {
@@ -50,13 +50,17 @@ export class LocalOllamaOrganizationProposalGeneratorError extends Error {
 const schema = {
   type: "object",
   properties: {
-    candidates: { type: "array", items: { type: "object", properties: { kind: { type: "string", enum: ["space", "tag", "entity"] }, confidence: { type: "number", minimum: 0, maximum: 1 }, targetId: { type: "string" }, suggestedName: { type: "string" }, entityType: { type: "string", enum: ["Person", "Place", "Organization", "Object"] }, provenance: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, maxItems: 5 } }, required: ["kind", "confidence", "provenance"], additionalProperties: false } },
+    candidates: { type: "array", items: { oneOf: [
+      { type: "object", properties: { kind: { type: "string", enum: ["space", "tag", "entity"] }, confidence: { type: "number", minimum: 0, maximum: 1 }, targetId: { type: "string", minLength: 1 }, provenance: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, maxItems: 5 } }, required: ["kind", "targetId", "confidence", "provenance"], additionalProperties: false },
+      { type: "object", properties: { kind: { type: "string", enum: ["space", "tag"] }, confidence: { type: "number", minimum: 0, maximum: 1 }, suggestedName: { type: "string", minLength: 1 }, provenance: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, maxItems: 5 } }, required: ["kind", "suggestedName", "confidence", "provenance"], additionalProperties: false },
+      { type: "object", properties: { kind: { const: "entity" }, confidence: { type: "number", minimum: 0, maximum: 1 }, suggestedName: { type: "string", minLength: 1 }, entityType: { type: "string", enum: ["Person", "Place", "Organization", "Object"] }, provenance: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, maxItems: 5 } }, required: ["kind", "suggestedName", "entityType", "confidence", "provenance"], additionalProperties: false },
+    ] } },
   },
   required: ["candidates"],
   additionalProperties: false,
 } as const;
 
-const systemPrompt = "Return JSON with candidate metadata only. Suggest existing Space, Tag, or Entity targets by their exact context IDs. You may suggest a temporary new Tag or Entity by name, never a new Space. Every candidate must include confidence from 0 to 1 and short provenance labels identifying supporting transcription evidence or matching context; do not include chain-of-thought. Return an empty candidates array when no organization is useful. Do not create or assign anything.";
+const systemPrompt = "Return JSON with candidate metadata only. Each candidate must use exactly one form: an existing Space, Tag, or Entity with its exact context targetId and no suggestedName; or a new Space, Tag, or Entity suggestedName and no targetId. For a new Entity include entityType. Prefer the ID of a same or semantically similar existing entry; use a new name only when no suitable entry exists in context. Exact normalized duplicate names must resolve to an existing ID. New names are proposals for user review only. Every candidate must include confidence from 0 to 1 and short provenance labels identifying supporting transcription evidence or matching context; do not include chain-of-thought. Return an empty candidates array when no organization is useful. Do not create or assign anything.";
 
 function isResponse(value: unknown): value is { readonly message: { readonly content: string } } {
   return typeof value === "object" && value !== null && "message" in value && typeof value.message === "object" && value.message !== null && "content" in value.message && typeof value.message.content === "string";
@@ -67,17 +71,22 @@ function parseCandidates(content: string, context: OrganizationContext): readonl
   try { parsed = JSON.parse(content) as unknown; }
   catch { throw new LocalOllamaOrganizationProposalGeneratorError("Local Ollama returned invalid structured output"); }
   if (!isCandidateList(parsed)) throw new LocalOllamaOrganizationProposalGeneratorError("Local Ollama returned invalid structured output");
-  const spaces = new Set(context.spaces.map((space) => space.id));
-  const tags = new Set(context.tags.map((tag) => tag.id));
-  const entities = new Set(context.entities.map((entity) => entity.id));
-  for (const candidate of parsed.candidates) {
-    const targets = candidate.kind === "space" ? spaces : candidate.kind === "tag" ? tags : entities;
-    if (candidate.targetId && !targets.has(candidate.targetId)) throw new LocalOllamaOrganizationProposalGeneratorError("Local Ollama returned an unknown organization target");
-    if (candidate.kind === "space" && !candidate.targetId) throw new LocalOllamaOrganizationProposalGeneratorError("Spaces cannot be suggested for automatic creation");
-    if (!candidate.targetId && (candidate.kind === "space" || !candidate.suggestedName)) throw new LocalOllamaOrganizationProposalGeneratorError("Local Ollama returned an invalid temporary suggestion");
-    if (candidate.kind === "entity" && !candidate.targetId && !candidate.entityType) throw new LocalOllamaOrganizationProposalGeneratorError("Local Ollama returned a temporary Entity without a type");
-  }
-  return parsed.candidates;
+  return parsed.candidates.map((candidate) => {
+    if (Boolean(candidate.targetId) === Boolean(candidate.suggestedName)) throw new LocalOllamaOrganizationProposalGeneratorError("invalid_candidate_representation");
+    if (candidate.entityType !== undefined && (candidate.kind !== "entity" || candidate.targetId !== undefined)) throw new LocalOllamaOrganizationProposalGeneratorError("invalid_entity_type_usage");
+    if (candidate.targetId) {
+      const target = organizationTargetsForKind(context, candidate.kind).find((entry) => entry.id === candidate.targetId);
+      if (!target) throw new LocalOllamaOrganizationProposalGeneratorError("unknown_or_wrong_kind_target");
+      return candidate;
+    }
+    if (!candidate.suggestedName?.trim()) throw new LocalOllamaOrganizationProposalGeneratorError("empty_suggested_name");
+    if (candidate.kind === "entity" && !["Person", "Place", "Organization", "Object"].includes(candidate.entityType ?? "")) throw new LocalOllamaOrganizationProposalGeneratorError("invalid_new_entity_type");
+    const name = candidate.suggestedName.trim();
+    const matches = organizationContextMatches(context, candidate.kind, name, candidate.entityType);
+    if (matches.length > 1) throw new LocalOllamaOrganizationProposalGeneratorError("ambiguous_organization_name");
+    if (matches.length === 1) return { kind: candidate.kind, targetId: matches[0]!.id, confidence: candidate.confidence, provenance: candidate.provenance };
+    return { ...candidate, suggestedName: name };
+  });
 }
 
 function isCandidateList(value: unknown): value is { readonly candidates: readonly OrganizationCandidateInput[] } {
@@ -90,6 +99,11 @@ function isCandidateList(value: unknown): value is { readonly candidates: readon
       && Array.isArray(value.provenance) && value.provenance.length > 0 && value.provenance.every((part: unknown) => typeof part === "string" && part.trim().length > 0)
       && (value.targetId === undefined || typeof value.targetId === "string")
       && (value.suggestedName === undefined || typeof value.suggestedName === "string")
-      && (value.entityType === undefined || ["Person", "Place", "Organization", "Object"].includes(String(value.entityType)));
+      && (value.entityType === undefined || typeof value.entityType === "string")
+      && hasOnlyKeys(value, ["kind", "targetId", "suggestedName", "confidence", "provenance", "entityType"]);
   });
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
 }

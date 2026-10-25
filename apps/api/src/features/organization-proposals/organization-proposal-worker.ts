@@ -153,7 +153,7 @@ export class OrganizationProposalWorker {
           .slice(0, 3) ?? [],
       })),
       tags: this.options.metadata.listTags(memberId).map(({ id, name }) => ({ id, name })),
-      entities: this.options.metadata.listEntities(memberId).map(({ id, name }) => ({ id, name })),
+      entities: this.options.metadata.listEntities(memberId).map(({ id, name, type }) => ({ id, name, type })),
     };
   }
 }
