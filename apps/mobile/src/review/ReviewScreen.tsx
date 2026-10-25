@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Animated, PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { createOfflineDraftId, type OfflineDraftStore } from "../offline/offline-drafts";
@@ -262,8 +262,9 @@ function OrganizationProposalControls({ client, memberId, itemId, itemKind }: { 
   const [inFlight, setInFlight] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [pollCycle, setPollCycle] = useState(0);
-  const [selected, setSelected] = useState<Record<string, readonly string[]>>({});
+  const [decisions, setDecisions] = useState<Record<string, Record<string, "accepted" | "dismissed">>>({});
   const generationRef = useRef<OrganizationProposalGeneration>({ state: "pending" });
+  const submissionInFlight = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -310,15 +311,49 @@ function OrganizationProposalControls({ client, memberId, itemId, itemKind }: { 
 
   const retryLoading = () => setPollCycle((current) => current + 1);
 
-  const decide = async (proposal: OrganizationProposal, state: "accepted" | "dismissed") => {
-    if (inFlight) return;
+  const refreshProposals = async (proposalId?: string) => {
+    try {
+      const snapshot = await client.list(itemId, itemKind, memberId);
+      setProposals(snapshot.proposals);
+      generationRef.current = snapshot.generation;
+      setGeneration(snapshot.generation);
+      if (proposalId && !snapshot.proposals.some((proposal) => proposal.id === proposalId && proposal.state === "pending")) {
+        setDecisions((current) => { const next = { ...current }; delete next[proposalId]; return next; });
+      }
+    } catch {
+      // Keep the server response or local decisions visible when reconciliation is unavailable.
+    }
+  };
+
+  const submitProposal = async (proposal: OrganizationProposal, nextDecisions: Record<string, "accepted" | "dismissed">) => {
+    if (submissionInFlight.current) return;
+    submissionInFlight.current = true;
     setInFlight(proposal.id); setMutationError(null);
     try {
-      const candidateIds = state === "accepted" ? selected[proposal.id] ?? proposal.candidates.filter((candidate) => candidate.state === "pending" && candidate.confidenceBand !== "low").map((candidate) => candidate.id) : undefined;
-      const updated = await client.decide(proposal.id, state, memberId, candidateIds);
+      const candidateIds = proposal.candidates.filter((candidate) => nextDecisions[candidate.id] === "accepted").map((candidate) => candidate.id);
+      const updated = await client.decide(proposal.id, candidateIds.length > 0 ? "accepted" : "dismissed", memberId, candidateIds.length > 0 ? candidateIds : undefined);
       setProposals((current) => current.map((item) => item.id === updated.id ? updated : item));
-    } catch (cause) { setMutationError(cause instanceof Error ? cause.message : "Unable to update organization proposal"); }
-    finally { setInFlight(null); }
+      await refreshProposals(proposal.id);
+    } catch (cause) {
+      setMutationError(cause instanceof Error ? cause.message : "Unable to update organization proposal");
+      await refreshProposals(proposal.id);
+    } finally {
+      submissionInFlight.current = false;
+      setInFlight(null);
+    }
+  };
+
+  const decideLocally = (proposal: OrganizationProposal, candidateId: string, decision: "accepted" | "dismissed") => {
+    if (submissionInFlight.current) return;
+    const pendingCandidates = proposal.candidates.filter((candidate) => candidate.state === "pending");
+    const nextDecisions = { ...(decisions[proposal.id] ?? {}), [candidateId]: decision };
+    setDecisions((current) => ({ ...current, [proposal.id]: nextDecisions }));
+    if (pendingCandidates.every((candidate) => nextDecisions[candidate.id])) void submitProposal(proposal, nextDecisions);
+  };
+
+  const finishProposal = (proposal: OrganizationProposal) => {
+    if (submissionInFlight.current) return;
+    void submitProposal(proposal, decisions[proposal.id] ?? {});
   };
 
   if (loading) return <View style={styles.organization}><Text style={styles.sectionTitle}>AI suggestions</Text><Text style={styles.stateText}>Loading suggestions…</Text></View>;
@@ -331,22 +366,36 @@ function OrganizationProposalControls({ client, memberId, itemId, itemKind }: { 
     {!error && generation.state === "ready" && proposals.filter((proposal) => proposal.state === "pending" && proposal.candidates.some((candidate) => candidate.state === "pending")).length === 0 ? <Text style={styles.stateText}>No AI suggestions need review.</Text> : null}
     {!error ? proposals.filter((proposal) => proposal.state === "pending" && proposal.candidates.some((candidate) => candidate.state === "pending")).map((proposal) => <View key={proposal.id} style={styles.proposalCard}>
       <Text style={styles.proposalMeta}>Suggested by {proposal.modelVersion} · rules {proposal.rulesVersion}</Text>
-      {proposal.candidates.filter((candidate) => candidate.state === "pending").map((candidate) => <ProposalCandidateRow key={candidate.id} candidate={candidate} selected={(selected[proposal.id] ?? proposal.candidates.filter((item) => item.state === "pending" && item.confidenceBand !== "low").map((item) => item.id)).includes(candidate.id)} disabled={inFlight !== null} onToggle={() => setSelected((current) => ({ ...current, [proposal.id]: (current[proposal.id] ?? proposal.candidates.filter((item) => item.state === "pending" && item.confidenceBand !== "low").map((item) => item.id)).includes(candidate.id) ? (current[proposal.id] ?? []).filter((id) => id !== candidate.id) : [...(current[proposal.id] ?? proposal.candidates.filter((item) => item.state === "pending" && item.confidenceBand !== "low").map((item) => item.id)), candidate.id] }))} />)}
-      <View style={styles.proposalActions}><Button label={inFlight === proposal.id ? "Accepting…" : "Accept selected suggestions"} onPress={() => void decide(proposal, "accepted")} disabled={inFlight !== null || hasNoSelectedCandidates(selected[proposal.id])} /><Button label={inFlight === proposal.id ? "Dismissing…" : "Dismiss suggestions"} onPress={() => void decide(proposal, "dismissed")} disabled={inFlight !== null} /></View>
+      <Text style={styles.stateText}>Swipe each card to decide. The {itemKind === "task" ? "Task" : "Note"} is already saved.</Text>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 10, paddingHorizontal: 4 }}><Text style={{ color: "#8C3D25", fontSize: 13, fontWeight: "800" }}>← Ignore</Text><Text style={{ color: "#356445", fontSize: 13, fontWeight: "800" }}>Add →</Text></View>
+      {proposal.candidates.filter((candidate) => candidate.state === "pending").map((candidate) => <ProposalCandidateRow key={candidate.id} candidate={candidate} decision={decisions[proposal.id]?.[candidate.id]} disabled={inFlight !== null} onDecision={(decision) => decideLocally(proposal, candidate.id, decision)} />)}
+      <Button label={inFlight === proposal.id ? "Отправка…" : mutationError && Object.keys(decisions[proposal.id] ?? {}).length === proposal.candidates.filter((candidate) => candidate.state === "pending").length ? "Повторить отправку" : "Готово"} onPress={() => finishProposal(proposal)} disabled={inFlight !== null} />
     </View>) : null}
     {mutationError ? <Text accessibilityRole="alert" style={styles.error}>{mutationError}</Text> : null}
   </View>;
 }
 
-function hasNoSelectedCandidates(candidateIds: readonly string[] | undefined): boolean {
-  return candidateIds !== undefined && candidateIds.length === 0;
-}
-
-function ProposalCandidateRow({ candidate, selected, disabled, onToggle }: { readonly candidate: OrganizationProposalCandidate; readonly selected: boolean; readonly disabled: boolean; readonly onToggle: () => void }) {
+function ProposalCandidateRow({ candidate, decision, disabled, onDecision }: { readonly candidate: OrganizationProposalCandidate; readonly decision: "accepted" | "dismissed" | undefined; readonly disabled: boolean; readonly onDecision: (decision: "accepted" | "dismissed") => void }) {
   const name = candidate.suggestedName ?? `${candidate.kind} ${candidate.targetId ?? ""}`.trim();
-  return <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: selected, disabled }} accessibilityLabel={`${selected ? "Remove" : "Select"} ${candidate.kind} suggestion ${name}`} onPress={onToggle} disabled={disabled || candidate.confidenceBand === "low"} style={styles.proposalCandidate}>
-    <Text style={styles.metadataValue}>{selected ? "✓ " : "○ "}{candidate.kind} · {name}</Text><Text style={styles.proposalConfidence}>{candidate.confidenceBand} confidence ({Math.round(candidate.confidence * 100)}%)</Text><Text style={styles.provenance}>Source: {candidate.provenance.join(" · ")}</Text>{candidate.confidenceBand === "low" ? <Text style={styles.error}>Low-confidence suggestions cannot be accepted.</Text> : null}
-  </Pressable>;
+  const translateX = useRef(new Animated.Value(0)).current;
+  const current = useRef(onDecision);
+  current.current = onDecision;
+  const responder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+    onPanResponderMove: (_event, gesture) => translateX.setValue(gesture.dx),
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.dx > 72 || gesture.dx < -72) {
+        const decision = gesture.dx > 0 ? "accepted" : "dismissed";
+        Animated.timing(translateX, { toValue: gesture.dx > 0 ? 500 : -500, duration: 150, useNativeDriver: false }).start(() => current.current(decision));
+      } else Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start();
+    },
+    onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start(),
+  })).current;
+  return <Animated.View {...responder.panHandlers} accessibilityLabel={`${candidate.kind} suggestion ${name}. Swipe right to add, left to ignore.`} style={[styles.proposalCandidate, decision === "accepted" ? { borderColor: "#356445", borderWidth: 2 } : decision === "dismissed" ? { borderColor: "#8C3D25", borderWidth: 2 } : null, { transform: [{ translateX }] }]}>
+    <Text style={styles.metadataValue}>{candidate.kind} · {name}</Text><Text style={styles.proposalConfidence}>{candidate.confidenceBand} confidence ({Math.round(candidate.confidence * 100)}%)</Text><Text style={styles.provenance}>Source: {candidate.provenance.join(" · ")}</Text>{decision ? <Text style={styles.stateText}>{decision === "accepted" ? "Marked to Add" : "Marked to Ignore"}</Text> : null}
+    <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}><Pressable accessibilityRole="button" accessibilityState={{ selected: decision === "dismissed", disabled }} accessibilityLabel={`Ignore ${candidate.kind} suggestion ${name}`} onPress={() => current.current("dismissed")} disabled={disabled} style={[styles.button, decision === "dismissed" ? { backgroundColor: "#8C3D25" } : null]}><Text style={styles.buttonText}>← Ignore</Text></Pressable><Pressable accessibilityRole="button" accessibilityState={{ selected: decision === "accepted", disabled }} accessibilityLabel={`Add ${candidate.kind} suggestion ${name}`} onPress={() => current.current("accepted")} disabled={disabled} style={[styles.button, decision === "accepted" ? { backgroundColor: "#356445" } : null]}><Text style={styles.buttonText}>Add →</Text></Pressable></View>
+  </Animated.View>;
 }
 
 function MetadataControls({ client, memberId, itemId, itemKind }: { readonly client: MetadataClient; readonly memberId: string; readonly itemId: string; readonly itemKind: MetadataItemKind }) {
