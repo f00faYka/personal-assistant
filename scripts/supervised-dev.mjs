@@ -1,6 +1,8 @@
-import { accessSync, constants, existsSync } from "node:fs";
-import { spawn as nodeSpawn } from "node:child_process";
-import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { execFile, spawn as nodeSpawn } from "node:child_process";
+import { homedir } from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 
 const REQUIRED = [
@@ -8,12 +10,8 @@ const REQUIRED = [
   "API_PORT",
   "OLLAMA_ENDPOINT",
   "OLLAMA_HEALTH_ENDPOINT",
-  "OLLAMA_MODEL",
-  "OLLAMA_BINARY_PATH",
   "WHISPER_ENDPOINT",
   "WHISPER_HEALTH_ENDPOINT",
-  "WHISPER_BINARY_PATH",
-  "WHISPER_MODEL_PATH",
   "WHISPER_MODEL",
 ];
 
@@ -51,12 +49,8 @@ export function loadSupervisedConfiguration(environment) {
   return {
     ollamaEndpoint: environment.OLLAMA_ENDPOINT,
     ollamaHealthEndpoint: environment.OLLAMA_HEALTH_ENDPOINT,
-    ollamaModel: environment.OLLAMA_MODEL,
-    ollamaBinaryPath: environment.OLLAMA_BINARY_PATH,
     whisperEndpoint: environment.WHISPER_ENDPOINT,
     whisperHealthEndpoint: environment.WHISPER_HEALTH_ENDPOINT,
-    whisperBinaryPath: environment.WHISPER_BINARY_PATH,
-    whisperModelPath: environment.WHISPER_MODEL_PATH,
     whisperModel: environment.WHISPER_MODEL,
     readinessTimeoutMilliseconds,
     pollIntervalMilliseconds,
@@ -70,26 +64,26 @@ export class SupervisedDevelopment {
   #configuration;
   #fetch;
   #spawn;
-  #exists;
+  #runManager;
+  #managerPath;
+  #selectedOllamaModel;
   #children = [];
   #stopping = false;
   #started = false;
   #herdr;
 
-  constructor({ environment, fetch = globalThis.fetch, spawn = nodeSpawn, exists = existsSync, herdr } = {}) {
+  constructor({ environment, fetch = globalThis.fetch, spawn = nodeSpawn, exists = existsSync, runManager = executeManager, herdr } = {}) {
     this.#configuration = loadSupervisedConfiguration(environment);
     this.#fetch = fetch;
     this.#spawn = spawn;
-    this.#exists = exists;
+    this.#runManager = runManager;
+    this.#managerPath = resolveManagerPath(environment, exists);
     this.#herdr = herdr ?? (isHerdrEnvironment(environment) ? new HerdrRuntime({ environment }) : null);
   }
 
   async start() {
     if (this.#started) return;
-    const ollamaReused = await this.#ensureOllama();
-    if (ollamaReused) this.#herdr?.startMonitor(this.#configuration.ollamaModel);
-    if (this.#stopping) return;
-    await this.#ensureWhisper();
+    await this.#ensureManagerRuntimes();
     if (this.#stopping) return;
     this.#startApplicationProcesses();
     this.#started = true;
@@ -103,62 +97,70 @@ export class SupervisedDevelopment {
     this.#herdr?.stop();
   }
 
-  #validateWhisperAssets() {
-    const missing = [];
-    if (!this.#exists(this.#configuration.whisperBinaryPath)) missing.push("WHISPER_BINARY_PATH");
-    if (!this.#exists(this.#configuration.whisperModelPath)) missing.push("WHISPER_MODEL_PATH");
-    if (missing.length > 0) {
-      throw new Error(`Missing ${missing.join(" and ")}. Install the local assets and set the paths in .env; this command never downloads them.`);
+  async #ensureManagerRuntimes() {
+    if (!this.#managerPath) {
+      throw new Error(`AI Runtime Manager CLI not found. Install it and make ai-runtime-manager available in PATH or at ${path.join(homedir(), ".local/bin/ai-runtime-manager")}; then run: ai-runtime-manager config validate`);
     }
-    try {
-      accessSync(this.#configuration.whisperBinaryPath, constants.X_OK);
-    } catch {
-      // Test doubles may only implement exists(). The real command still reports a useful path error.
-      if (this.#exists === existsSync) throw new Error(`WHISPER_BINARY_PATH is not executable: ${this.#configuration.whisperBinaryPath}`);
+
+    const validation = await this.#runManager(this.#managerPath, ["config", "validate"]);
+    if (validation.code !== 0) {
+      throw new Error(`AI Runtime Manager configuration is invalid or unavailable. Run "ai-runtime-manager config validate" and resolve the reported issue. ${validation.stderr || validation.stdout}`.trim());
     }
+
+    const statusResult = await this.#runManager(this.#managerPath, ["--json", "status"]);
+    const status = parseManagerResult(statusResult, "status");
+    if (!status.runtimes || typeof status.runtimes !== "object") {
+      throw new Error(`AI Runtime Manager status has no runtime records. Run "ai-runtime-manager status" and inspect its output.`);
+    }
+    for (const [runtime, value] of Object.entries(status.runtimes)) {
+      if (value.state === "conflict" || value.state === "failed") {
+        throw managerStateError(runtime, value, this.#configuration);
+      }
+    }
+    this.#selectedOllamaModel = managerModel(status.runtimes.ollama, "status");
+
+    const startResult = await this.#runManager(this.#managerPath, ["--json", "start"]);
+    const started = parseManagerResult(startResult, "start");
+    if (started.state === "duplicate") {
+      throw new Error(`Another AI Runtime Manager start is already in progress. Wait for it, then run "ai-runtime-manager status" before restarting Personal Assistant.`);
+    }
+    if (started.state !== "ok") {
+      const issue = Object.entries(started.runtimes ?? {}).find(([, value]) => value.state !== "ready");
+      if (issue) throw managerStateError(issue[0], issue[1], this.#configuration, true);
+      throw new Error(`AI Runtime Manager could not start configured runtimes. Run "ai-runtime-manager status" for details.`);
+    }
+    const startedOllamaModel = managerModel(started.runtimes?.ollama, "start");
+    if (startedOllamaModel !== this.#selectedOllamaModel) {
+      throw new Error(`AI Runtime Manager reported different Ollama models during status and start (${this.#selectedOllamaModel} and ${startedOllamaModel}). Check its configuration and retry.`);
+    }
+    for (const [runtime, value] of Object.entries(started.runtimes ?? {})) {
+      if (value.enabled && (value.state !== "ready" || !["managed", "reused"].includes(value.ownership))) {
+        throw managerStateError(runtime, value, this.#configuration, true);
+      }
+    }
+
+    await this.#waitFor("Whisper", () => this.#isReady(this.#configuration.whisperHealthEndpoint));
+    await this.#waitForOllama();
   }
 
-  async #ensureOllama() {
-    const currentState = await this.#ollamaModelState();
-    if (currentState === "ready") return true;
-    if (currentState === "missing") throw this.#missingOllamaModelError();
-    if (!this.#exists(this.#configuration.ollamaBinaryPath)) {
-      throw new Error(`Missing OLLAMA_BINARY_PATH. Install Ollama and set its binary path in .env; this command never downloads it.`);
-    }
-    this.#startChild(this.#configuration.ollamaBinaryPath, ["serve"], "Ollama");
-    await this.#waitFor("Ollama", async () => {
+  async #waitForOllama() {
+    const deadline = Date.now() + this.#configuration.readinessTimeoutMilliseconds;
+    while (Date.now() <= deadline) {
       const state = await this.#ollamaModelState();
-      if (state === "missing") throw this.#missingOllamaModelError();
-      return state === "ready";
-    });
-    return false;
+      if (state === "ready") return;
+      if (state === "missing") {
+        throw new Error(`AI Runtime Manager's Ollama model ${this.#selectedOllamaModel} is not available at ${this.#configuration.ollamaHealthEndpoint}. Check "ai-runtime-manager status"; Personal Assistant does not select or download models.`);
+      }
+      await delay(this.#configuration.pollIntervalMilliseconds);
+    }
+    throw new Error(`Ollama did not become ready at ${this.#configuration.ollamaHealthEndpoint} within ${this.#configuration.readinessTimeoutMilliseconds}ms. Check "ai-runtime-manager status" and the configured endpoint.`);
   }
 
   async #ollamaModelState() {
     const response = await this.#request(this.#configuration.ollamaHealthEndpoint);
     if (!response) return "unavailable";
     const body = await response.json();
-    return Array.isArray(body.models) && body.models.some((model) => model?.name === this.#configuration.ollamaModel) ? "ready" : "missing";
-  }
-
-  #missingOllamaModelError() {
-    return new Error(`Configured Ollama model is missing: ${this.#configuration.ollamaModel}. Pull it manually, then rerun; this command never downloads models.`);
-  }
-
-  async #ensureWhisper() {
-    if (await this.#isReady(this.#configuration.whisperHealthEndpoint)) return;
-    this.#validateWhisperAssets();
-    const endpoint = new URL(this.#configuration.whisperEndpoint);
-    const host = endpoint.hostname;
-    const port = endpoint.port || (endpoint.protocol === "https:" ? "443" : "80");
-    this.#startChild(this.#configuration.whisperBinaryPath, [
-      "-m", this.#configuration.whisperModelPath,
-      "--language", "auto",
-      "--host", host,
-      "--port", port,
-      "--convert",
-    ], "Whisper");
-    await this.#waitFor("Whisper", () => this.#isReady(this.#configuration.whisperHealthEndpoint));
+    return Array.isArray(body.models) && body.models.some((model) => model?.name === this.#selectedOllamaModel) ? "ready" : "missing";
   }
 
   async #isReady(endpoint) {
@@ -180,18 +182,21 @@ export class SupervisedDevelopment {
       if (await check()) return;
       await delay(this.#configuration.pollIntervalMilliseconds);
     }
-    throw new Error(`${name} did not become ready within ${this.#configuration.readinessTimeoutMilliseconds}ms. Check the configured endpoint, binary, logs, and local installation.`);
+    throw new Error(`${name} did not become ready within ${this.#configuration.readinessTimeoutMilliseconds}ms. Check "ai-runtime-manager status" and the configured endpoint.`);
   }
 
   #startApplicationProcesses() {
-    const environment = {
+    const commonEnvironment = {
       ...process.env,
       API_HOST: this.#configuration.apiHost,
       API_PORT: String(this.#configuration.apiPort),
       EXPO_PUBLIC_API_BASE_URL: this.#configuration.apiBaseUrl,
     };
-    this.#startChild("npm", ["run", "dev", "--workspace", "@personal-assistant/api"], "API", environment);
-    this.#startChild("npm", ["run", "start", "--workspace", "@personal-assistant/mobile"], "Expo", environment);
+    const apiEnvironment = { ...commonEnvironment, OLLAMA_MODEL: this.#selectedOllamaModel };
+    const expoEnvironment = { ...commonEnvironment };
+    delete expoEnvironment.OLLAMA_MODEL;
+    this.#startChild("npm", ["run", "dev", "--workspace", "@personal-assistant/api"], "API", apiEnvironment);
+    this.#startChild("npm", ["run", "start", "--workspace", "@personal-assistant/mobile"], "Expo", expoEnvironment);
   }
 
   #startChild(command, arguments_, name, environment = process.env) {
@@ -209,6 +214,64 @@ export class SupervisedDevelopment {
     });
     return child;
   }
+}
+
+const execFileAsync = promisify(execFile);
+
+async function executeManager(executable, arguments_) {
+  try {
+    const result = await execFileAsync(executable, arguments_, { encoding: "utf8" });
+    return { code: 0, stdout: result.stdout, stderr: result.stderr };
+  } catch (error) {
+    return { code: error.code ?? 1, stdout: error.stdout ?? "", stderr: error.stderr ?? error.message };
+  }
+}
+
+function resolveManagerPath(environment, exists) {
+  if (environment.AI_RUNTIME_MANAGER_PATH?.trim()) return environment.AI_RUNTIME_MANAGER_PATH;
+  for (const directory of (environment.PATH ?? "").split(path.delimiter)) {
+    const candidate = path.join(directory, "ai-runtime-manager");
+    if (exists(candidate)) return candidate;
+  }
+  const localCandidate = path.join(homedir(), ".local/bin/ai-runtime-manager");
+  return exists(localCandidate) ? localCandidate : null;
+}
+
+function parseManagerResult(result, command) {
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    // The CLI may have printed an operator-facing message instead of JSON.
+  }
+  if (parsed && typeof parsed === "object" && (result.code === 0 || command === "start")) return parsed;
+  if (result.code !== 0) {
+    throw new Error(`AI Runtime Manager ${command} failed. Run "ai-runtime-manager ${command === "status" ? "status" : "config validate"}" and resolve the reported issue. ${result.stderr || result.stdout}`.trim());
+  }
+  throw new Error(`AI Runtime Manager ${command} returned an unreadable status. Run "ai-runtime-manager status" and inspect its output.`);
+}
+
+function managerStateError(runtime, value, configuration, afterStart = false) {
+  const endpoint = runtime === "whisper" ? configuration.whisperEndpoint : configuration.ollamaEndpoint;
+  const model = runtime === "ollama" && value.model ? ` Manager-selected model: ${value.model}.` : "";
+  const reason = value.reason ? ` ${value.reason}` : "";
+  const instruction = value.state === "conflict"
+    ? runtime === "ollama" && /model/i.test(value.reason ?? "")
+      ? `Check "ai-runtime-manager status" and the manager configuration. If resolving the model state requires loading or downloading it, make that a separate operator decision.`
+      : `Resolve the port/process conflict manually, then check "ai-runtime-manager status".`
+    : value.state === "unavailable"
+      ? afterStart
+        ? `The manager could not make it ready. Check "ai-runtime-manager status" and resolve missing local runtime/model assets or configuration manually.`
+        : `Start it with "ai-runtime-manager start", then verify "ai-runtime-manager status".`
+      : `Check "ai-runtime-manager config validate" and "ai-runtime-manager status".`;
+  return new Error(`AI Runtime Manager reports ${runtime} ${value.state}${value.ownership ? ` (${value.ownership})` : ""}.${model}${reason} Personal Assistant expects ${endpoint}. ${instruction} Personal Assistant does not directly start or stop runtime processes; their lifecycle belongs to the manager.`);
+}
+
+function managerModel(runtime, command) {
+  if (typeof runtime?.model !== "string" || !runtime.model.trim()) {
+    throw new Error(`AI Runtime Manager ${command} did not report its selected Ollama model. Check "ai-runtime-manager config validate" and "ai-runtime-manager status".`);
+  }
+  return runtime.model;
 }
 
 export class HerdrRuntime {
@@ -231,7 +294,7 @@ export class HerdrRuntime {
     const panes = this.#runCommand(["pane", "list", "--workspace", this.#environment.HERDR_WORKSPACE_ID]).panes
       .filter((pane) => pane.tab_id === targetTab.tab_id);
     const labelPrefix = `personal-assistant ${name}`;
-    const existing = ["API", "Expo", "Ollama monitor"].includes(name)
+    const existing = ["API", "Expo"].includes(name)
       ? panes.find((pane) => pane.label?.startsWith(labelPrefix))
       : undefined;
     if (existing && this.#isActiveRuntimePane(existing, name)) return { paneId: existing.pane_id, owned: false };
@@ -262,11 +325,6 @@ export class HerdrRuntime {
       this.#runCommand(["pane", "send-text", paneId, "\u0003"]);
     }
     this.#ownedPanes = [];
-  }
-
-  startMonitor(model) {
-    const monitor = `while true; do clear; printf '%s\\n' 'Ollama monitor'; ollama ps; printf '\\nConfigured model: %s\\n' ${shellQuote(model)}; ollama list | grep -F -- ${shellQuote(model)} || true; sleep 5; done`;
-    return this.startProcess("sh", ["-c", monitor], "Ollama monitor", {});
   }
 
   #createRunTab() {

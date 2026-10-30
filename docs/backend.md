@@ -34,21 +34,39 @@ The process optionally loads `.env` and then validates these values:
 | `WHISPER_TIMEOUT_MS` | `120000` | Per-attempt local Whisper timeout, from 1 second to 10 minutes |
 | `TRANSCRIPTION_MAX_ATTEMPTS` | `3` | Durable attempt cap, from 1 to 10 |
 | `OLLAMA_ENDPOINT` | `http://127.0.0.1:11434/api/chat` | Local Ollama chat endpoint |
-| `OLLAMA_MODEL` | `qwen3.5:4b` | Local Qwen model used and recorded for interpretations |
+| `OLLAMA_MODEL` | supplied by Runtime Manager in `dev:all` | Model sent to Ollama and recorded in interpretation provenance; required for standalone API startup |
 | `OLLAMA_TIMEOUT_MS` | `120000` | Per-attempt local Ollama timeout, from 1 second to 10 minutes |
 | `INTERPRETATION_MAX_ATTEMPTS` | `3` | Durable interpretation attempt cap, from 1 to 10 |
 
 Copy `.env.example` to `.env` to override the defaults. `.env`, SQLite files, `local-data/`, generated output, and other runtime-data directories are excluded from version control.
 
-## Local Whisper runtime
+## Local AI runtime manager
 
 ### Supervised local development
 
-The development-only `npm run dev:all` command supervises the local stack. Configure the command through the repository `.env` described in [`.env.example`](../.env.example); do not put machine-specific model or binary paths in source code. The endpoint, binary path, and model path may point to another reviewed installation without a code change.
+The development-only `npm run dev:all` command uses the separately installed macOS `ai-runtime-manager` CLI to manage Whisper and Ollama. The manager reads `~/Library/Application Support/ai-runtime-manager/config.toml`; Personal Assistant does not edit that file or choose the Ollama model. Keep the API's Whisper and Ollama endpoint variables in `.env` aligned with the manager. The launcher takes the Ollama model reported by manager status and passes it to the API as `OLLAMA_MODEL`; the API continues to call Ollama directly and records that model in provenance.
 
-The routine first checks the configured Whisper and Ollama health endpoints. A healthy service is reused. Otherwise it starts the configured Ollama binary with `serve` or the configured `whisper-server` binary with the configured model path, waits until the health check succeeds, and verifies the configured Ollama model via its tags endpoint. Only after those checks does it start API and Expo. Ctrl+C cleans up children started by the routine and leaves reused services running. Missing assets, an unavailable Ollama model, duplicate startup, process failure, and timeout are actionable errors; no binary or model is downloaded.
+From a terminal, validate and inspect the manager, then start the app:
 
-When launched from Herdr (`HERDR_ENV=1`), the same command targets the `run` tab in the current workspace. It reuses labelled `personal-assistant API` and `personal-assistant Expo` panes, creates separate panes for missing services, and keeps the launcher alive so Ctrl+C sends a literal interrupt only to panes created by this invocation. The existing run-tab panes and already-ready Ollama/Whisper services are not stopped.
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+ai-runtime-manager config validate
+ai-runtime-manager status
+npm run dev:all
+```
+
+The launcher validates the manager configuration, reads `status --json`, takes the selected model from the Ollama runtime record, asks the manager to start enabled unavailable runtimes, then independently checks the configured Whisper health URL and Ollama tags URL for that manager-selected model before starting API and Expo. It does not select or download models, or load an Ollama model itself. If `OLLAMA_MODEL` is set in a local `.env`, `dev:all` overrides it with the manager's selection. If the CLI is not on `PATH`, the launcher also checks `~/.local/bin/ai-runtime-manager`; set `AI_RUNTIME_MANAGER_PATH` only when it is installed elsewhere.
+
+Runtime states have these meanings:
+
+- `managed`: the manager verified that it started the process. Personal Assistant uses it and does not stop it when the app exits.
+- `reused`: the manager verified a compatible existing process/model. Personal Assistant uses it and does not stop it.
+- `unavailable`: the endpoint/runtime is not ready. `dev:all` asks the manager to start it, then checks readiness. If it remains unavailable, the launcher reports `ai-runtime-manager status` and the expected endpoint; the operator must resolve missing binaries/models or configuration.
+- `conflict` (or `failed`): the manager cannot safely use/start the endpoint, including an occupied port, unknown process ownership, or an Ollama model mismatch/not loaded. The launcher stops before API/Expo and tells the operator to resolve it manually. It never kills the process, edits manager configuration, or downloads/loads a model.
+
+The direct post-manager checks are intentional: they confirm the API's `.env` endpoints are reachable and the manager-selected model is available through that Ollama endpoint. Shutdown cleans up only API/Expo processes or Herdr panes created by this launcher. Manager-owned and reused runtimes are left to the manager/operator.
+
+When launched from Herdr (`HERDR_ENV=1`), the command targets the `run` tab in the current workspace. It reuses labelled `personal-assistant API` and `personal-assistant Expo` panes, creates panes for missing app processes, and keeps the launcher alive so Ctrl+C sends an interrupt only to panes created by this invocation. It does not create Whisper, Ollama, or Ollama monitor panes.
 
 The current interpretation provider intentionally remains a direct HTTP adapter. The SDK evaluation found no concrete benefit for this boundary: the adapter already owns the small request/response contract, timeout, structured-output format, safe-error translation, and configured model provenance. Adding an SDK would add dependency and lifecycle coupling without changing those contracts, so no SDK is adopted in this prototype.
 
@@ -72,15 +90,9 @@ The current Space and Entity records do not persist descriptions or aliases. Con
 
 `GET /items/<item-id>/organization-proposals?memberId=<member-id>&itemKind=task|note` keeps the existing `proposals` array and adds a typed `generation` result. `pending` and `running` mean generation has not finished; `completed_empty` means generation succeeded with no candidates; `ready` includes persisted proposals; and `failed` includes a client-safe `error` and `retryable` flag. The Task/Note and provenance remain available through `GET /items` and detailed review throughout generation and failure. Retry a retryable job with `POST /items/<item-id>/organization-proposals/retry` and `{ "memberId": "...", "itemKind": "task" }`. Generation jobs are idempotent per Member/item, recover pending or interrupted work on startup, and use the existing proposal idempotency key so redelivery cannot create duplicate proposals. This status addition is the backend handoff for the #169 consumer; it does not change its UI.
 
-## Local Qwen/Ollama runtime
+## Local Ollama runtime
 
-The production API expects a local [Ollama](https://docs.ollama.com/) process with the configured Qwen model available. Install Ollama, keep its API bound to localhost, and fetch the default model before starting the API:
-
-```sh
-ollama pull qwen3.5:4b
-```
-
-Set `OLLAMA_ENDPOINT` when the local `/api/chat` address differs and set `OLLAMA_MODEL` to another reviewed local model when needed. The adapter sends a non-streaming chat request with temperature zero and the approved Direct-instruction JSON schema in Ollama's [`format` field](https://docs.ollama.com/capabilities/structured-outputs). It records the configured model and the parsed raw structured output with the resulting Interpretation. HTTP failures, timeouts, invalid API responses, and invalid structured JSON are translated to safe errors without retaining provider response bodies.
+The API connects to a local [Ollama](https://docs.ollama.com/) process. In `dev:all`, the model is selected in AI Runtime Manager configuration; operators install that model separately. Personal Assistant neither selects nor downloads it. For a standalone API process, provide `OLLAMA_MODEL` explicitly. Set `OLLAMA_ENDPOINT` when the local `/api/chat` address differs. The adapter sends a non-streaming chat request with temperature zero and the approved Direct-instruction JSON schema in Ollama's [`format` field](https://docs.ollama.com/capabilities/structured-outputs). It records the supplied model and parsed raw structured output with the resulting Interpretation. HTTP failures, timeouts, invalid API responses, and invalid structured JSON are translated to safe errors without retaining provider response bodies.
 
 The serial interpretation worker starts before transcription recovery. It discovers succeeded transcriptions that have no interpretation job, accepts newly succeeded transcriptions, and durably moves each job through `pending`, `processing`, `succeeded`, or `failed`. One provider attempt may create or rediscover one versioned Interpretation, then idempotently materialize its existing outcome contract: a clear `create_task` creates one Task, ordinary content creates one Note, and ambiguous or unsupported content creates one `Needs review` Note. Interpretation and outcome uniqueness prevent duplicate durable results across redelivery or restart.
 
@@ -88,13 +100,12 @@ Each queue delivery performs at most one interpretation attempt. Startup retries
 
 ### Operational verification
 
-With local Whisper, Ollama, and the API running, first confirm that Ollama has the configured model:
+With local Whisper, Ollama, and the API running, first check the manager's selection and runtime state:
 
 ```sh
+ai-runtime-manager status
 ollama list
-curl http://127.0.0.1:11434/api/chat \
-  -H 'content-type: application/json' \
-  -d '{"model":"qwen3.5:4b","stream":false,"format":"json","messages":[{"role":"user","content":"Return JSON with an ok field set to true"}]}'
+ollama ps
 ```
 
 Then record four representative Captures in the iPhone client: a clear Task request, ordinary Note content, an ambiguous instruction, and an unsupported instruction. Poll the Member list and open each returned `detailUrl`:

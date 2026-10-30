@@ -15,13 +15,11 @@ const validEnvironment = {
   API_PORT: "3000",
   OLLAMA_ENDPOINT: "http://127.0.0.1:11434/api/chat",
   OLLAMA_HEALTH_ENDPOINT: "http://127.0.0.1:11434/api/tags",
-  OLLAMA_MODEL: "reviewed-model",
-  OLLAMA_BINARY_PATH: "/tools/ollama",
+  OLLAMA_MODEL: "stale-env-model",
   WHISPER_ENDPOINT: "http://127.0.0.1:8080/inference",
   WHISPER_HEALTH_ENDPOINT: "http://127.0.0.1:8080/health",
-  WHISPER_BINARY_PATH: "/tools/whisper-server",
-  WHISPER_MODEL_PATH: "/models/ggml-small.bin",
   WHISPER_MODEL: "ggml-small",
+  AI_RUNTIME_MANAGER_PATH: "/tools/ai-runtime-manager",
   EXPO_PUBLIC_API_BASE_URL: "http://127.0.0.1:3000",
   SUPERVISOR_READINESS_TIMEOUT_MS: "100",
   SUPERVISOR_POLL_INTERVAL_MS: "1",
@@ -34,15 +32,11 @@ function child() {
 }
 
 describe("supervised development configuration", () => {
-  test("requires configurable runtime endpoints, model, and asset paths", () => {
-    expect(loadSupervisedConfiguration(validEnvironment)).toMatchObject({
-      ollamaModel: "reviewed-model",
-      whisperBinaryPath: "/tools/whisper-server",
-      whisperModelPath: "/models/ggml-small.bin",
-    });
+  test("requires runtime endpoints but leaves Ollama model selection to the manager", () => {
+    expect(loadSupervisedConfiguration(validEnvironment)).toMatchObject({ whisperModel: "ggml-small" });
+    expect(loadSupervisedConfiguration(validEnvironment)).not.toHaveProperty("ollamaModel");
 
     expect(() => loadSupervisedConfiguration({})).toThrow(ConfigurationError);
-    expect(() => loadSupervisedConfiguration({ ...validEnvironment, OLLAMA_MODEL: "" })).toThrow(/OLLAMA_MODEL/);
     expect(() => loadSupervisedConfiguration({ ...validEnvironment, WHISPER_ENDPOINT: "file:///tmp/inference" })).toThrow(/WHISPER_ENDPOINT/);
   });
 
@@ -116,7 +110,7 @@ describe("HerdrRuntime", () => {
     expect(commands).toContainEqual(["pane", "run", "w3:p9", "'/tools/whisper-server' '-m' '/models/model.bin'"]);
   });
 
-  test("lays out a fresh run tab as a 2x2 grid with an Ollama monitor", () => {
+  test("lays out only the Personal Assistant API and Expo panes in a fresh run tab", () => {
     const commands = [];
     const panes = [];
     let hasRunTab = false;
@@ -143,133 +137,168 @@ describe("HerdrRuntime", () => {
     });
     const runtime = new HerdrRuntime({ environment: { HERDR_WORKSPACE_ID: "w3" }, runCommand, cwd: "/repo" });
 
-    runtime.startMonitor("reviewed-model");
-    runtime.startProcess("/tools/whisper-server", ["-m", "/models/model.bin"], "Whisper", {});
     runtime.startProcess("npm", ["run", "dev"], "API", { API_PORT: "3000" });
     runtime.startProcess("npm", ["run", "start"], "Expo", {});
 
     expect(commands).toContainEqual(expect.arrayContaining(["pane", "split", "--pane", "w3:pF", "--direction", "right"]));
-    expect(commands).toContainEqual(expect.arrayContaining(["pane", "split", "--pane", "w3:pF", "--direction", "down"]));
-    expect(commands).toContainEqual(expect.arrayContaining(["pane", "split", "--pane", "w3:pG", "--direction", "down"]));
+    expect(commands.filter((command) => command[0] === "pane" && command[1] === "run")).toHaveLength(2);
   });
 });
 
 describe("SupervisedDevelopment", () => {
-  test("reuses ready services and does not spawn duplicates", async () => {
-    const spawn = vi.fn(() => child());
-    const fetch = vi.fn(async (url) => ({
-      ok: true,
-      json: async () => url.endsWith("tags") ? { models: [{ name: "reviewed-model" }] } : {},
-    }));
-    const exists = vi.fn(() => true);
-    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch, spawn, exists });
-
-    await routine.start();
-    await routine.start();
-
-    expect(spawn).toHaveBeenCalledTimes(2);
-    expect(spawn).toHaveBeenNthCalledWith(1, "npm", ["run", "dev", "--workspace", "@personal-assistant/api"], expect.any(Object));
-    expect(spawn).toHaveBeenNthCalledWith(2, "npm", ["run", "start", "--workspace", "@personal-assistant/mobile"], expect.any(Object));
+  const managerModelName = "manager-selected-model";
+  const readyStatus = (whisperOwnership = "managed", ollamaOwnership = "reused", model = managerModelName) => ({
+    state: "ok",
+    runtimes: {
+      whisper: { enabled: true, state: "ready", ownership: whisperOwnership },
+      ollama: { enabled: true, state: "ready", ownership: ollamaOwnership, model },
+    },
   });
 
-  test("starts missing services only after validating Whisper assets and waits for readiness", async () => {
-    const whisper = child();
-    const ollama = child();
-    const api = child();
-    const mobile = child();
-    const spawn = vi.fn()
-      .mockReturnValueOnce(ollama)
-      .mockReturnValueOnce(whisper)
-      .mockReturnValueOnce(api)
-      .mockReturnValueOnce(mobile);
-    const calls = [];
-    const fetch = vi.fn(async (url) => {
-      calls.push(url);
-      if (url.endsWith("tags")) {
-        if (calls.filter((value) => value.endsWith("tags")).length === 1) throw new Error("not ready");
-        return { ok: true, json: async () => ({ models: [{ name: "reviewed-model" }] }) };
-      }
-      if (url.endsWith("health")) {
-        if (calls.filter((value) => value.endsWith("health")).length === 1) throw new Error("not ready");
-        return { ok: true, json: async () => ({}) };
-      }
+  function managerRunner({ initial = readyStatus(), started = readyStatus(), validationCode = 0, startedCode = 0 } = {}) {
+    return vi.fn(async (_executable, arguments_) => {
+      if (arguments_[0] === "config") return { code: validationCode, stdout: "valid", stderr: "" };
+      if (arguments_[1] === "status") return { code: 0, stdout: JSON.stringify(initial), stderr: "" };
+      if (arguments_[1] === "start") return { code: startedCode, stdout: JSON.stringify(started), stderr: "" };
+      throw new Error(`Unexpected manager command ${arguments_.join(" ")}`);
+    });
+  }
+
+  function readyFetch(model = managerModelName) {
+    return vi.fn(async (url) => {
+      if (url.endsWith("tags")) return { ok: true, json: async () => ({ models: [{ name: model }] }) };
       return { ok: true, json: async () => ({}) };
     });
-    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch, spawn, exists: () => true });
+  }
 
-    await routine.start();
-
-    expect(spawn).toHaveBeenCalledTimes(4);
-    expect(spawn.mock.calls[0][0]).toBe("/tools/ollama");
-    expect(spawn.mock.calls[1][0]).toBe("/tools/whisper-server");
-    expect(spawn.mock.calls[1][1]).toEqual([
-      "-m", "/models/ggml-small.bin",
-      "--language", "auto",
-      "--host", "127.0.0.1",
-      "--port", "8080",
-      "--convert",
-    ]);
-    expect(spawn.mock.calls[1][1]).not.toContain("--translate");
-    expect(calls).toEqual([
-      "http://127.0.0.1:11434/api/tags",
-      "http://127.0.0.1:11434/api/tags",
-      "http://127.0.0.1:8080/health",
-      "http://127.0.0.1:8080/health",
-    ]);
-  });
-
-  test("reports missing assets and startup failures without starting API or Expo", async () => {
-    const spawn = vi.fn(() => child());
-    const fetch = vi.fn(async (url) => url.endsWith("tags")
-      ? { ok: true, json: async () => ({ models: [{ name: "reviewed-model" }] }) }
-      : (() => { throw new Error("offline"); })());
-    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch, spawn, exists: () => false });
-
-    await expect(routine.start()).rejects.toThrow(/WHISPER_BINARY_PATH.*WHISPER_MODEL_PATH/);
-    expect(spawn).not.toHaveBeenCalled();
-  });
-
-  test("reports a missing configured Ollama model without starting a duplicate daemon", async () => {
-    const spawn = vi.fn(() => child());
-    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ models: [{ name: "another-model" }] }) }));
-    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch, spawn, exists: () => true });
-
-    await expect(routine.start()).rejects.toThrow(/Configured Ollama model is missing: reviewed-model/);
-    expect(spawn).not.toHaveBeenCalled();
-  });
-
-  test("reports an Ollama startup failure without starting API or Expo", async () => {
-    const spawn = vi.fn(() => { throw new Error("spawn failed"); });
-    const fetch = vi.fn(async () => { throw new Error("offline"); });
-    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch, spawn, exists: () => true });
-
-    await expect(routine.start()).rejects.toThrow("spawn failed");
-    expect(spawn).toHaveBeenCalledTimes(1);
-  });
-
-  test("cleans up only processes started by the routine", async () => {
-    const ollama = child();
-    const whisper = child();
+  test("uses managed Whisper and reused Ollama after manager and endpoint readiness checks", async () => {
     const api = child();
     const mobile = child();
-    const spawn = vi.fn().mockReturnValueOnce(ollama).mockReturnValueOnce(whisper).mockReturnValueOnce(api).mockReturnValueOnce(mobile);
-    const attempts = new Map();
-    const fetch = vi.fn(async (url) => {
-      const attempt = (attempts.get(url) ?? 0) + 1;
-      attempts.set(url, attempt);
-      if (attempt === 1) throw new Error("offline");
-      return url.endsWith("tags")
-        ? { ok: true, json: async () => ({ models: [{ name: "reviewed-model" }] }) }
-        : { ok: true, json: async () => ({}) };
-    });
-    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch, spawn, exists: () => true });
+    const spawn = vi.fn().mockReturnValueOnce(api).mockReturnValueOnce(mobile);
+    const fetch = readyFetch();
+    const runManager = managerRunner();
+    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch, spawn, runManager, exists: () => true });
 
     await routine.start();
     await routine.stop();
 
-    expect(ollama.kill).toHaveBeenCalledWith("SIGTERM");
-    expect(whisper.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(runManager.mock.calls.map(([, args]) => args)).toEqual([
+      ["config", "validate"], ["--json", "status"], ["--json", "start"],
+    ]);
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      "http://127.0.0.1:8080/health", "http://127.0.0.1:11434/api/tags",
+    ]);
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(spawn.mock.calls[0][2].env.OLLAMA_MODEL).toBe(managerModelName);
+    expect(spawn.mock.calls[0][2].env.OLLAMA_MODEL).not.toBe(validEnvironment.OLLAMA_MODEL);
+    expect(spawn.mock.calls[1][2].env).not.toHaveProperty("OLLAMA_MODEL");
     expect(api.kill).toHaveBeenCalledWith("SIGTERM");
     expect(mobile.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  test("does not start the app if the manager selection changes during startup", async () => {
+    const runManager = managerRunner({
+      initial: readyStatus("managed", "reused", "first-model"),
+      started: readyStatus("managed", "reused", "second-model"),
+    });
+    const spawn = vi.fn();
+    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch: readyFetch(), spawn, runManager, exists: () => true });
+
+    await expect(routine.start()).rejects.toThrow(/reported different Ollama models during status and start/);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  test("requires manager status to report its selected Ollama model", async () => {
+    const initial = readyStatus();
+    delete initial.runtimes.ollama.model;
+    const runManager = managerRunner({ initial });
+    const spawn = vi.fn();
+    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch: readyFetch(), spawn, runManager, exists: () => true });
+
+    await expect(routine.start()).rejects.toThrow(/status did not report its selected Ollama model/);
+    expect(runManager).toHaveBeenCalledTimes(2);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  test("allows unavailable runtimes to be started by manager before direct readiness checks", async () => {
+    const initial = { state: "ok", runtimes: {
+      whisper: { enabled: true, state: "unavailable", ownership: "none" },
+      ollama: { enabled: true, state: "unavailable", ownership: "none", model: managerModelName },
+    } };
+    const runManager = managerRunner({ initial, started: readyStatus("managed", "managed") });
+    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch: readyFetch(), spawn: vi.fn(() => child()), runManager, exists: () => true });
+
+    await routine.start();
+
+    expect(runManager).toHaveBeenCalledTimes(3);
+  });
+
+  test("explains conflict and does not start runtimes, API, or Expo", async () => {
+    const initial = { state: "ok", runtimes: {
+      whisper: { enabled: true, state: "ready", ownership: "managed" },
+      ollama: { enabled: true, state: "conflict", ownership: "unknown", model: managerModelName, reason: "model is not loaded" },
+    } };
+    const runManager = managerRunner({ initial });
+    const spawn = vi.fn(() => child());
+    const routine = new SupervisedDevelopment({ environment: validEnvironment, runManager, spawn, exists: () => true });
+
+    await expect(routine.start()).rejects.toThrow(/ollama conflict.*model is not loaded.*ai-runtime-manager status.*separate operator decision/);
+    expect(runManager).toHaveBeenCalledTimes(2);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  test("explains unavailable runtime when manager cannot start it", async () => {
+    const unavailable = { state: "error", runtimes: {
+      whisper: { enabled: true, state: "ready", ownership: "managed" },
+      ollama: { enabled: true, state: "unavailable", ownership: "none", model: managerModelName, reason: "configured model is unavailable" },
+    } };
+    const runManager = managerRunner({ initial: readyStatus(), started: unavailable, startedCode: 2 });
+    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch: readyFetch(), spawn: vi.fn(), runManager, exists: () => true });
+
+    await expect(routine.start()).rejects.toThrow(/ollama unavailable.*configured model is unavailable.*ai-runtime-manager status/);
+  });
+
+  test("does not start the app while another manager start is active", async () => {
+    const runManager = managerRunner({ started: { state: "duplicate", runtimes: {} } });
+    const spawn = vi.fn();
+    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch: readyFetch(), spawn, runManager, exists: () => true });
+
+    await expect(routine.start()).rejects.toThrow(/Another AI Runtime Manager start is already in progress/);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  test("reports a missing CLI or invalid manager config before starting the app", async () => {
+    const noCli = new SupervisedDevelopment({ environment: { ...validEnvironment, AI_RUNTIME_MANAGER_PATH: "" }, fetch: readyFetch(), spawn: vi.fn(), exists: () => false });
+    await expect(noCli.start()).rejects.toThrow(/AI Runtime Manager CLI not found/);
+
+    const invalidConfig = new SupervisedDevelopment({ environment: validEnvironment, fetch: readyFetch(), spawn: vi.fn(), runManager: managerRunner({ validationCode: 1 }), exists: () => true });
+    await expect(invalidConfig.start()).rejects.toThrow(/configuration is invalid or unavailable.*config validate/);
+  });
+
+  test("does not spawn API or Expo when a direct configured endpoint or model check fails", async () => {
+    const spawn = vi.fn(() => child());
+    const fetch = vi.fn(async (url) => url.endsWith("tags")
+      ? { ok: true, json: async () => ({ models: [{ name: "another-model" }] }) }
+      : ({ ok: true, json: async () => ({}) }));
+    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch, spawn, runManager: managerRunner(), exists: () => true });
+
+    await expect(routine.start()).rejects.toThrow(/AI Runtime Manager's Ollama model manager-selected-model is not available/);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  test("cleans up only API and Expo children, leaving manager-owned runtimes to the manager", async () => {
+    const api = child();
+    const mobile = child();
+    const spawn = vi.fn().mockReturnValueOnce(api).mockReturnValueOnce(mobile);
+    const runManager = managerRunner();
+    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch: readyFetch(), spawn, runManager, exists: () => true });
+
+    await routine.start();
+    await routine.stop();
+
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(api.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(mobile.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(runManager.mock.calls.map(([, args]) => args)).not.toContainEqual(["stop"]);
   });
 });
