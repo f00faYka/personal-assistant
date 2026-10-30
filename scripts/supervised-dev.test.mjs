@@ -15,7 +15,7 @@ const validEnvironment = {
   API_PORT: "3000",
   OLLAMA_ENDPOINT: "http://127.0.0.1:11434/api/chat",
   OLLAMA_HEALTH_ENDPOINT: "http://127.0.0.1:11434/api/tags",
-  OLLAMA_MODEL: "reviewed-model",
+  OLLAMA_MODEL: "stale-env-model",
   WHISPER_ENDPOINT: "http://127.0.0.1:8080/inference",
   WHISPER_HEALTH_ENDPOINT: "http://127.0.0.1:8080/health",
   WHISPER_MODEL: "ggml-small",
@@ -32,11 +32,11 @@ function child() {
 }
 
 describe("supervised development configuration", () => {
-  test("requires configurable runtime endpoints, model, and asset paths", () => {
-    expect(loadSupervisedConfiguration(validEnvironment)).toMatchObject({ ollamaModel: "reviewed-model", whisperModel: "ggml-small" });
+  test("requires runtime endpoints but leaves Ollama model selection to the manager", () => {
+    expect(loadSupervisedConfiguration(validEnvironment)).toMatchObject({ whisperModel: "ggml-small" });
+    expect(loadSupervisedConfiguration(validEnvironment)).not.toHaveProperty("ollamaModel");
 
     expect(() => loadSupervisedConfiguration({})).toThrow(ConfigurationError);
-    expect(() => loadSupervisedConfiguration({ ...validEnvironment, OLLAMA_MODEL: "" })).toThrow(/OLLAMA_MODEL/);
     expect(() => loadSupervisedConfiguration({ ...validEnvironment, WHISPER_ENDPOINT: "file:///tmp/inference" })).toThrow(/WHISPER_ENDPOINT/);
   });
 
@@ -146,11 +146,12 @@ describe("HerdrRuntime", () => {
 });
 
 describe("SupervisedDevelopment", () => {
-  const readyStatus = (whisperOwnership = "managed", ollamaOwnership = "reused") => ({
+  const managerModelName = "manager-selected-model";
+  const readyStatus = (whisperOwnership = "managed", ollamaOwnership = "reused", model = managerModelName) => ({
     state: "ok",
     runtimes: {
       whisper: { enabled: true, state: "ready", ownership: whisperOwnership },
-      ollama: { enabled: true, state: "ready", ownership: ollamaOwnership },
+      ollama: { enabled: true, state: "ready", ownership: ollamaOwnership, model },
     },
   });
 
@@ -163,10 +164,10 @@ describe("SupervisedDevelopment", () => {
     });
   }
 
-  function readyFetch(overrides = {}) {
+  function readyFetch(model = managerModelName) {
     return vi.fn(async (url) => {
-      if (url.endsWith("tags")) return { ok: true, json: async () => ({ models: [{ name: "reviewed-model" }] }) };
-      return { ok: true, json: async () => ({}), ...overrides };
+      if (url.endsWith("tags")) return { ok: true, json: async () => ({ models: [{ name: model }] }) };
+      return { ok: true, json: async () => ({}) };
     });
   }
 
@@ -188,14 +189,41 @@ describe("SupervisedDevelopment", () => {
       "http://127.0.0.1:8080/health", "http://127.0.0.1:11434/api/tags",
     ]);
     expect(spawn).toHaveBeenCalledTimes(2);
+    expect(spawn.mock.calls[0][2].env.OLLAMA_MODEL).toBe(managerModelName);
+    expect(spawn.mock.calls[0][2].env.OLLAMA_MODEL).not.toBe(validEnvironment.OLLAMA_MODEL);
+    expect(spawn.mock.calls[1][2].env).not.toHaveProperty("OLLAMA_MODEL");
     expect(api.kill).toHaveBeenCalledWith("SIGTERM");
     expect(mobile.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  test("does not start the app if the manager selection changes during startup", async () => {
+    const runManager = managerRunner({
+      initial: readyStatus("managed", "reused", "first-model"),
+      started: readyStatus("managed", "reused", "second-model"),
+    });
+    const spawn = vi.fn();
+    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch: readyFetch(), spawn, runManager, exists: () => true });
+
+    await expect(routine.start()).rejects.toThrow(/reported different Ollama models during status and start/);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  test("requires manager status to report its selected Ollama model", async () => {
+    const initial = readyStatus();
+    delete initial.runtimes.ollama.model;
+    const runManager = managerRunner({ initial });
+    const spawn = vi.fn();
+    const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch: readyFetch(), spawn, runManager, exists: () => true });
+
+    await expect(routine.start()).rejects.toThrow(/status did not report its selected Ollama model/);
+    expect(runManager).toHaveBeenCalledTimes(2);
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   test("allows unavailable runtimes to be started by manager before direct readiness checks", async () => {
     const initial = { state: "ok", runtimes: {
       whisper: { enabled: true, state: "unavailable", ownership: "none" },
-      ollama: { enabled: true, state: "unavailable", ownership: "none" },
+      ollama: { enabled: true, state: "unavailable", ownership: "none", model: managerModelName },
     } };
     const runManager = managerRunner({ initial, started: readyStatus("managed", "managed") });
     const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch: readyFetch(), spawn: vi.fn(() => child()), runManager, exists: () => true });
@@ -208,13 +236,13 @@ describe("SupervisedDevelopment", () => {
   test("explains conflict and does not start runtimes, API, or Expo", async () => {
     const initial = { state: "ok", runtimes: {
       whisper: { enabled: true, state: "ready", ownership: "managed" },
-      ollama: { enabled: true, state: "conflict", ownership: "unknown", reason: "model is not loaded" },
+      ollama: { enabled: true, state: "conflict", ownership: "unknown", model: managerModelName, reason: "model is not loaded" },
     } };
     const runManager = managerRunner({ initial });
     const spawn = vi.fn(() => child());
     const routine = new SupervisedDevelopment({ environment: validEnvironment, runManager, spawn, exists: () => true });
 
-    await expect(routine.start()).rejects.toThrow(/ollama conflict.*model is not loaded.*ai-runtime-manager status/);
+    await expect(routine.start()).rejects.toThrow(/ollama conflict.*model is not loaded.*ai-runtime-manager status.*separate operator decision/);
     expect(runManager).toHaveBeenCalledTimes(2);
     expect(spawn).not.toHaveBeenCalled();
   });
@@ -222,9 +250,9 @@ describe("SupervisedDevelopment", () => {
   test("explains unavailable runtime when manager cannot start it", async () => {
     const unavailable = { state: "error", runtimes: {
       whisper: { enabled: true, state: "ready", ownership: "managed" },
-      ollama: { enabled: true, state: "unavailable", ownership: "none", reason: "configured model is unavailable" },
+      ollama: { enabled: true, state: "unavailable", ownership: "none", model: managerModelName, reason: "configured model is unavailable" },
     } };
-    const runManager = managerRunner({ initial: { state: "ok", runtimes: {} }, started: unavailable, startedCode: 2 });
+    const runManager = managerRunner({ initial: readyStatus(), started: unavailable, startedCode: 2 });
     const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch: readyFetch(), spawn: vi.fn(), runManager, exists: () => true });
 
     await expect(routine.start()).rejects.toThrow(/ollama unavailable.*configured model is unavailable.*ai-runtime-manager status/);
@@ -254,7 +282,7 @@ describe("SupervisedDevelopment", () => {
       : ({ ok: true, json: async () => ({}) }));
     const routine = new SupervisedDevelopment({ environment: validEnvironment, fetch, spawn, runManager: managerRunner(), exists: () => true });
 
-    await expect(routine.start()).rejects.toThrow(/Configured Ollama model reviewed-model is not available/);
+    await expect(routine.start()).rejects.toThrow(/AI Runtime Manager's Ollama model manager-selected-model is not available/);
     expect(spawn).not.toHaveBeenCalled();
   });
 

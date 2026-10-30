@@ -20,7 +20,7 @@ const configurationSchema = z.object({
     (value) => value.startsWith("http://") || value.startsWith("https://"),
     "OLLAMA_ENDPOINT must use HTTP or HTTPS",
   ).default("http://127.0.0.1:11434/api/chat"),
-  OLLAMA_MODEL: z.string().min(1).default("qwen3.5:4b"),
+  OLLAMA_MODEL: z.string().min(1),
   OLLAMA_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(120_000),
   INTERPRETATION_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
 });

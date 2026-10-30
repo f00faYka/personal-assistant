@@ -81,11 +81,11 @@ To inspect the review UI before a local processing provider is configured, start
 
 ## Starting the API and Expo together
 
-Use `npm run dev:all` for the complete local workflow. It reads and validates `.env`, reuses ready Ollama/Whisper services, starts missing local services, checks the configured Ollama model, waits for both runtimes, and only then starts the API and Expo. On Ctrl+C it terminates only processes started by this command.
+Use `npm run dev:all` for the complete local workflow. It uses AI Runtime Manager for Whisper/Ollama lifecycle, takes the selected Ollama model from manager status, verifies the configured endpoints, then starts API and Expo. The API continues to call the provider endpoints directly. See [backend runtime setup](backend.md#local-ai-runtime-manager) for configuration and operator recovery steps.
 
-Copy `.env.example` to `.env` and replace the reviewed model names and machine-specific paths. The routine requires `OLLAMA_ENDPOINT`, `OLLAMA_HEALTH_ENDPOINT`, `OLLAMA_MODEL`, `OLLAMA_BINARY_PATH`, `WHISPER_ENDPOINT`, `WHISPER_HEALTH_ENDPOINT`, `WHISPER_BINARY_PATH`, `WHISPER_MODEL_PATH`, and `EXPO_PUBLIC_API_BASE_URL`. It never downloads binaries or models. A missing path, unavailable model, startup failure, or readiness timeout is reported with the variable and the next operator action.
+Copy `.env.example` to `.env` for the API/Expo URLs and other local settings. Do not configure an Ollama model or runtime binary paths in the PA `.env` for `dev:all`; AI Runtime Manager owns that selection. It does not download binaries or models. Missing CLI/configuration, runtime conflicts, and unavailable models are reported before API/Expo start.
 
-When the command is run from Herdr, it detects `HERDR_ENV=1`, uses the current workspace's `run` tab, and keeps API, Expo, and any newly started local runtime visible in separate panes. Stop the launcher with Ctrl+C; existing panes and reused services remain running.
+When run from Herdr, the launcher uses the current workspace's `run` tab and creates or reuses API and Expo panes only. Ctrl+C stops only app processes/panes created by this invocation; manager-owned and reused AI runtimes remain under manager/operator control.
 
 For a physical iPhone on the same Wi-Fi network, use:
 

@@ -3,14 +3,15 @@ import { describe, expect, test } from "vitest";
 import { ConfigurationError, loadConfiguration } from "./configuration.js";
 
 describe("API configuration", () => {
-  test("provides bounded local Whisper defaults", () => {
-    expect(loadConfiguration({})).toMatchObject({
+  test("uses local endpoint defaults and requires the Ollama model selected by its launcher", () => {
+    expect(() => loadConfiguration({})).toThrow(ConfigurationError);
+    expect(loadConfiguration({ OLLAMA_MODEL: "manager-selected-model" })).toMatchObject({
       whisperEndpoint: "http://127.0.0.1:8080/inference",
       whisperModel: "ggml-small",
       whisperTimeoutMilliseconds: 120_000,
       transcriptionMaxAttempts: 3,
       ollamaEndpoint: "http://127.0.0.1:11434/api/chat",
-      ollamaModel: "qwen3.5:4b",
+      ollamaModel: "manager-selected-model",
       ollamaTimeoutMilliseconds: 120_000,
       interpretationMaxAttempts: 3,
     });
@@ -23,7 +24,7 @@ describe("API configuration", () => {
       WHISPER_TIMEOUT_MS: "45000",
       TRANSCRIPTION_MAX_ATTEMPTS: "2",
       OLLAMA_ENDPOINT: "http://127.0.0.1:22468/api/chat",
-      OLLAMA_MODEL: "qwen3.5:9b",
+      OLLAMA_MODEL: "manager-selected-model",
       OLLAMA_TIMEOUT_MS: "60000",
       INTERPRETATION_MAX_ATTEMPTS: "4",
     })).toMatchObject({
@@ -32,7 +33,7 @@ describe("API configuration", () => {
       whisperTimeoutMilliseconds: 45_000,
       transcriptionMaxAttempts: 2,
       ollamaEndpoint: "http://127.0.0.1:22468/api/chat",
-      ollamaModel: "qwen3.5:9b",
+      ollamaModel: "manager-selected-model",
       ollamaTimeoutMilliseconds: 60_000,
       interpretationMaxAttempts: 4,
     });
