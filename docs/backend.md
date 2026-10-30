@@ -40,15 +40,33 @@ The process optionally loads `.env` and then validates these values:
 
 Copy `.env.example` to `.env` to override the defaults. `.env`, SQLite files, `local-data/`, generated output, and other runtime-data directories are excluded from version control.
 
-## Local Whisper runtime
+## Local AI runtime manager
 
 ### Supervised local development
 
-The development-only `npm run dev:all` command supervises the local stack. Configure the command through the repository `.env` described in [`.env.example`](../.env.example); do not put machine-specific model or binary paths in source code. The endpoint, binary path, and model path may point to another reviewed installation without a code change.
+The development-only `npm run dev:all` command uses the separately installed macOS `ai-runtime-manager` CLI to manage Whisper and Ollama. The manager reads `~/Library/Application Support/ai-runtime-manager/config.toml`; Personal Assistant does not edit that file or own runtime binaries. Keep the API's `WHISPER_ENDPOINT`, `WHISPER_HEALTH_ENDPOINT`, `WHISPER_MODEL`, `OLLAMA_ENDPOINT`, `OLLAMA_HEALTH_ENDPOINT`, and `OLLAMA_MODEL` in the repository `.env` aligned with the manager configuration. The API continues to call Whisper and Ollama directly.
 
-The routine first checks the configured Whisper and Ollama health endpoints. A healthy service is reused. Otherwise it starts the configured Ollama binary with `serve` or the configured `whisper-server` binary with the configured model path, waits until the health check succeeds, and verifies the configured Ollama model via its tags endpoint. Only after those checks does it start API and Expo. Ctrl+C cleans up children started by the routine and leaves reused services running. Missing assets, an unavailable Ollama model, duplicate startup, process failure, and timeout are actionable errors; no binary or model is downloaded.
+From a terminal, validate and inspect the manager, then start the app:
 
-When launched from Herdr (`HERDR_ENV=1`), the same command targets the `run` tab in the current workspace. It reuses labelled `personal-assistant API` and `personal-assistant Expo` panes, creates separate panes for missing services, and keeps the launcher alive so Ctrl+C sends a literal interrupt only to panes created by this invocation. The existing run-tab panes and already-ready Ollama/Whisper services are not stopped.
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+ai-runtime-manager config validate
+ai-runtime-manager status
+npm run dev:all
+```
+
+The launcher validates the manager configuration, reads `status --json`, asks the manager to start enabled unavailable runtimes, then independently checks the configured Whisper health URL and Ollama tags URL for the configured model before starting API and Expo. It does not download runtimes/models or load an Ollama model itself. If the CLI is not on `PATH`, the launcher also checks `~/.local/bin/ai-runtime-manager`; set `AI_RUNTIME_MANAGER_PATH` only when it is installed elsewhere.
+
+Runtime states have these meanings:
+
+- `managed`: the manager verified that it started the process. Personal Assistant uses it and does not stop it when the app exits.
+- `reused`: the manager verified a compatible existing process/model. Personal Assistant uses it and does not stop it.
+- `unavailable`: the endpoint/runtime is not ready. `dev:all` asks the manager to start it, then checks readiness. If it remains unavailable, the launcher reports `ai-runtime-manager status` and the expected endpoint; the operator must resolve missing binaries/models or configuration.
+- `conflict` (or `failed`): the manager cannot safely use/start the endpoint, including an occupied port, unknown process ownership, or an Ollama model mismatch/not loaded. The launcher stops before API/Expo and tells the operator to resolve it manually. It never kills the process, edits manager configuration, or downloads/loads a model.
+
+The direct post-manager checks are intentional: they confirm the exact URLs and model names consumed by the API match the developer's `.env`, even if those differ from the manager's endpoints. Shutdown cleans up only API/Expo processes or Herdr panes created by this launcher. Manager-owned and reused runtimes are left to the manager/operator.
+
+When launched from Herdr (`HERDR_ENV=1`), the command targets the `run` tab in the current workspace. It reuses labelled `personal-assistant API` and `personal-assistant Expo` panes, creates panes for missing app processes, and keeps the launcher alive so Ctrl+C sends an interrupt only to panes created by this invocation. It does not create Whisper, Ollama, or Ollama monitor panes.
 
 The current interpretation provider intentionally remains a direct HTTP adapter. The SDK evaluation found no concrete benefit for this boundary: the adapter already owns the small request/response contract, timeout, structured-output format, safe-error translation, and configured model provenance. Adding an SDK would add dependency and lifecycle coupling without changing those contracts, so no SDK is adopted in this prototype.
 

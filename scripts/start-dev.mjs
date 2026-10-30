@@ -25,7 +25,7 @@ const herdrMode = isHerdrEnvironment(process.env);
 let keepAlive;
 let releaseLauncher;
 const launcherStopped = new Promise((resolve) => { releaseLauncher = resolve; });
-console.log("Supervising local Ollama and Whisper, then starting API and Expo. Press Ctrl+C to stop owned processes.\n");
+console.log("Checking AI Runtime Manager readiness, then starting API and Expo. Press Ctrl+C to stop owned processes.\n");
 
 if (herdrMode) keepAlive = setInterval(() => {}, 60_000);
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => {

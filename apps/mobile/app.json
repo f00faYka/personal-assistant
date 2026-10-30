@@ -5,8 +5,20 @@
     "version": "0.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "ios": { "supportsTablet": false },
-    "web": { "bundler": "metro" },
-    "plugins": [["expo-audio", { "microphonePermission": "Allow AI Assistant to record voice Captures." }]]
+    "ios": {
+      "supportsTablet": false
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow AI Assistant to record voice Captures."
+        }
+      ],
+      "@react-native-community/datetimepicker"
+    ]
   }
 }
